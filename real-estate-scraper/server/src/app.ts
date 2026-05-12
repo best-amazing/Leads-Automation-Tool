@@ -20,6 +20,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   const allowedOrigins = [
     "http://localhost:3000",
     "https://market-leads-automation-system.vercel.app",
+    "https://market-leads-automation-syste-git-99c67f-best-amazings-projects.vercel.app",
     process.env.CLIENT_ORIGIN,
   ].filter(Boolean);
 
