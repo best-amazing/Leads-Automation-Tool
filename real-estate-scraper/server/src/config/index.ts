@@ -195,6 +195,33 @@ export const config = {
     },
 
   },
-} as const;
+};
+
+// Apply a saved filter (from the database) into the runtime config.filter
+// This avoids importing the DB client into the config module and keeps
+// the config initialization explicit and testable.
+export function applySavedFilter(saved?: Partial<typeof config.filter> | null) {
+  if (!saved) return;
+
+  // Only overwrite fields that are actually present on the saved filter
+  if (typeof saved.minPrice === 'number') config.filter.minPrice = saved.minPrice;
+  if (typeof saved.maxPrice === 'number') config.filter.maxPrice = saved.maxPrice;
+
+  if (Array.isArray(saved.allowedPropertyTypes) && saved.allowedPropertyTypes.length > 0) {
+    config.filter.allowedPropertyTypes = saved.allowedPropertyTypes.slice();
+  }
+
+  if (Array.isArray(saved.keywords) && saved.keywords.length > 0) {
+    config.filter.keywords = saved.keywords.slice();
+  }
+
+  if (Array.isArray(saved.propertyTypeTokens) && saved.propertyTypeTokens.length > 0) {
+    config.filter.propertyTypeTokens = saved.propertyTypeTokens.slice();
+  }
+
+  if (Array.isArray(saved.allowedLocations) && saved.allowedLocations.length > 0) {
+    config.filter.allowedLocations = saved.allowedLocations.slice();
+  }
+}
 
 export type Config = typeof config;

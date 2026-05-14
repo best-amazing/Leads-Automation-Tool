@@ -4,6 +4,8 @@ import { logger } from "./utils/logger";
 import { prisma } from "./db/client";
 import { cronManager } from "./utils/cronManager";
 import { initializeDailyScrapeJob } from "./jobs/daily-scrape.job";
+import { getFilter } from "./db/repository";
+import { applySavedFilter } from "./config";
 
 const PORT = process.env.PORT || 3005;
 
@@ -12,6 +14,19 @@ async function startServer() {
     // Test database connection
     await prisma.$queryRaw`SELECT 1`;
     logger.info("✓ Database connected");
+
+    // Apply saved filter from DB into runtime config (fallback to defaults if none)
+    try {
+      const saved = await getFilter();
+      if (saved) {
+        applySavedFilter(saved as any);
+        logger.info("Applied saved filter from DB into runtime config");
+      } else {
+        logger.info("No saved filter in DB; using config defaults");
+      }
+    } catch (err) {
+      logger.warn("Failed to load saved filter from DB; using config defaults", err);
+    }
 
     // Start Express server
     const server = app.listen(PORT, () => {
