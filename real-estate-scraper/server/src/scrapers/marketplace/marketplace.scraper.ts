@@ -628,8 +628,11 @@ export class MarketplaceScraper extends BaseScraper {
     logger.info("[marketplace] Launching dedicated no-proxy browser");
 
     const browser = await chromium.launch({
-      executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined,
       headless:       false,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+      ],
     });
 
     const contextOptions: Record<string, any> = {

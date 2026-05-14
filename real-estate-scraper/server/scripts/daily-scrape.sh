@@ -21,9 +21,6 @@ if [ -f "$ROOT_DIR/.env" ]; then
   done < "$ROOT_DIR/.env"
 fi
 
-# Ensure playwright path is set for npm scripts
-export PLAYWRIGHT_CHROMIUM_PATH="${PLAYWRIGHT_CHROMIUM_PATH:-/usr/bin/chromium-browser}"
-
 LOG_DIR="$ROOT_DIR/logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/daily-scrape.log"

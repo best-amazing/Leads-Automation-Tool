@@ -31,8 +31,7 @@ export abstract class BaseScraper {
     this.options = {
       maxPages: options.maxPages ?? config.maxPages,
       maxListings: options.maxListings ?? config.maxListings,
-      proxyUrl:
-        options.proxyUrl !== undefined ? options.proxyUrl : config.proxyUrl,
+      proxyUrl: options.proxyUrl !== undefined ? options.proxyUrl : null,
     };
   }
 
@@ -131,7 +130,7 @@ export abstract class BaseScraper {
     this.results = [];
     const rejected: Array<{ listing: RawListing; reason: string }> = [];
 
-    const handle = await createBrowser();
+    const handle = await createBrowser(this.options.proxyUrl);
 
     try {
       for (let page = 1; page <= this.options.maxPages; page++) {

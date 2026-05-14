@@ -257,10 +257,6 @@ export async function createBrowser(proxyUrl?: string | null): Promise<BrowserHa
   const effectiveProxy = proxyUrl !== undefined ? proxyUrl : config.proxyUrl;
   const proxy = parseProxy(effectiveProxy);
 
-  const executablePath =
-    process.env.PLAYWRIGHT_CHROMIUM_PATH || "/usr/bin/chromium-browser";
-
-  logger.info(`[browser] Using executable: ${executablePath}`);
   if (proxy) {
     logger.info(`[browser] Using proxy: ${proxy.server}`);
   } else {
@@ -268,7 +264,6 @@ export async function createBrowser(proxyUrl?: string | null): Promise<BrowserHa
   }
 
   const browser = await (chromium as any).launch({
-    executablePath,
     headless: true,
     args: [
       "--no-sandbox",

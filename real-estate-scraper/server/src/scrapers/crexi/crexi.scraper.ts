@@ -119,7 +119,6 @@ export class CrexiScraper extends BaseScraper {
 
   private async launchBrowser(): Promise<Browser> {
     const launchOptions: any = {
-      executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined,
       headless:       true,
       args: [
         "--no-sandbox",

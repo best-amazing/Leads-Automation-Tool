@@ -32,8 +32,8 @@ export const SCRAPER_REGISTRY: Record<string, ScraperFactory> = {
   // ── Facebook ───────────────────────────────────────────────────────────────
   facebook: () => new FacebookScraper(),
   
-  // ── Offmarket ─────────────────────────────────────────────────────────────
-  offmarket: () => new OffmarketScraper(),
+  // ── Offmarket (uses proxy) ────────────────────────────────────────────────
+  offmarket: () => new OffmarketScraper({ proxyUrl: config.proxyUrl }),
 
   // ── InvestorLift (highest priority per project doc §3.1) ─────────────────
   investorlift: () => new InvestorLiftScraper(),
@@ -41,26 +41,26 @@ export const SCRAPER_REGISTRY: Record<string, ScraperFactory> = {
   // ── Crexi ─────────────────────────────────────────────────────────────────
   crexi: () => new CrexiScraper(),
 
-  // CreativeListing (creative-finance marketplace)
-  creativelisting: () => new CreativeListingScraper(),
+  // CreativeListing (creative-finance marketplace, uses proxy)
+  creativelisting: () => new CreativeListingScraper({ proxyUrl: config.proxyUrl }),
   // Accept hyphenated variant from frontend: "creative-listing"
-  "creative-listing": () => new CreativeListingScraper(),
+  "creative-listing": () => new CreativeListingScraper({ proxyUrl: config.proxyUrl }),
 
   // ── LoopNet ───────────────────────────────────────────────────────────────
   loopnet: () => new LoopNetScraper(),
 
-  // ── Craigslist cities ─────────────────────────────────────────────────────
+  // ── Craigslist cities (use proxy) ─────────────────────────────────────────
   craigslist_milwaukee: () =>
-    new CraigslistScraper(config.sources.craigslist.milwaukee),
+    new CraigslistScraper(config.sources.craigslist.milwaukee, { proxyUrl: config.proxyUrl }),
 
   craigslist_columbus: () =>
-    new CraigslistScraper(config.sources.craigslist.columbus),
+    new CraigslistScraper(config.sources.craigslist.columbus, { proxyUrl: config.proxyUrl }),
 
   craigslist_cleveland: () =>
-    new CraigslistScraper(config.sources.craigslist.cleveland),
+    new CraigslistScraper(config.sources.craigslist.cleveland, { proxyUrl: config.proxyUrl }),
 
   craigslist_toledo: () =>
-    new CraigslistScraper(config.sources.craigslist.toledo),
+    new CraigslistScraper(config.sources.craigslist.toledo, { proxyUrl: config.proxyUrl }),
 
   // ── Zillow ────────────────────────────────────────────────────────────────
   zillow: () => new ZillowScraper(),
