@@ -17,9 +17,9 @@ const REMAINING_SCRAPERS = [
 
 export function initializeDailyScrapeJob() {
   cronManager.createJob({
-    name: "Daily Scrape (midnight)",
-    schedule: "0 0 * * *",
-    timeZone: process.env.SCRAPE_TIMEZONE || "UTC",
+    name: "Daily Scrape (2pm WAT)",
+    schedule: "0 14 * * *",
+    timeZone: process.env.SCRAPE_TIMEZONE || "Africa/Lagos",
     async onTick() {
       try {
         logger.info("[cron] Daily scrape job starting");
