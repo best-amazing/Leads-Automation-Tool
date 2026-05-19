@@ -50,20 +50,19 @@ export async function enrichListingsBySource(source: string): Promise<Enrichment
   }
 
   try {
-    // Get all unlinked listings for this source
-    const unlinkedListings = await prisma.listing.findMany({
+    // Get all listings for this source (recheck all, not just unlinked)
+    const allListings = await prisma.listing.findMany({
       where: {
         source,
-        propertyId: null,
       },
     });
 
     logger.info(
-      `[Enrichment] Found ${unlinkedListings.length} unlinked listings for ${source}`
+      `[Enrichment] Found ${allListings.length} listings for ${source}`
     );
 
     // Process each listing
-    for (const listing of unlinkedListings) {
+    for (const listing of allListings) {
       try {
         let propertyId: string | null = null;
 
@@ -104,7 +103,28 @@ export async function enrichListingsBySource(source: string): Promise<Enrichment
 
               propertyId = property.id;
 
-              // Create Estimate record with sourceListingId
+              // If we have a sourceListingId, re-fetch the canonical source
+              // listing record and use its native estimate field to ensure
+              // we copy the exact value from the matched record.
+              let valueToUse = match.estimateValue;
+              try {
+                if (match.sourceListingId) {
+                  if (estimateSource === "zillow") {
+                    const src = await prisma.zillowListing.findUnique({ where: { id: match.sourceListingId } });
+                    if (src && src.zestimate != null) valueToUse = src.zestimate;
+                  } else if (estimateSource === "redfin") {
+                    const src = await prisma.redfinListing.findUnique({ where: { id: match.sourceListingId } });
+                    if (src && src.estimate != null) valueToUse = src.estimate;
+                  } else if (estimateSource === "propwire") {
+                    const src = await prisma.propwireListing.findUnique({ where: { id: match.sourceListingId } });
+                    if (src && src.estimate != null) valueToUse = src.estimate;
+                  }
+                }
+              } catch (e) {
+                logger.debug(`[Enrichment] Failed to re-fetch source listing ${match.sourceListingId} from ${estimateSource}: ${e}`);
+              }
+
+              // Create or update Estimate record with authoritative value
               await prisma.estimate.upsert({
                 where: {
                   propertyId_source: {
@@ -115,11 +135,11 @@ export async function enrichListingsBySource(source: string): Promise<Enrichment
                 create: {
                   propertyId: property.id,
                   source: estimateSource,
-                  value: match.estimateValue,
+                  value: valueToUse,
                   sourceListingId: match.sourceListingId,
                 },
                 update: {
-                  value: match.estimateValue,
+                  value: valueToUse,
                   sourceListingId: match.sourceListingId,
                   fetchedAt: new Date(),
                 },

@@ -213,6 +213,7 @@ function buildListing(item: any): RawListing | null {
     typeof coord.lat === "number" ? coord.lat :
     typeof coord.lat === "string" ? parseFloat(coord.lat) || undefined :
     undefined;
+
   const lng: number | undefined =
     typeof coord.lon === "number" ? coord.lon :
     typeof coord.lon === "string" ? parseFloat(coord.lon) || undefined :
@@ -294,15 +295,17 @@ function buildListing(item: any): RawListing | null {
     zestimateLow?:       number;
     zestimateHigh?:      number;
     estimateSource?:     string;
+    lat?:                number;
+    lng?:                number;
   } = {
     url:          buildListingUrl(item?.permalink, propertyId),
     source:       "realtor",
     title:        streetLine || fullAddress,
     address:      fullAddress || undefined,
     price,
-    beds,
-    baths,
-    sqft,
+    bedrooms: beds,
+    bathrooms: baths,
+    squareFeet: sqft,
     lotSqft,
     yearBuilt,
     lat,
@@ -376,7 +379,7 @@ export function parseRealtorGraphQL(
     logger.debug(
       `[realtor-parser] ✓ ${listing.address} | ` +
       `$${listing.price?.toLocaleString() ?? "?"} | ` +
-      `${listing.beds ?? "?"}bd/${listing.baths ?? "?"}ba | ` +
+      `${listing.bedrooms ?? "?"}bd/${listing.bathrooms ?? "?"}ba | ` +
       ((listing as any).zestimate
         ? `est $${((listing as any).zestimate as number).toLocaleString()}`
         : "no inline est")
