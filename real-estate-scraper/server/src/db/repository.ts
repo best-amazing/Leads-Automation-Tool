@@ -514,10 +514,12 @@ export async function getExistingUrls(source: string): Promise<Set<string>> {
 
 /**
  * Get all properties with related listings and estimates
+ * Enriches estimates with source listing URLs
  * @param limit - maximum number of properties to return
  */
 export async function getAllPropertiesWithListings(limit = 1000) {
-  return prisma.property.findMany({
+  // First, fetch all properties with their listings and estimates (including sourceListingId)
+  const properties = await prisma.property.findMany({
     select: {
       id: true,
       normalizedAddress: true,
@@ -555,6 +557,7 @@ export async function getAllPropertiesWithListings(limit = 1000) {
           id: true,
           source: true,
           value: true,
+          sourceListingId: true,
           fetchedAt: true,
         },
       },
@@ -562,6 +565,101 @@ export async function getAllPropertiesWithListings(limit = 1000) {
     orderBy: { createdAt: "desc" },
     take: limit,
   });
+
+  // Collect all sourceListingIds grouped by source for batch fetching
+  const zillowIds = new Set<string>();
+  const redfinIds = new Set<string>();
+  const realtorIds = new Set<string>();
+  const propwireIds = new Set<string>();
+
+  properties.forEach((property) => {
+    property.estimates.forEach((estimate) => {
+      if (!estimate.sourceListingId) return;
+      
+      switch (estimate.source) {
+        case "zillow":
+          zillowIds.add(estimate.sourceListingId);
+          break;
+        case "redfin":
+          redfinIds.add(estimate.sourceListingId);
+          break;
+        case "realtor":
+          realtorIds.add(estimate.sourceListingId);
+          break;
+        case "propwire":
+          propwireIds.add(estimate.sourceListingId);
+          break;
+      }
+    });
+  });
+
+  // Fetch source listings in parallel for each source
+  const [zillowListings, redfinListings, realtorListings, propwireListings] = await Promise.all([
+    zillowIds.size > 0
+      ? (prisma.zillowListing as any).findMany({
+          where: { id: { in: Array.from(zillowIds) } },
+          select: { id: true, url: true },
+        })
+      : Promise.resolve([]),
+    redfinIds.size > 0
+      ? (prisma.redfinListing as any).findMany({
+          where: { id: { in: Array.from(redfinIds) } },
+          select: { id: true, url: true },
+        })
+      : Promise.resolve([]),
+    realtorIds.size > 0
+      ? (prisma.realtorListing as any).findMany({
+          where: { id: { in: Array.from(realtorIds) } },
+          select: { id: true, url: true },
+        })
+      : Promise.resolve([]),
+    propwireIds.size > 0
+      ? (prisma.propwireListing as any).findMany({
+          where: { id: { in: Array.from(propwireIds) } },
+          select: { id: true, url: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  // Create maps for quick lookup
+  const zillowMap = new Map(zillowListings.map((z: any) => [z.id, z.url]));
+  const redfinMap = new Map(redfinListings.map((r: any) => [r.id, r.url]));
+  const realtorMap = new Map(realtorListings.map((r: any) => [r.id, r.url]));
+  const propwireMap = new Map(propwireListings.map((p: any) => [p.id, p.url]));
+
+  // Enrich estimates with source URLs
+  properties.forEach((property) => {
+    property.estimates = property.estimates.map((estimate: any) => {
+      let sourceUrl: string | undefined;
+
+      if (estimate.sourceListingId) {
+        switch (estimate.source) {
+          case "zillow":
+            sourceUrl = zillowMap.get(estimate.sourceListingId);
+            break;
+          case "redfin":
+            sourceUrl = redfinMap.get(estimate.sourceListingId);
+            break;
+          case "realtor":
+            sourceUrl = realtorMap.get(estimate.sourceListingId);
+            break;
+          case "propwire":
+            sourceUrl = propwireMap.get(estimate.sourceListingId);
+            break;
+        }
+      }
+
+      return {
+        id: estimate.id,
+        source: estimate.source,
+        value: estimate.value,
+        sourceUrl,
+        fetchedAt: estimate.fetchedAt,
+      };
+    });
+  });
+
+  return properties;
 }
 
 /**
