@@ -630,7 +630,7 @@ export async function getAllPropertiesWithListings(limit = 1000) {
   // Enrich estimates with source URLs
   properties.forEach((property) => {
     property.estimates = property.estimates.map((estimate: any) => {
-      let sourceUrl: string | undefined;
+      let sourceUrl: any;
 
       if (estimate.sourceListingId) {
         switch (estimate.source) {
@@ -653,6 +653,7 @@ export async function getAllPropertiesWithListings(limit = 1000) {
         id: estimate.id,
         source: estimate.source,
         value: estimate.value,
+        sourceListingId: estimate.sourceListingId ?? null,
         sourceUrl,
         fetchedAt: estimate.fetchedAt,
       };
