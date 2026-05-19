@@ -102,9 +102,11 @@ export function buildListingUrl(
   city:       string,
   state:      string
 ): string {
-  const citySlug = city.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
-  const addrSlug = address.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
-  return `https://propwire.com/property/${state.toLowerCase()}/${citySlug}/${addrSlug}/${propertyId}`;
+  const addrSlug = address
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-zA-Z0-9-]/g, "");
+  return `https://propwire.com/realestate/${addrSlug}/${propertyId}/property-details`;
 }
 
 // ── Lead-type helpers ─────────────────────────────────────────────────────────

@@ -10,18 +10,28 @@ import { setRunning, setProgress, getStatus } from "./scrape/status";
 
 function scoreListings(listings: RawListing[]): Array<ListingUpsertPayload & { estimate?: number }> {
   return listings.map((listing): ListingUpsertPayload & { estimate?: number } => {
-    const arv = listing.zestimate ?? listing.price;
+    // Prefer any available source-specific estimate (zillow/redfin/realtor/propwire),
+    // fall back to price when computing ARV-based equity.
+    const sourceEstimate =
+      (listing as any).zestimate ??
+      (listing as any).redfinEstimate ??
+      (listing as any).realtorEstimate ??
+      (listing as any).propwireEstimate ??
+      (listing as any).estimate ??
+      undefined;
+
+    const arv = sourceEstimate ?? listing.price;
     let dealScore: DealScore = "low_potential";
     let equityEstimate: number | undefined;
 
     if (arv && listing.price) {
-      equityEstimate = arv - listing.price;
+      equityEstimate = Math.round(arv - listing.price);
       const ratio = listing.price / arv;
       if (ratio <= 0.7)       dealScore = "good_deal";
       else if (ratio <= 0.85) dealScore = "average_deal";
     }
 
-    return { ...listing, dealScore, equityEstimate, estimate: listing.zestimate };
+    return { ...listing, dealScore, equityEstimate, estimate: sourceEstimate };
   });
 }
 

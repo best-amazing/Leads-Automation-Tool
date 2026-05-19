@@ -516,7 +516,8 @@ export async function getExistingUrls(source: string): Promise<Set<string>> {
  * Get all properties with related listings and estimates
  * Enriches estimates with source listing URLs
  * @param limit - maximum number of properties to return
- */
+*/
+
 export async function getAllPropertiesWithListings(limit = 1000) {
   // First, fetch all properties with their listings and estimates (including sourceListingId)
   const properties = await prisma.property.findMany({
