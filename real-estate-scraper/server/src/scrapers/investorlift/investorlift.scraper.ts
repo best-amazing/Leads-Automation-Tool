@@ -208,109 +208,118 @@ export class InvestorLiftScraper extends BaseScraper {
     }
   }
 
-  private async fetchFullAddress(
-    listingId: string
-  ): Promise<string | undefined> {
-    // Make the address inquiry call directly from Node using the session cookies
-    // read from the session file. This avoids the about:blank cookie-scope problem
-    // (page.evaluate from a blank page sends no cookies even with credentials:include).
-    try {
-      const cookieHeader = this.buildCookieHeader();
-      if (!cookieHeader) {
-        logger.warn("[investorlift] No cookies available for address request");
-        return undefined;
-      }
-
-      const response = await fetch(ADDRESS_INQUIRY_URL, {
-        method: "POST",
-        headers: {
-          ...BASE_HEADERS,
-          "Content-Type": "text/plain;charset=UTF-8",
-          "Referer": `https://investorlift.com/marketplace/deal/${listingId}`,
-          "Cookie": cookieHeader,
-        },
-        body: JSON.stringify({
-          property_id: listingId,
-          type: "address_request",
-        }),
-      });
-
-      if (!response.ok) {
-        logger.warn(`[investorlift] Address inquiry HTTP ${response.status} for listing ${listingId}`);
-        return undefined;
-      }
-
-      const text    = await response.text();
-      const address = text.trim().replace(/^"|"$/g, "");
-
-      if (address.includes(ADDRESS_LIMIT_SENTINEL)) {
-        // Signal the caller to stop enrichment entirely for today
-        throw new DailyLimitReachedError();
-      }
-
-      if (address) {
-        logger.debug(`[investorlift] Full address for ${listingId}: ${address}`);
-      } else {
-        logger.warn(`[investorlift] No address returned for listing ${listingId}`);
-      }
-
-      return address || undefined;
-    } catch (err) {
-      logger.warn(`[investorlift] Address fetch failed for ${listingId}: ${err}`);
+ private async fetchFullAddress(listingId: string): Promise<string | undefined> {
+  try {
+    const cookieHeader = this.buildCookieHeader();
+    if (!cookieHeader) {
+      logger.warn("[investorlift] No cookies available for address request");
       return undefined;
     }
-  }
 
-  private async enrichWithFullAddresses(
-    _context: BrowserContext,
-    listings: RawListing[]
-  ): Promise<RawListing[]> {
-    if (listings.length === 0) return listings;
+    const response = await fetch(ADDRESS_INQUIRY_URL, {
+      method: "POST",
+      headers: {
+        ...BASE_HEADERS,
+        "Content-Type": "text/plain;charset=UTF-8",
+        "Referer": `https://investorlift.com/marketplace/deal/${listingId}`,
+        "Cookie": cookieHeader,
+      },
+      body: JSON.stringify({
+        property_id: listingId,
+        type: "address_request",
+      }),
+    });
 
-    logger.info(`[investorlift] Enriching ${listings.length} listings with full addresses`);
-    const enriched: RawListing[] = [];
-    let limitReached = false;
-
-    for (const listing of listings) {
-      if (limitReached) {
-        // Daily limit hit — push remaining listings as-is without fetching
-        enriched.push(listing);
-        continue;
-      }
-
-      const listingId = extractListingId(listing.url);
-      if (!listingId) {
-        logger.warn(`[investorlift] No listing ID in URL: ${listing.url}`);
-        enriched.push(listing);
-        continue;
-      }
-
-      try {
-        const fullAddress = await this.fetchFullAddress(listingId);
-        enriched.push({ ...listing, address: fullAddress ?? listing.address });
-        await sleep(ADDRESS_REQUEST_DELAY_MS);
-      } catch (err) {
-        if (err instanceof DailyLimitReachedError) {
-          logger.warn(
-            `[investorlift] Daily address request limit reached after ${enriched.length} addresses — ` +
-            `skipping remaining ${listings.length - enriched.length} listings. Resets tomorrow.`
-          );
-          limitReached = true;
-          enriched.push(listing); // push current one without address
-        } else {
-          logger.warn(`[investorlift] Address fetch failed for ${listingId}: ${err}`);
-          enriched.push(listing);
-        }
-      }
+    if (!response.ok) {
+      logger.warn(`[investorlift] Address inquiry HTTP ${response.status} for listing ${listingId}`);
+      return undefined;
     }
 
-    logger.info(
-      `[investorlift] Address enrichment complete — ` +
-      `${enriched.filter(l => l.address).length} with address, ` +
-      `${enriched.filter(l => !l.address).length} without`
-    );
-    return enriched;
+    const text    = await response.text();
+    const address = text.trim().replace(/^"|"$/g, "");
+
+    if (address.includes(ADDRESS_LIMIT_SENTINEL)) {
+      throw new DailyLimitReachedError(); // ← thrown here, must NOT be caught below
+    }
+
+    if (address) {
+      logger.debug(`[investorlift] Full address for ${listingId}: ${address}`);
+    } else {
+      logger.warn(`[investorlift] No address returned for listing ${listingId}`);
+    }
+
+    return address || undefined;
+  } catch (err) {
+    if (err instanceof DailyLimitReachedError) {
+      throw err; // ← re-throw so enrichWithFullAddresses can catch and break
+    }
+    logger.warn(`[investorlift] Address fetch failed for ${listingId}: ${err}`);
+    return undefined;
   }
+}
+
+  private async enrichWithFullAddresses(
+  _context: BrowserContext,
+  listings: RawListing[]
+): Promise<RawListing[]> {
+  if (listings.length === 0) return listings;
+
+  const ADDRESS_FETCH_LIMIT = 5;
+
+  logger.info(
+    `[investorlift] Enriching up to ${ADDRESS_FETCH_LIMIT} listings with full addresses ` +
+    `(${listings.length} candidates)`
+  );
+
+  const enriched: RawListing[] = [];
+
+  for (const listing of listings) {
+    // Hard stop once we've collected the maximum allowed addresses
+    if (enriched.length >= ADDRESS_FETCH_LIMIT) {
+      logger.info(
+        `[investorlift] Address fetch limit of ${ADDRESS_FETCH_LIMIT} reached — stopping enrichment`
+      );
+      break;
+    }
+
+    const listingId = extractListingId(listing.url);
+    if (!listingId) {
+      logger.warn(`[investorlift] No listing ID in URL: ${listing.url}`);
+      continue; // skip — no ID means we can't fetch, and we don't store without address
+    }
+
+    try {
+      const fullAddress = await this.fetchFullAddress(listingId);
+
+      if (fullAddress) {
+        enriched.push({ ...listing, address: fullAddress });
+      } else {
+        logger.warn(
+          `[investorlift] Skipping listing ${listingId} — no full address returned`
+        );
+        // intentionally not pushed — only store listings with confirmed addresses
+      }
+
+      await sleep(ADDRESS_REQUEST_DELAY_MS);
+    } catch (err) {
+      if (err instanceof DailyLimitReachedError) {
+        logger.warn(
+          `[investorlift] Daily address request limit reached after ${enriched.length} addresses — stopping.`
+        );
+        break; // stop immediately, don't process any more
+      }
+      logger.warn(`[investorlift] Address fetch failed for ${listingId}: ${err}`);
+      // skip this listing — failed fetches are not stored
+    }
+  }
+
+  logger.info(
+    `[investorlift] Address enrichment complete — ` +
+    `${enriched.length} listings stored (all with full addresses)`
+  );
+
+  return enriched;
+}
 
   // ── MAIN SCRAPE ────────────────────────────────────────────────────────────
 

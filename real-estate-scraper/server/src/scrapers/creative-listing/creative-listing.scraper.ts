@@ -290,16 +290,28 @@ async function apiFetch(url: string): Promise<ApiResponse | null> {
 
   return new Promise((resolve) => {
     const parsed = new URL(url);
-    // Respect a configured proxy (env `PROXY_URL` or global config.proxyUrl)
-    const proxyUrl = process.env.PROXY_URL ?? (config as any).proxyUrl ?? "";
+    // Proxy selection priority:
+    //  1. PROXY_URL (explicit single proxy)
+    //  2. PROXY_URLS (comma-separated list in .env) — pick one at random
+    //  3. config.proxyUrl (global config)
+    const proxiesEnv = process.env.PROXY_URLS ?? "";
+    const proxies = proxiesEnv
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    let proxyUrl = process.env.PROXY_URL ?? (config as any).proxyUrl ?? "";
+    if (!proxyUrl && proxies.length > 0) {
+      proxyUrl = proxies[Math.floor(Math.random() * proxies.length)];
+    }
+
     let agent: any = undefined;
     if (proxyUrl) {
       try {
-        // Some packages export types that TypeScript can't infer a construct
-        // signature for; cast to any to avoid TS7009 at runtime with ts-node.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         agent = new (HttpsProxyAgent as any)(proxyUrl);
-        logger.info(`[cl] Using proxy for API requests: ${proxyUrl}`);
+        const masked = proxyUrl.replace(/:\/\/([^:]+):([^@]+)@/, "://$1:***@");
+        logger.info(`[cl] Using proxy for API requests: ${masked}`);
       } catch (err) {
         logger.warn(`[cl] Could not create proxy agent: ${err}`);
         agent = undefined;

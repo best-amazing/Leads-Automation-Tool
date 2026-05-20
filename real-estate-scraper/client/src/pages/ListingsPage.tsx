@@ -23,6 +23,9 @@ export const ListingsPage: React.FC = () => {
   const [appliedFilters, setAppliedFilters] = useState<ListingFilters>(filters);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [lastRefreshTime, setLastRefreshTime] = useState<string>(new Date().toISOString());
+  const [selectedDate, setSelectedDate] = useState<string>(
+    new Date().toISOString().split("T")[0]
+  );
 
   const applyListingFilter = () => {
     setAppliedFilters(filters);
@@ -110,13 +113,32 @@ export const ListingsPage: React.FC = () => {
               </>
             )}
           </button>
-
           <ExportButton
             data={filteredListings}
             filename="listings"
             dataType="listings"
             disabled={loading}
           />
+
+          {/* Export by date */}
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="px-3 py-2 border rounded-lg text-sm"
+              disabled={loading}
+            />
+
+            <ExportButton
+              data={listings.filter((l) =>
+                new Date(l.createdAt).toISOString().split("T")[0] === selectedDate
+              )}
+              filename={`listings-${selectedDate}`}
+              dataType="listings"
+              disabled={loading}
+            />
+          </div>
 
           {autoRefresh && (
             <span className="inline-flex items-center gap-1.5 text-xs text-slate-500 font-medium">
