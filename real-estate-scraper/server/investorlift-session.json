@@ -1,0 +1,135 @@
+{
+  "cookies": [
+    {
+      "name": "TSVB_UID",
+      "value": "44481f1f-8031-4893-bcc2-c9971663a279",
+      "domain": ".investorlift.com",
+      "path": "/",
+      "expires": 1781819377,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_gcl_au",
+      "value": "1.1.2097121134.1777257384",
+      "domain": ".investorlift.com",
+      "path": "/",
+      "expires": 1781819377,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_fbp",
+      "value": "fb.1.1777257385746.806161785607394912",
+      "domain": ".investorlift.com",
+      "path": "/",
+      "expires": 1781819377,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "NPS_d38cd1a5_last_seen",
+      "value": "1777257385811",
+      "domain": ".investorlift.com",
+      "path": "/",
+      "expires": 1781819377,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "intercom-device-id-jsygh5b6",
+      "value": "68839f90-0bab-48dd-92c2-8220e2171281",
+      "domain": ".investorlift.com",
+      "path": "/",
+      "expires": 1781819377,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_gid",
+      "value": "GA1.2.1326839806.1779195866",
+      "domain": ".investorlift.com",
+      "path": "/",
+      "expires": 1781819377,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "NPS_d38cd1a5_surveyed",
+      "value": "true",
+      "domain": ".investorlift.com",
+      "path": "/",
+      "expires": 1781819377,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "oid-token",
+      "value": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2FkbWluLWludGVybmFsLmludmVzdG9ybGlmdC5jb20vY3VzdG9tZXIvYXBpL2F1dGgvbG9naW4iLCJpYXQiOjE3NzkyMjgyNTksImV4cCI6MTc4MTgyMDI1OSwibmJmIjoxNzc5MjI4MjU5LCJqdGkiOiJxUG9PQU9lS3h4YUl6amJVIiwic3ViIjoiNjAzMTczOCIsInBydiI6IjFkMGEwMjBhY2Y1YzRiNmM0OTc5ODlkZjFhYmYwZmJkNGU4YzhkNjMifQ.kNZqS7SC9D1kR9DLSR6pHXwftVbyDJr5T4-J3FNOjSc",
+      "domain": ".investorlift.com",
+      "path": "/",
+      "expires": 1781820259,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "intercom-session-jsygh5b6",
+      "value": "M1J3dVV3aEVhKzdKMkNScStjVTIyOGE3WndSaGYyTHMwbGVVRjhZUmd1dm9TdWVycDBmOEsxNGJsTFpXczhydFc2UXRoM3piOEh3VEhNZ0ZlUEE3N0xJanVCeVNid0taZlVFd2U1bG9vMGtlZHc5ZHRLZWRla21DMmFoTENYUWloeDNINWp5VmVGOUYyd1RQTG5PaURZSVpMU1JKQ0RlclNmV3MwNi8rdWhxVlVzTHFrb3orZFVMS3pNSVEwWmloNk51d200YlhmYWd5NlFkaXd2SEhGaytUejloQkM2S3FCem55WGQ4Z1MxND0tLTFzcU9uZXZ3SXJuc0g2cWxSS2dibGc9PQ==--70b82a74813cfef3cde00df70854a21f4ccbe6ae",
+      "domain": ".investorlift.com",
+      "path": "/",
+      "expires": 1781819377,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_ga",
+      "value": "GA1.1.1237176748.1777257385",
+      "domain": ".investorlift.com",
+      "path": "/",
+      "expires": 1781819377,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_ga_KL584Z31JD",
+      "value": "GS2.1.s1779225501$o17$g0$t1779225501$j60$l0$h1731944325",
+      "domain": ".investorlift.com",
+      "path": "/",
+      "expires": 1781819377,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "mp_ae228e1de43f15f0a5590c458deab1b3_mixpanel",
+      "value": "%7B%22distinct_id%22%3A%22%24device%3Ae553886e-d8e0-4c0f-aab9-6acaeadc33c0%22%2C%22%24device_id%22%3A%22e553886e-d8e0-4c0f-aab9-6acaeadc33c0%22%2C%22%24initial_referrer%22%3A%22%24direct%22%2C%22%24initial_referring_domain%22%3A%22%24direct%22%2C%22__mps%22%3A%7B%7D%2C%22__mpso%22%3A%7B%22%24initial_referrer%22%3A%22%24direct%22%2C%22%24initial_referring_domain%22%3A%22%24direct%22%7D%2C%22__mpus%22%3A%7B%7D%2C%22__mpa%22%3A%7B%7D%2C%22__mpu%22%3A%7B%7D%2C%22__mpr%22%3A%5B%5D%2C%22__mpap%22%3A%5B%5D%2C%22%24search_engine%22%3A%22google%22%7D",
+      "domain": ".investorlift.com",
+      "path": "/",
+      "expires": 1781819377,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "ph_phc_ijCl8FUDYAcebSxVL20MMPoDVxWzooQQ6BvWF4eXIRQ_posthog",
+      "value": "%7B%22%24device_id%22%3A%22019e4189-a53c-7b85-a22a-000f2692ff53%22%2C%22distinct_id%22%3A%226031738%22%2C%22%24sesid%22%3A%5B1779225488646%2C%22019e4215-df01-7984-8ea2-0c945d6ac774%22%2C1779225190143%5D%2C%22%24epp%22%3Atrue%2C%22%24initial_person_info%22%3A%7B%22r%22%3A%22%24direct%22%2C%22u%22%3A%22https%3A%2F%2Finvestorlift.com%2Fmarketplace%2F%22%7D%2C%22%24user_state%22%3A%22identified%22%7D",
+      "domain": ".investorlift.com",
+      "path": "/",
+      "expires": 1781819377,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    }
+  ],
+  "origins": []
+}

@@ -36,7 +36,7 @@ export const SCRAPER_REGISTRY: Record<string, ScraperFactory> = {
   offmarket: () => new OffmarketScraper({ proxyUrl: config.proxyUrl }),
 
   // ── InvestorLift (highest priority per project doc §3.1) ─────────────────
-  investorlift: () => new InvestorLiftScraper(),
+  investorlift: () => new InvestorLiftScraper({ headless: process.env.INVESTORLIFT_HEADLESS !== "false" }),
 
   // ── Crexi ─────────────────────────────────────────────────────────────────
   crexi: () => new CrexiScraper(),

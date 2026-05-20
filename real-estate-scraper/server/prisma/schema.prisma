@@ -14,16 +14,13 @@ datasource db {
 
 model Property {
   id                  String   @id @default(cuid())
-
   // 🔥 Canonical identity
   normalizedAddress   String   @unique
   address             String?
   url                 String?  // optional link to listing (populated during enrichment phase)
-
   city                String?
   state               String?
   zip                 String?
-
   latitude            Float?
   longitude           Float?
 
