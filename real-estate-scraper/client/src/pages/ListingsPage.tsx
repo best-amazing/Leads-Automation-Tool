@@ -26,6 +26,7 @@ export const ListingsPage: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState<string>(
     new Date().toISOString().split("T")[0]
   );
+  const [exportScope, setExportScope] = useState<'filtered' | 'all' | 'date'>('filtered');
 
   const applyListingFilter = () => {
     setAppliedFilters(filters);
@@ -113,28 +114,37 @@ export const ListingsPage: React.FC = () => {
               </>
             )}
           </button>
-          <ExportButton
-            data={filteredListings}
-            filename="listings"
-            dataType="listings"
-            disabled={loading}
-          />
-
-          {/* Export by date */}
-          <div className="flex items-center gap-2">
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
+          <div className="flex items-center gap-3">
+            <select
+              value={exportScope}
+              onChange={(e) => setExportScope(e.target.value as any)}
               className="px-3 py-2 border rounded-lg text-sm"
               disabled={loading}
-            />
+            >
+              <option value="filtered">Export filtered</option>
+              <option value="all">Export all</option>
+              <option value="date">Export by date</option>
+            </select>
+
+            {exportScope === 'date' && (
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                className="px-3 py-2 border rounded-lg text-sm"
+                disabled={loading}
+              />
+            )}
 
             <ExportButton
-              data={listings.filter((l) =>
-                new Date(l.createdAt).toISOString().split("T")[0] === selectedDate
-              )}
-              filename={`listings-${selectedDate}`}
+              data={
+                exportScope === 'all'
+                  ? listings
+                  : exportScope === 'date'
+                  ? listings.filter((l) => new Date(l.createdAt).toISOString().split('T')[0] === selectedDate)
+                  : filteredListings
+              }
+              filename={exportScope === 'all' ? `listings-all` : exportScope === 'date' ? `listings-${selectedDate}` : 'listings'}
               dataType="listings"
               disabled={loading}
             />
