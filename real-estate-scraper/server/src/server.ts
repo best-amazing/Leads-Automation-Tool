@@ -35,12 +35,12 @@ async function startServer() {
     });
 
       // Initialize cron jobs and start cron manager
-      try {
-        initializeDailyScrapeJob();
-        cronManager.startAll();
-      } catch (err) {
-        logger.error("Failed to initialize cron jobs:", err);
-      }
+      // try {
+      //   initializeDailyScrapeJob();
+      //   cronManager.startAll();
+      // } catch (err) {
+      //   logger.error("Failed to initialize cron jobs:", err);
+      // }
 
     // Graceful shutdown
     process.on("SIGTERM", async () => {
