@@ -6,6 +6,9 @@ import { RawListing } from "../../types/listing";
 import { logger } from "../../utils/logger";
 import { parseApiResponse, parseDomListings } from "./investorlift.parser";
 import { chromium, BrowserContext, Page, Browser } from "playwright";
+import { requestStop } from "../../scrape/status";
+import { upsertMany } from "../../db/repository";
+import { ListingUpsertPayload } from "../../types/listing";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -459,7 +462,54 @@ export class InvestorLiftScraper extends BaseScraper {
         }
 
         listings = await this.enrichWithFullAddresses(context, listings);
-        return listings;
+
+        // Only keep listings with a full street address (street number + street
+        // name or common street type). This avoids storing city-only stubs.
+        const hasFullAddress = (addr?: string | null): boolean => {
+          if (!addr) return false;
+          const a = String(addr).trim();
+          // Common street type tokens and street number heuristic
+          if (/\d+\s+\w+/.test(a)) return true;
+          if (/\b(street|st\.?|avenue|ave\.?|road|rd\.?|drive|dr\.?|lane|ln\.?|circle|cir\.?|court|ct\.?|boulevard|blvd\.?|way|terrace|ter\.?|place|pl\.?)\b/i.test(a)) return true;
+          return false;
+        };
+
+        const fullOnly = listings.filter((l) => hasFullAddress(l.address));
+        logger.info(`[investorlift] ${fullOnly.length}/${listings.length} listings have full addresses`);
+
+        if (fullOnly.length > 0) {
+          // Persist full-address listings directly to the DB, bypassing the
+          // base runner filters so we guarantee storage of full addresses.
+          try {
+            const payloads: ListingUpsertPayload[] = fullOnly.map((l) => ({
+              url: l.url,
+              source: this.sourceName,
+              title: l.title,
+              price: l.price,
+              address: l.address,
+              location: l.location,
+              propertyType: l.propertyType,
+              bedrooms: l.bedrooms,
+              bathrooms: l.bathrooms,
+              squareFeet: l.squareFeet,
+              description: l.description,
+              ownerName: l.ownerName,
+              ownerPhone: l.ownerPhone,
+              listedAt: (l as any).listedAt,
+            }));
+
+            await upsertMany(payloads);
+            logger.info(`[investorlift] Directly upserted ${payloads.length} full-address listings`);
+
+            requestStop();
+            logger.info("[investorlift] Requested global stop after storing full-address listings");
+          } catch (err) {
+            logger.warn(`[investorlift] Failed to persist full-address listings: ${err}`);
+          }
+        }
+
+        // Return empty so the base runner does not attempt to save/filter them again
+        return [];
       } finally {
         await page.close();
       }
