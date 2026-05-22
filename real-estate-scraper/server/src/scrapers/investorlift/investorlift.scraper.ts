@@ -271,54 +271,59 @@ export class InvestorLiftScraper extends BaseScraper {
     `(${listings.length} candidates)`
   );
 
-  const enriched: RawListing[] = [];
+  const result: RawListing[] = [];
+  let fetchedCount = 0;
 
-  for (const listing of listings) {
-    // Hard stop once we've collected the maximum allowed addresses
-    if (enriched.length >= ADDRESS_FETCH_LIMIT) {
-      logger.info(
-        `[investorlift] Address fetch limit of ${ADDRESS_FETCH_LIMIT} reached — stopping enrichment`
-      );
-      break;
-    }
+  for (let i = 0; i < listings.length; i++) {
+    const listing = { ...listings[i] } as RawListing;
 
     const listingId = extractListingId(listing.url);
     if (!listingId) {
       logger.warn(`[investorlift] No listing ID in URL: ${listing.url}`);
-      continue; // skip — no ID means we can't fetch, and we don't store without address
+      result.push(listing);
+      continue;
+    }
+
+    // If we've already reached the address-fetch limit, don't attempt more
+    if (fetchedCount >= ADDRESS_FETCH_LIMIT) {
+      result.push(listing);
+      continue;
     }
 
     try {
       const fullAddress = await this.fetchFullAddress(listingId);
-
       if (fullAddress) {
-        enriched.push({ ...listing, address: fullAddress });
+        listing.address = fullAddress;
+        fetchedCount++;
+        logger.debug(`[investorlift] Address enrichment succeeded for ${listingId}`);
       } else {
-        logger.warn(
-          `[investorlift] Skipping listing ${listingId} — no full address returned`
-        );
-        // intentionally not pushed — only store listings with confirmed addresses
+        logger.debug(`[investorlift] No full address for ${listingId} — keeping original listing`);
       }
 
+      result.push(listing);
       await sleep(ADDRESS_REQUEST_DELAY_MS);
     } catch (err) {
       if (err instanceof DailyLimitReachedError) {
         logger.warn(
-          `[investorlift] Daily address request limit reached after ${enriched.length} addresses — stopping.`
+          `[investorlift] Daily address request limit reached after ${fetchedCount} addresses — stopping enrichment attempts.`
         );
-        break; // stop immediately, don't process any more
+        // Push remaining listings unchanged
+        for (let j = i; j < listings.length; j++) {
+          result.push(listings[j]);
+        }
+        break;
       }
       logger.warn(`[investorlift] Address fetch failed for ${listingId}: ${err}`);
-      // skip this listing — failed fetches are not stored
+      // On other errors, keep the original listing
+      result.push(listing);
     }
   }
 
   logger.info(
-    `[investorlift] Address enrichment complete — ` +
-    `${enriched.length} listings stored (all with full addresses)`
+    `[investorlift] Address enrichment complete — ${fetchedCount} addresses fetched, ${result.length} total listings returned`
   );
 
-  return enriched;
+  return result;
 }
 
   // ── MAIN SCRAPE ────────────────────────────────────────────────────────────

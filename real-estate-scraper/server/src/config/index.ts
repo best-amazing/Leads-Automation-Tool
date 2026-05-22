@@ -44,24 +44,34 @@ export const config = {
 
   // ── Filtering criteria ────────────────────────────────────────────────────
   filter: {
-    minPrice: 50_000,
-    maxPrice: 300_000,
-    allowedPropertyTypes: [
-      "single_family",
-      "multi_family",
-      "duplex",
-    ] as string[],
-    keywords: [
-      "single family", "single-family", "single family home",
-      "investment", "rental", "duplex", "multi-family", "multifamily",
-    ],
-    propertyTypeTokens: [
-      "single family", "single-family", "sfh", "duplex", "multi-family", "multifamily",
-    ],
-    allowedLocations: [
-      "ohio", "oh", "cleveland", "columbus", "toledo", "milwaukee", "wisconsin", "wi",
-    ],
-  },
+  minPrice: 50_000,
+  maxPrice: 300_000,
+  allowedPropertyTypes: [
+    "single_family",
+    "multi_family",
+    "duplex",
+  ] as string[],
+  keywords: [
+    "single family", "single-family", "single family home",
+    "investment", "rental", "duplex", "multi-family", "multifamily",
+    // ── LoopNet-specific terms ──
+    "apartment", "unit", "units", "plex", "for sale",
+    "residential", "income", "cash flow", "cap rate",
+  ],
+  propertyTypeTokens: [
+    "single family", "single-family", "sfh", "duplex",
+    "multi-family", "multifamily",
+    // ── LoopNet-specific tokens ──
+    "apartment", "unit", "units", "triplex", "fourplex",
+    "quadplex", "mixed use", "mixed-use",
+  ],
+  allowedLocations: [
+    "ohio", "oh", "cleveland", "columbus", "toledo",
+    "milwaukee", "wisconsin", "wi",
+    // ── Add common OH/WI cities that appear in LoopNet addresses ──
+    "cincinnati", "akron", "dayton",
+  ],
+},
 
   // ── Sources ───────────────────────────────────────────────────────────────
   sources: {

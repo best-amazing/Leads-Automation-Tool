@@ -1,35 +1,4 @@
 // src/scrapers/crexi/crexi.scraper.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// Crexi.com scraper
-//
-// Requires a RESIDENTIAL proxy — datacenter IPs are blocked by Cloudflare.
-// Set CREXI_PROXY_URL in .env to override the global proxy for this scraper.
-// If not set, falls back to the global config proxyUrl.
-//
-// Anti-bot approach:
-//   • playwright-extra + stealth plugin (patches 20+ detection vectors)
-//   • Cloudflare challenge auto-wait (waits up to 25s for JS challenge to pass)
-//   • API response interception — captures Crexi's XHR JSON before Angular renders
-//   • Realistic headers + navigator overrides
-//   • Human-like timing with random jitter
-//
-// Pagination:
-//   After the initial page load and scroll we click Crexi's Angular pagination
-//   "next page" button (crx-pagination or [aria-label="Next page"]) and wait
-//   for fresh api.crexi.com/assets/search XHR responses, repeating up to
-//   CREXI_MAX_PAGES per URL.  This is the most reliable way to get >50 listings
-//   per search URL without triggering extra CF checks.
-//
-// NOTE on Cloudflare detection:
-//   We intentionally DO NOT treat bare <crx-app> as "Crexi content" — it is
-//   always present as an empty Angular shell even on CF challenge pages.
-//   Only rendered listing elements (tiles, price, header toolbar) count.
-//
-// NOTE on Angular hydration:
-//   After CF clears we wait for networkidle before polling for tiles, giving
-//   Angular time to bootstrap and fire its search XHR. The XHR responses are
-//   also intercepted directly so we get JSON data even if tiles render slowly.
-// ─────────────────────────────────────────────────────────────────────────────
 
 import { chromium } from "playwright-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
@@ -43,43 +12,35 @@ import { config } from "../../config";
 import * as fs from "fs";
 import * as path from "path";
 
-// Apply stealth plugin — must be done before any launch() call
 chromium.use(StealthPlugin());
 
 // ── Config ─────────────────────────────────────────────────────────────────
 
-const CREXI_PROXY_URL =
-  process.env.CREXI_PROXY_URL ||
-  (config as any).crexiProxyUrl ||
-  config.proxyUrl ||
-  "";
+// Proxy pool: CREXI_PROXY_URL wins if set, otherwise fall back to PROXY_URLS rotation
+const CREXI_PROXY_POOL: string[] = (() => {
+  if (process.env.CREXI_PROXY_URL) return [process.env.CREXI_PROXY_URL];
+  const urls = (config as any).proxyUrls;
+  if (Array.isArray(urls) && urls.length > 0) return urls;
+  if (config.proxyUrl) return [config.proxyUrl];
+  return [];
+})();
 
 const SEARCH_URLS: string[] = config.sources.crexi.searchUrls;
-
-// Maximum pages to paginate per search URL (each page ≈ 50 listings)
 const MAX_PAGES_PER_URL = Number(process.env.CREXI_MAX_PAGES ?? 5);
 
 const SCROLL_PASSES   = 6;
 const SCROLL_STEP     = 900;
 const SCROLL_DELAY_MS = 1800;
-
-// How long to wait for Cloudflare to auto-resolve (ms)
-const CF_TIMEOUT_MS = 25_000;
-
-// How long to wait for Angular listing tiles to appear after CF clears (ms)
+const CF_TIMEOUT_MS   = 25_000;
 const LISTINGS_WAIT_MS = 45_000;
-
-// How long to wait after clicking "next page" for new API responses (ms)
 const PAGINATION_WAIT_MS = 12_000;
 
-// Crexi API URL substrings to intercept for JSON data
 const CREXI_API_PATTERNS = [
   "api.crexi.com/assets/search",
   "api.crexi.com/properties/search",
   "/assets/search",
 ];
 
-// Pagination button selectors — tried in order
 const NEXT_PAGE_SELECTORS = [
   "button[aria-label='Next page']",
   "button[aria-label='next page']",
@@ -88,7 +49,6 @@ const NEXT_PAGE_SELECTORS = [
   ".pagination-next",
   "[data-cy='paginationNext']",
   "button.next-page",
-  // Fallback: a button containing a right-arrow icon
   "button svg[data-icon='chevron-right']",
   "button svg[data-icon='angle-right']",
 ];
@@ -102,24 +62,21 @@ export class CrexiScraper extends BaseScraper {
       `[crexi] ${SEARCH_URLS.length} target URL(s):\n` +
         SEARCH_URLS.map((u) => `  • ${u}`).join("\n")
     );
-    if (!CREXI_PROXY_URL) {
+    if (CREXI_PROXY_POOL.length === 0) {
       logger.warn(
         "[crexi] No proxy configured. Crexi requires a RESIDENTIAL proxy to bypass Cloudflare.\n" +
           "  Set CREXI_PROXY_URL=http://user:pass@host:port in .env"
       );
     } else {
-      const masked = CREXI_PROXY_URL.replace(/:\/\/([^:]+):([^@]+)@/, "://$1:***@");
-      logger.info(`[crexi] Using proxy: ${masked}`);
+      logger.info(`[crexi] Proxy pool: ${CREXI_PROXY_POOL.length} proxy(ies) available`);
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Launch a dedicated stealth browser for Crexi
-  // ─────────────────────────────────────────────────────────────────────────
+  // ── Launch browser with a specific proxy ──────────────────────────────────
 
-  private async launchBrowser(): Promise<Browser> {
+  private async launchBrowser(proxyUrl?: string): Promise<Browser> {
     const launchOptions: any = {
-      headless:       true,
+      headless: true,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -135,16 +92,16 @@ export class CrexiScraper extends BaseScraper {
       ],
     };
 
-    if (CREXI_PROXY_URL) {
-      launchOptions.proxy = { server: CREXI_PROXY_URL };
+    if (proxyUrl) {
+      launchOptions.proxy = { server: proxyUrl };
+      const masked = proxyUrl.replace(/:\/\/([^:]+):([^@]+)@/, "://$1:***@");
+      logger.debug(`[crexi] Browser proxy: ${masked}`);
     }
 
     return chromium.launch(launchOptions) as unknown as Browser;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Anti-detection page setup
-  // ─────────────────────────────────────────────────────────────────────────
+  // ── Anti-detection page setup ─────────────────────────────────────────────
 
   private async setupPage(page: Page): Promise<void> {
     await page.addInitScript(() => {
@@ -174,11 +131,7 @@ export class CrexiScraper extends BaseScraper {
     });
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Wait for Cloudflare challenge to auto-resolve.
-  // Bare <crx-app> is intentionally excluded — it is an empty Angular shell
-  // present even on challenge pages, causing false "cleared" signals.
-  // ─────────────────────────────────────────────────────────────────────────
+  // ── Cloudflare wait ───────────────────────────────────────────────────────
 
   private async waitForCloudflare(page: Page): Promise<boolean> {
     const start = Date.now();
@@ -210,7 +163,7 @@ export class CrexiScraper extends BaseScraper {
         );
       }).catch(() => false);
 
-      const urlHasCF   = url.includes("__cf_chl");
+      const urlHasCF    = url.includes("__cf_chl");
       const isChallenge = (isCFTitle || hasCFContent || urlHasCF) && !hasCrexiContent;
 
       if (!isChallenge) {
@@ -227,9 +180,7 @@ export class CrexiScraper extends BaseScraper {
     return false;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Wait for Angular listing tiles to appear.
-  // ─────────────────────────────────────────────────────────────────────────
+  // ── Wait for Angular listing tiles ───────────────────────────────────────
 
   private async waitForListings(page: Page): Promise<boolean> {
     try {
@@ -249,9 +200,7 @@ export class CrexiScraper extends BaseScraper {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Scroll to trigger lazy-loaded content
-  // ─────────────────────────────────────────────────────────────────────────
+  // ── Scroll to load lazy content ───────────────────────────────────────────
 
   private async scrollToLoadMore(page: Page): Promise<void> {
     logger.info(`[crexi] Scrolling (${SCROLL_PASSES} passes)…`);
@@ -266,15 +215,12 @@ export class CrexiScraper extends BaseScraper {
     await sleep(600);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Try to click the "next page" pagination button.
-  // Returns true if a button was found and clicked.
-  // ─────────────────────────────────────────────────────────────────────────
+  // ── Click next page button ────────────────────────────────────────────────
 
   private async clickNextPage(page: Page): Promise<boolean> {
     for (const selector of NEXT_PAGE_SELECTORS) {
       try {
-        const btn = page.locator(selector).first();
+        const btn   = page.locator(selector).first();
         const count = await btn.count();
         if (count === 0) continue;
 
@@ -292,12 +238,9 @@ export class CrexiScraper extends BaseScraper {
         await btn.click();
         logger.info(`[crexi] Clicked next-page button via "${selector}"`);
         return true;
-      } catch {
-        // selector didn't match — try the next one
-      }
+      } catch { /* try next selector */ }
     }
 
-    // Last-resort: evaluate in page context to find any "Next" text button
     const clicked = await page.evaluate(() => {
       const buttons = Array.from(document.querySelectorAll("button"));
       const nextBtn = buttons.find(
@@ -312,65 +255,41 @@ export class CrexiScraper extends BaseScraper {
       return false;
     }).catch(() => false);
 
-    if (clicked) {
-      logger.info("[crexi] Clicked next-page via text/aria-label fallback");
-    } else {
-      logger.info("[crexi] No clickable next-page button found");
-    }
+    if (clicked) logger.info("[crexi] Clicked next-page via text/aria-label fallback");
+    else         logger.info("[crexi] No clickable next-page button found");
     return clicked;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Wait for a fresh assets/search API response to arrive after a page turn.
-  // Resolves with any new listings captured during the wait window.
-  // ─────────────────────────────────────────────────────────────────────────
+  // ── Wait for page-turn XHR response ──────────────────────────────────────
 
   private async waitForPageTurnResponse(
     page: Page,
-    sourceUrl: string,
-    source: string
-  ): Promise<RawListing[]> {
-    return new Promise<RawListing[]>((resolve) => {
-      const collected: RawListing[] = [];
-      let settled = false;
+    previousCount: number,
+    getIntercepted: () => number
+  ): Promise<boolean> {
+    try {
+      await page.waitForLoadState("networkidle", { timeout: 8_000 });
+    } catch { /* fine */ }
 
-      const handler = async (response: Response) => {
-        if (settled) return;
-        const rUrl = response.url();
-        if (!CREXI_API_PATTERNS.some(p => rUrl.includes(p))) return;
-        try {
-          const ct = response.headers()["content-type"] ?? "";
-          if (!ct.includes("application/json")) return;
-          const json = await response.json().catch(() => null);
-          if (!json) return;
-          const listings = parseCrxiListings("", json, sourceUrl, source);
-          if (listings.length > 0) {
-            logger.info(`[crexi] Page-turn API captured ${listings.length} listings`);
-            collected.push(...listings);
-          }
-        } catch { /* ignore */ }
-      };
+    const deadline = Date.now() + PAGINATION_WAIT_MS;
+    while (Date.now() < deadline) {
+      await sleep(600);
+      if (getIntercepted() > previousCount) return true;
+    }
 
-      page.on("response", handler);
-
-      setTimeout(() => {
-        settled = true;
-        page.off("response", handler);
-        resolve(collected);
-      }, PAGINATION_WAIT_MS);
-    });
+    const hasTiles = await page.evaluate(() =>
+      document.querySelectorAll("crx-sales-property-tile").length > 0
+    ).catch(() => false);
+    return hasTiles;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Scrape a single search URL with pagination
-  // ─────────────────────────────────────────────────────────────────────────
+  // ── Scrape one URL (pagination included) ─────────────────────────────────
 
   private async scrapeUrl(page: Page, searchUrl: string): Promise<RawListing[]> {
     logger.info(`[crexi] → ${searchUrl}`);
 
     const interceptedListings: RawListing[] = [];
 
-    // Intercept API responses before navigation so we never miss early XHRs
     const responseHandler = async (response: Response) => {
       const rUrl = response.url();
       if (!CREXI_API_PATTERNS.some(p => rUrl.includes(p))) return;
@@ -385,7 +304,7 @@ export class CrexiScraper extends BaseScraper {
           logger.info(`[crexi] API interception captured ${listings.length} listings from ${rUrl}`);
           interceptedListings.push(...listings);
         }
-      } catch { /* Non-JSON — ignore */ }
+      } catch { /* non-JSON */ }
     };
 
     page.on("response", responseHandler);
@@ -403,7 +322,6 @@ export class CrexiScraper extends BaseScraper {
         return [];
       }
 
-      // Wait for Angular's initial search XHR
       try {
         await page.waitForLoadState("networkidle", { timeout: 20_000 });
       } catch {
@@ -421,9 +339,6 @@ export class CrexiScraper extends BaseScraper {
 
       await this.scrollToLoadMore(page);
 
-      // ── Pagination loop ─────────────────────────────────────────────────
-      // Page 1 is already loaded. We try to click "next page" up to
-      // (MAX_PAGES_PER_URL - 1) additional times.
       for (let pageNum = 2; pageNum <= MAX_PAGES_PER_URL; pageNum++) {
         logger.info(`[crexi] Attempting pagination to page ${pageNum}…`);
         const clicked = await this.clickNextPage(page);
@@ -432,28 +347,30 @@ export class CrexiScraper extends BaseScraper {
           break;
         }
 
-        // Wait for new API responses triggered by the page turn
-        const newListings = await this.waitForPageTurnResponse(page, searchUrl, "crexi");
-        if (newListings.length > 0) {
-          interceptedListings.push(...newListings);
-          logger.info(`[crexi] Running total: ${interceptedListings.length} listings`);
-        } else {
+        const countBefore = interceptedListings.length;
+        const gotNew = await this.waitForPageTurnResponse(
+          page, countBefore, () => interceptedListings.length
+        );
+
+        if (!gotNew) {
           logger.info(`[crexi] No new listings on page ${pageNum} — stopping pagination`);
           break;
         }
 
-        // Scroll new content into view and let Angular settle
+        logger.info(
+          `[crexi] Page ${pageNum}: +${interceptedListings.length - countBefore} listings ` +
+          `(running total: ${interceptedListings.length})`
+        );
+
         await this.scrollToLoadMore(page);
         await sleep(1000 + Math.random() * 500);
       }
 
-      // ── Return results ──────────────────────────────────────────────────
       if (interceptedListings.length > 0) {
         logger.info(`[crexi] Final intercepted count: ${interceptedListings.length}`);
         return this.dedupeListings(interceptedListings);
       }
 
-      // Fall back to HTML parsing
       const html = await page.content();
       this.saveDebug(html, `page_${this.slugify(searchUrl)}`);
       const listings = parseCrxiListings(html, null, searchUrl, "crexi");
@@ -469,9 +386,7 @@ export class CrexiScraper extends BaseScraper {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Main scrape
-  // ─────────────────────────────────────────────────────────────────────────
+  // ── Main scrape — fresh browser + rotated proxy per URL ───────────────────
 
   protected async scrapePage(
     _handle: BrowserHandle,
@@ -479,56 +394,59 @@ export class CrexiScraper extends BaseScraper {
   ): Promise<RawListing[]> {
     if (pageNumber !== 1) return [];
 
-    let browser: Browser | undefined;
+    const allListings: RawListing[] = [];
 
-    try {
-      browser = await this.launchBrowser();
+    for (let i = 0; i < SEARCH_URLS.length; i++) {
+      const url      = SEARCH_URLS[i];
+      const proxyUrl = CREXI_PROXY_POOL.length > 0
+        ? CREXI_PROXY_POOL[i % CREXI_PROXY_POOL.length]
+        : undefined;
 
-      const context = await browser.newContext({
-        viewport:   { width: 1440, height: 900 },
-        locale:     "en-US",
-        timezoneId: "America/New_York",
-        userAgent:
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-          "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      });
+      logger.info(`[crexi] URL ${i + 1}/${SEARCH_URLS.length}`);
 
-      const page = await context.newPage();
-      await this.setupPage(page);
+      let browser: Browser | undefined;
+      try {
+        browser = await this.launchBrowser(proxyUrl);
 
-      const allListings: RawListing[] = [];
+        const context = await browser.newContext({
+          viewport:   { width: 1440, height: 900 },
+          locale:     "en-US",
+          timezoneId: "America/New_York",
+          userAgent:
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        });
 
-      for (let i = 0; i < SEARCH_URLS.length; i++) {
-        const url = SEARCH_URLS[i];
-        logger.info(`[crexi] URL ${i + 1}/${SEARCH_URLS.length}`);
+        const page = await context.newPage();
+        await this.setupPage(page);
 
         const listings = await this.scrapeUrl(page, url);
         allListings.push(...listings);
 
-        if (i < SEARCH_URLS.length - 1) {
-          const pause = 4000 + Math.random() * 3000;
-          logger.info(`[crexi] Pausing ${Math.round(pause / 1000)}s before next URL…`);
-          await sleep(pause);
-        }
+        await context.close();
+      } catch (err: any) {
+        logger.error(`[crexi] Browser error on URL ${i + 1}: ${err.message}`);
+      } finally {
+        await browser?.close(); // Full teardown — clean slate for next URL
       }
 
-      await context.close();
-
-      const deduped = this.dedupeListings(allListings);
-      logger.info(`[crexi] Total: ${deduped.length} unique listings`);
-      return deduped;
-    } finally {
-      await browser?.close();
+      if (i < SEARCH_URLS.length - 1) {
+        const pause = 12_000 + Math.random() * 8_000; // 12–20s between URLs
+        logger.info(`[crexi] Pausing ${Math.round(pause / 1000)}s before next URL…`);
+        await sleep(pause);
+      }
     }
+
+    const deduped = this.dedupeListings(allListings);
+    logger.info(`[crexi] Total: ${deduped.length} unique listings`);
+    return deduped;
   }
 
   protected shouldContinue(pageNumber: number): boolean {
     return pageNumber <= 1;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Helpers
-  // ─────────────────────────────────────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────────────────
 
   private dedupeListings(listings: RawListing[]): RawListing[] {
     const seen = new Set<string>();

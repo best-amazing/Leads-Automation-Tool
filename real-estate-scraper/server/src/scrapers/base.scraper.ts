@@ -95,13 +95,14 @@ export abstract class BaseScraper {
   // ── Filtering helpers (available to all scrapers) ─────────────────────────
 
   protected isRelevant(listing: RawListing): boolean {
-    const text =
-      `${listing.title ?? ""} ${listing.address ?? ""} ${listing.description ?? ""}`.toLowerCase();
-    return (
-      config.filter.keywords.some((k) => text.includes(k)) ||
-      config.filter.propertyTypeTokens.some((t) => text.includes(t))
-    );
+  const text = `${listing.title ?? ""} ${listing.address ?? ""} ${listing.description ?? ""}`.toLowerCase();
+  const matched = config.filter.keywords.find((k) => text.includes(k)) ||
+                  config.filter.propertyTypeTokens.find((t) => text.includes(t));
+  if (!matched) {
+    logger.debug(`[${this.sourceName}] isRelevant MISS | text snippet: "${text.slice(0, 120)}"`);
   }
+  return !!matched;
+}
 
   protected passesFilter(listing: RawListing): boolean {
     if (!listing.price) return false;

@@ -36,12 +36,36 @@ export function extractPropwireAddressComponents(
     street = parts[0];
   }
 
-  if (parts.length >= 2) {
-    city = parts[1];
+  if (parts.length === 2) {
+    // Likely format: "City, State ZipCode" (no street)
+    const first = parts[0];
+    const second = parts[1];
+    // If first starts with a digit assume it's a street; otherwise treat as city
+    if (/^\d/.test(first)) {
+      street = first;
+      // parse second as "City" or "State Zip"
+      const maybeStateZip = second.split(/\s+/);
+      if (maybeStateZip.length >= 1) {
+        // If second starts with a two-letter state code, treat as state
+        if (/^[A-Za-z]{2}$/.test(maybeStateZip[0])) {
+          state = maybeStateZip[0];
+          if (maybeStateZip.length >= 2) zip = maybeStateZip[1];
+        } else {
+          city = second;
+        }
+      }
+    } else {
+      city = first;
+      const stateZipParts = second.trim().split(/\s+/);
+      if (stateZipParts.length >= 1) state = stateZipParts[0];
+      if (stateZipParts.length >= 2) zip = stateZipParts[1];
+    }
   }
 
   if (parts.length >= 3) {
-    // Last part is "State ZipCode"
+    // Standard: "Street, City, State ZipCode"
+    street = street ?? parts[0];
+    city = city ?? parts[1];
     const stateZip = parts[2].trim();
     const stateZipParts = stateZip.split(/\s+/);
     if (stateZipParts.length >= 1) {
@@ -62,15 +86,21 @@ export function extractPropwireAddressComponents(
 export function formatPropwireAddress(components: PropwireAddressComponents): string | undefined {
   const { street, city, state, zip } = components;
 
-  if (!street || !city || !state) {
-    return undefined;
+  // If we have a street, prefer the full street format
+  if (street && city && state) {
+    const parts = [street, city, state];
+    if (zip) parts.push(zip);
+    return parts.join(", ");
   }
 
-  // Build Propwire format with or without zip
-  const parts = [street, city, state];
-  if (zip) parts.push(zip);
+  // Fallback: city/state[/zip] (e.g. "Akron, OH 44306")
+  if (city && state) {
+    const parts = [city, state];
+    if (zip) parts.push(zip);
+    return parts.join(", ");
+  }
 
-  return parts.join(", ");
+  return undefined;
 }
 
 /**

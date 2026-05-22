@@ -7,13 +7,16 @@
 //   these XHR responses the JSON is passed here as `nextData`. The tree-walker
 //   finds the listings array and maps it to RawListing objects.
 //
-//   Known Crexi API shapes:
-//     { data: { assets: [ { id, name, askingPrice, address: { city, state } } ] } }
+//   Known Crexi API shapes (newest first):
+//     { data: { assets: [ { id, name, askingPrice, locations: [{ city, stateCode }] } ] } }
+//     { data: { assets: [ { id, name, askingPrice, address: { city, stateCode } } ] } }
 //     { assets: [ ... ] }
 //     { results: [ ... ] }
 //
-//   ⚠  IMPORTANT: Crexi's API wraps location inside a nested `address` object:
-//        asset.address.city  /  asset.address.stateCode  /  asset.address.state
+//   ⚠  IMPORTANT: Crexi's API has changed over time. Location data may appear as:
+//        (a) r.locations[0].city / r.locations[0].stateCode   ← current shape
+//        (b) r.address.city / r.address.stateCode             ← older nested shape
+//        (c) r.city / r.stateCode                             ← legacy flat shape
 //      The parser normalises all known shapes into flat city/state strings.
 //
 // PATH B — __NEXT_DATA__ JSON (not applicable — Crexi is Angular, not Next.js)
@@ -31,89 +34,122 @@ import { logger } from "../../utils/logger";
 // ── Nested address shape returned by api.crexi.com ────────────────────────
 
 interface CrxAddress {
-  street?:       string;
+  street?:        string;
   streetAddress?: string;
-  address1?:     string;
-  address2?:     string;
-  city?:         string;
-  cityName?:     string;
-  state?:        string;
-  stateCode?:    string;
-  stateName?:    string;
-  zip?:          string;
-  zipCode?:      string;
-  postalCode?:   string;
-  county?:       string;
-  country?:      string;
+  address1?:      string;
+  address2?:      string;
+  city?:          string;
+  cityName?:      string;
+  state?:         string;
+  stateCode?:     string;
+  stateName?:     string;
+  zip?:           string;
+  zipCode?:       string;
+  postalCode?:    string;
+  county?:        string;
+  country?:       string;
+}
+
+// ── Location entry in the `locations` array (current API shape) ───────────
+
+interface CrxLocation {
+  city?:          string;
+  cityName?:      string;
+  state?:         string;
+  stateCode?:     string;
+  stateName?:     string;
+  street?:        string;
+  streetAddress?: string;
+  address1?:      string;
+  zip?:           string;
+  zipCode?:       string;
+  postalCode?:    string;
+  latitude?:      number;
+  longitude?:     number;
+  county?:        string;
+  country?:       string;
+  fullAddress?:   string;
 }
 
 // ── Raw asset shape from api.crexi.com/assets/search ──────────────────────
 
 interface CrxRaw {
   // Identity
-  id?:           string | number;
-  name?:         string;
-  title?:        string;
-  slug?:         string;
-  url?:          string;
+  id?:            string | number;
+  name?:          string;
+  title?:         string;
+  slug?:          string;
+  urlSlug?:       string;   // Crexi uses urlSlug, not slug
+  url?:           string;
 
-  // Location — flat (legacy / HTML path)
-  address?:      string | CrxAddress;   // may be string OR nested object
-  city?:         string;
-  cityName?:     string;
-  state?:        string;
-  stateCode?:    string;
-  stateName?:    string;
-  zip?:          string;
-  postalCode?:   string;
-  latitude?:     number;
-  longitude?:    number;
+  // Location — current API shape: array of location objects
+  locations?:     CrxLocation[];
+
+  // Location — legacy flat fields
+  address?:       string | CrxAddress;
+  city?:          string;
+  cityName?:      string;
+  state?:         string;
+  stateCode?:     string;
+  stateName?:     string;
+  zip?:           string;
+  postalCode?:    string;
+  latitude?:      number;
+  longitude?:     number;
 
   // Financials
-  askingPrice?:  number;
-  price?:        number;
-  listPrice?:    number;
-  capRate?:      number;
-  noi?:          number;
-  noiAnnual?:    number;
-  grossRevenue?: number;
+  askingPrice?:   number;
+  price?:         number;
+  listPrice?:     number;
+  capRate?:       number;
+  noi?:           number;
+  noiAnnual?:     number;
+  netOperatingIncome?: number;
+  grossRevenue?:  number;
 
   // Property type
-  propertyType?: string;
-  type?:         string;
-  assetType?:    string;
-  listingType?:  string;
-  assetClass?:   string;
-  category?:     string;
+  propertyType?:  string;
+  type?:          string;
+  types?:         string[];  // Crexi often sends an array of type strings
+  assetType?:     string;
+  listingType?:   string;
+  assetClass?:    string;
+  category?:      string;
 
   // Size
-  squareFeet?:      number;
-  sqft?:            number;
-  buildingSize?:    number;
-  buildingSquareFeet?: number;
-  totalSquareFeet?: number;
-  lotSize?:         number;
-  lotSqft?:         number;
+  squareFeet?:          number;
+  squareFootage?:       number;   // Crexi field name variant
+  sqft?:                number;
+  buildingSize?:        number;
+  buildingSquareFeet?:  number;
+  totalSquareFeet?:     number;
+  lotSize?:             number;
+  lotSqft?:             number;
+  lotSizeAcres?:        number;
 
   // Unit counts
-  units?:       number;
-  unitCount?:   number;
-  totalUnits?:  number;
-  bedrooms?:    number;
-  bathrooms?:   number;
-  yearBuilt?:   number;
+  units?:         number;
+  unitCount?:     number;
+  totalUnits?:    number;
+  bedrooms?:      number;
+  bathrooms?:     number;
+  yearBuilt?:     number;
 
   // Text
-  description?: string;
-  summary?:     string;
-  teaser?:      string;
+  description?:   string;
+  summary?:       string;
+  teaser?:        string;
 
   // Broker
-  brokerName?:  string;
-  brokerPhone?: string;
+  brokerName?:    string;
+  brokerPhone?:   string;
+  brokerageName?: string;
 
-  // Status
-  status?:      string;
+  // Status / meta
+  status?:        string;
+  isNew?:         boolean;
+  activatedOn?:   string;
+  updatedOn?:     string;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -121,81 +157,170 @@ interface CrxRaw {
 function normalisePropertyType(raw: string | undefined): PropertyType {
   if (!raw) return "unknown";
   const t = raw.toLowerCase();
-  if (t.includes("single") || t.includes("sfr") || t.includes("sfh"))                       return "single_family";
-  if (t.includes("duplex"))                                                                   return "duplex";
-  if (t.includes("multi") || t.includes("apartment") || t.includes("residential income"))   return "multi_family";
-  if (t.includes("condo"))                                                                    return "condo";
-  if (t.includes("town"))                                                                     return "townhouse";
+  if (t.includes("single") || t.includes("sfr") || t.includes("sfh"))                     return "single_family";
+  if (t.includes("duplex"))                                                                 return "duplex";
+  if (t.includes("multi") || t.includes("apartment") || t.includes("residential income")) return "multi_family";
+  if (t.includes("condo"))                                                                  return "condo";
+  if (t.includes("town"))                                                                   return "townhouse";
+  return "unknown";
+}
+
+function normalisePropertyTypeFromDescription(desc: string): PropertyType {
+  const d = desc.toLowerCase();
+  if (/single.?family|sfh|sfr|\bsf\b/.test(d))                        return "single_family";
+  if (/\bduplex\b/.test(d))                                             return "duplex";
+  if (/multi.?family|multifamily|apartment|\bunit[s]?\b/.test(d))      return "multi_family";
+  if (/\bcondo\b/.test(d))                                              return "condo";
+  if (/townhouse|town.?home/.test(d))                                   return "townhouse";
   return "unknown";
 }
 
 /**
- * Extract flat city + state strings from a CrxRaw record.
- * Handles both:
- *   - Flat fields:  r.city / r.stateCode / r.state
- *   - Nested object: r.address.city / r.address.stateCode / r.address.state
+ * Safely coerce a value to a plain string, returning undefined if it is
+ * an object, null, or otherwise not a usable string.
+ * This prevents "[object Object]" from leaking into address fields.
  */
-function extractCityState(r: CrxRaw): { city: string | undefined; state: string | undefined } {
-  // Start with flat fields
-  let city:  string | undefined = r.city  ?? r.cityName;
-  let state: string | undefined = r.state ?? r.stateCode ?? r.stateName;
-
-  // Override / fill from nested address object
-  if (r.address && typeof r.address === "object") {
-    const a = r.address as CrxAddress;
-    city  = city  ?? a.city  ?? a.cityName;
-    state = state ?? a.state ?? a.stateCode ?? a.stateName;
-  }
-
-  return { city, state };
+function safeStr(val: unknown): string | undefined {
+  if (val === null || val === undefined) return undefined;
+  if (typeof val === "string") return val.trim() || undefined;
+  if (typeof val === "number") return String(val);
+  // Explicitly reject plain objects / arrays
+  return undefined;
 }
 
 /**
- * Build a human-readable address string. Prefers the nested address object
- * so that street + city + state + zip are all included when available.
+ * Extract flat city + state strings from a CrxRaw record.
+ * Priority order (highest fidelity first):
+ *   1. r.locations[0]          — current Crexi API shape
+ *   2. r.address (object)      — older nested shape
+ *   3. r.city / r.stateCode    — legacy flat fields
  */
-function buildAddress(r: CrxRaw): string | undefined {
-  if (r.address && typeof r.address === "object") {
-    const a = r.address as CrxAddress;
-    const street = a.street ?? a.streetAddress ?? a.address1 ?? "";
-    const city   = a.city   ?? a.cityName ?? r.city ?? r.cityName ?? "";
-    const state  = a.state  ?? a.stateCode ?? a.stateName ?? r.state ?? r.stateCode ?? r.stateName ?? "";
-    const zip    = a.zip    ?? a.zipCode ?? a.postalCode ?? r.zip ?? r.postalCode ?? "";
-    const parts  = [street, city, state, zip].filter(Boolean);
-    return parts.length > 0 ? parts.join(", ") : undefined;
+function extractCityState(r: CrxRaw): { city: string | undefined; state: string | undefined } {
+  // ── 1. locations array (current API shape) ──────────────────────────────
+  if (Array.isArray(r.locations) && r.locations.length > 0) {
+    const loc = r.locations[0];
+    const city  = safeStr(loc.city)  ?? safeStr(loc.cityName);
+    const state = safeStr(loc.stateCode) ?? safeStr(loc.state) ?? safeStr(loc.stateName);
+    if (city || state) return { city, state };
   }
 
-  // Flat string address
+  // ── 2. nested address object ─────────────────────────────────────────────
+  if (r.address && typeof r.address === "object") {
+    const a = r.address as CrxAddress;
+    const city  = safeStr(a.city)      ?? safeStr(a.cityName);
+    const state = safeStr(a.stateCode) ?? safeStr(a.state) ?? safeStr(a.stateName);
+    if (city || state) return { city, state };
+  }
+
+  // ── 3. legacy flat fields ────────────────────────────────────────────────
+  return {
+    city:  safeStr(r.city)      ?? safeStr(r.cityName),
+    state: safeStr(r.stateCode) ?? safeStr(r.state) ?? safeStr(r.stateName),
+  };
+}
+
+/**
+ * Build a human-readable address string.
+ * Priority order mirrors extractCityState — newest API shape first.
+ */
+function buildAddress(r: CrxRaw): string | undefined {
+  // ── 1. locations array ───────────────────────────────────────────────────
+  if (Array.isArray(r.locations) && r.locations.length > 0) {
+    const loc = r.locations[0];
+
+    // Some location objects carry a pre-built fullAddress string
+    const full = safeStr(loc.fullAddress);
+    if (full) return full;
+
+    const parts = [
+      safeStr(loc.street) ?? safeStr(loc.streetAddress) ?? safeStr(loc.address1),
+      safeStr(loc.city)   ?? safeStr(loc.cityName),
+      safeStr(loc.stateCode) ?? safeStr(loc.state) ?? safeStr(loc.stateName),
+      safeStr(loc.zip)    ?? safeStr(loc.zipCode) ?? safeStr(loc.postalCode),
+    ].filter((p): p is string => p !== undefined);
+    if (parts.length > 0) return parts.join(", ");
+  }
+
+  // ── 2. nested address object ─────────────────────────────────────────────
+  if (r.address && typeof r.address === "object") {
+    const a = r.address as CrxAddress;
+    const parts = [
+      safeStr(a.street) ?? safeStr(a.streetAddress) ?? safeStr(a.address1),
+      safeStr(a.city)   ?? safeStr(a.cityName)   ?? safeStr(r.city)   ?? safeStr(r.cityName),
+      safeStr(a.stateCode) ?? safeStr(a.state) ?? safeStr(a.stateName)
+        ?? safeStr(r.stateCode) ?? safeStr(r.state) ?? safeStr(r.stateName),
+      safeStr(a.zip) ?? safeStr(a.zipCode) ?? safeStr(a.postalCode)
+        ?? safeStr(r.zip) ?? safeStr(r.postalCode),
+    ].filter((p): p is string => p !== undefined);
+    if (parts.length > 0) return parts.join(", ");
+  }
+
+  // ── 3. flat string / flat fields fallback ────────────────────────────────
   const { city, state } = extractCityState(r);
   const parts = [
-    typeof r.address === "string" ? r.address : undefined,
+    typeof r.address === "string" ? safeStr(r.address) : undefined,
     city,
     state,
-    r.zip ?? r.postalCode,
-  ].filter(Boolean);
+    safeStr(r.zip) ?? safeStr(r.postalCode),
+  ].filter((p): p is string => p !== undefined);
   return parts.length > 0 ? parts.join(", ") : undefined;
 }
 
+/**
+ * Build the canonical URL for a listing.
+ * Crexi uses `urlSlug` (not `slug`) in its current API responses.
+ */
 function buildUrl(r: CrxRaw, fallback: string): string {
   if (r.url && r.url.startsWith("http")) return r.url;
-  if (r.slug) return `https://www.crexi.com/properties/${r.slug}`;
-  if (r.id)   return `https://www.crexi.com/properties/${r.id}`;
+  // urlSlug is the current field name; slug kept as legacy fallback
+  const slug = safeStr(r.urlSlug) ?? safeStr(r.slug);
+  if (slug) return `https://www.crexi.com/properties/${slug}`;
+  if (r.id)  return `https://www.crexi.com/properties/${r.id}`;
   return fallback;
+}
+
+/**
+ * Resolve the property type.
+ * `types` is an array in the current API (e.g. ["Multifamily", "Apartment"]).
+ * Falls back to scalar fields, then description heuristics.
+ */
+function resolvePropertyType(r: CrxRaw): PropertyType {
+  // Current API sends types as an array
+  if (Array.isArray(r.types) && r.types.length > 0) {
+    const result = normalisePropertyType(r.types[0]);
+    if (result !== "unknown") return result;
+    // Try remaining entries before giving up
+    for (const t of r.types.slice(1)) {
+      const r2 = normalisePropertyType(t);
+      if (r2 !== "unknown") return r2;
+    }
+  }
+
+  const typeRaw = safeStr(r.propertyType) ?? safeStr(r.type) ?? safeStr(r.assetType)
+               ?? safeStr(r.listingType)  ?? safeStr(r.assetClass) ?? safeStr(r.category);
+  if (typeRaw) {
+    const result = normalisePropertyType(typeRaw);
+    if (result !== "unknown") return result;
+  }
+
+  return normalisePropertyTypeFromDescription(
+    safeStr(r.description) ?? safeStr(r.summary) ?? safeStr(r.teaser) ?? ""
+  );
 }
 
 function rawToListing(r: CrxRaw, sourceUrl: string, source: string): RawListing | null {
   const price = r.askingPrice ?? r.price ?? r.listPrice ?? undefined;
-  const sqft  = r.squareFeet  ?? r.sqft  ?? r.buildingSize
-             ?? r.buildingSquareFeet ?? r.totalSquareFeet ?? undefined;
+  const sqft  = r.squareFeet  ?? r.squareFootage ?? r.sqft
+             ?? r.buildingSize ?? r.buildingSquareFeet ?? r.totalSquareFeet ?? undefined;
 
   const { city, state } = extractCityState(r);
   const address  = buildAddress(r);
   const location = [city, state].filter(Boolean).join(", ") || address;
 
-  const propType = normalisePropertyType(
-    r.propertyType ?? r.type ?? r.assetType ?? r.listingType ?? r.assetClass ?? r.category
-  );
-  const title = r.name ?? r.title ?? (r.description ?? "").slice(0, 100);
+  const propType = resolvePropertyType(r);
+
+  const title = safeStr(r.name) ?? safeStr(r.title)
+             ?? (safeStr(r.description) ?? "").slice(0, 100);
   const url   = buildUrl(r, sourceUrl);
 
   // Require at least a price OR an address to emit a listing
@@ -204,7 +329,7 @@ function rawToListing(r: CrxRaw, sourceUrl: string, source: string): RawListing 
   return {
     url,
     source,
-    title:        title.replace(/\s+/g, " ").trim().slice(0, 200),
+    title:        (title ?? "").replace(/\s+/g, " ").trim().slice(0, 200),
     price,
     address,
     location,
@@ -212,9 +337,9 @@ function rawToListing(r: CrxRaw, sourceUrl: string, source: string): RawListing 
     bedrooms:     r.bedrooms,
     bathrooms:    r.bathrooms,
     squareFeet:   sqft ? Math.round(sqft) : undefined,
-    description:  r.description ?? r.summary ?? r.teaser ?? "",
-    ownerName:    r.brokerName,
-    ownerPhone:   r.brokerPhone,
+    description:  safeStr(r.description) ?? safeStr(r.summary) ?? safeStr(r.teaser) ?? "",
+    ownerName:    safeStr(r.brokerName),
+    ownerPhone:   safeStr(r.brokerPhone),
   };
 }
 
@@ -222,6 +347,21 @@ function rawToListing(r: CrxRaw, sourceUrl: string, source: string): RawListing 
 // JSON tree-walker — finds a listings array anywhere in the JSON tree.
 // "assets" is first because that is Crexi's primary API field name.
 // ─────────────────────────────────────────────────────────────────────────────
+
+function isListingObject(obj: any): boolean {
+  if (typeof obj !== "object" || obj === null || Array.isArray(obj)) return false;
+  const listingFields = [
+    // Financial signals
+    "askingPrice", "listPrice", "price",
+    // Location signals — current and legacy
+    "locations", "address", "city", "cityName", "stateCode",
+    // Type / size signals
+    "propertyType", "assetType", "squareFeet", "squareFootage",
+    // Identity signals
+    "urlSlug", "slug", "capRate",
+  ];
+  return listingFields.some((f) => f in obj);
+}
 
 function findListingsArray(node: any, depth = 0): CrxRaw[] | null {
   if (depth > 10 || node === null || typeof node !== "object") return null;
@@ -235,8 +375,10 @@ function findListingsArray(node: any, depth = 0): CrxRaw[] | null {
     return null;
   }
 
+  // Check high-priority keys first so we don't accidentally descend into
+  // a nested object that happens to contain listing-like data at a wrong level.
   const priorityKeys = [
-    "assets",           // Crexi API: { data: { assets: [...] } }
+    "assets",           // Crexi API primary key
     "listings",
     "properties",
     "results",
@@ -253,6 +395,7 @@ function findListingsArray(node: any, depth = 0): CrxRaw[] | null {
     }
   }
 
+  // Fall through to all other keys
   for (const key of Object.keys(node)) {
     if (priorityKeys.includes(key)) continue;
     const found = findListingsArray(node[key], depth + 1);
@@ -260,15 +403,6 @@ function findListingsArray(node: any, depth = 0): CrxRaw[] | null {
   }
 
   return null;
-}
-
-function isListingObject(obj: any): boolean {
-  if (typeof obj !== "object" || obj === null) return false;
-  const listingFields = [
-    "askingPrice", "listPrice", "price", "address", "city", "cityName",
-    "stateCode", "propertyType", "assetType", "squareFeet", "slug", "capRate",
-  ];
-  return listingFields.some((f) => f in obj);
 }
 
 function parseViaJSON(json: any, sourceUrl: string, source: string, label: string): RawListing[] {
@@ -282,12 +416,19 @@ function parseViaJSON(json: any, sourceUrl: string, source: string, label: strin
 
   logger.info(`[crexi-parser] ${label}: found ${rawListings.length} raw items`);
 
-  // Debug: log the first item's keys so we can see the actual API shape
+  // Debug: log shape of first item to make future API changes easy to spot
   if (rawListings.length > 0) {
-    logger.debug(`[crexi-parser] ${label}: first item keys → ${Object.keys(rawListings[0]).join(", ")}`);
-    const firstAddr = (rawListings[0] as any).address;
-    if (firstAddr && typeof firstAddr === "object") {
-      logger.debug(`[crexi-parser] ${label}: address object keys → ${Object.keys(firstAddr).join(", ")}`);
+    const first = rawListings[0] as any;
+    logger.debug(`[crexi-parser] ${label}: first item keys → ${Object.keys(first).join(", ")}`);
+
+    if (Array.isArray(first.locations) && first.locations.length > 0) {
+      logger.debug(
+        `[crexi-parser] ${label}: locations[0] keys → ${Object.keys(first.locations[0]).join(", ")}`
+      );
+    } else if (first.address && typeof first.address === "object") {
+      logger.debug(
+        `[crexi-parser] ${label}: address object keys → ${Object.keys(first.address).join(", ")}`
+      );
     }
   }
 
@@ -391,8 +532,8 @@ function parseViaHTML(html: string, sourceUrl: string, source: string): RawListi
     const descText  = tile.find("[data-cy='propertyDescription']").first().text().trim();
     const propType  = normalisePropertyType(descText);
 
-    const addrEl   = tile.find("[data-cy='propertyAddress']").first();
-    const citySpan = addrEl.find("span").first().text().trim();
+    const addrEl    = tile.find("[data-cy='propertyAddress']").first();
+    const citySpan  = addrEl.find("span").first().text().trim();
     const streetRaw = addrEl.clone().find("span").remove().end().text().trim();
     const address   = [streetRaw, citySpan].filter(Boolean).join(", ") || undefined;
     const location  = citySpan || address;
@@ -452,7 +593,7 @@ export function parseCrxiListings(
     return pathAResults;
   }
 
-  // Path B: __NEXT_DATA__ JSON (same walker, Crexi is Angular so this is a no-op)
+  // Path B: __NEXT_DATA__ JSON (same walker — Crexi is Angular so this is a no-op)
   const pathBResults = parseViaJSON(nextData, sourceUrl, source, "__NEXT_DATA__");
   if (pathBResults.length > 0) {
     logger.info(`[crexi-parser] PATH B succeeded: ${pathBResults.length} listings`);

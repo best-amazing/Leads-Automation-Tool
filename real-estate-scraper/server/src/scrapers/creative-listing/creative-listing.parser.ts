@@ -243,14 +243,17 @@ export function parseListingCards(
     const rawHtml = $.html(el) ?? "";
 
     // URL
+    // Prefer data-listing-id or data attribute if present; fall back to href.
+    const dataId = card.attr("data-listing-id") ?? card.data("listing-id") ?? "";
     const href = card.find(SELECTORS.cardLink).first().attr("href") ?? "";
     if (!href) {
       logger.debug(`[cl-parser] ${pageLabel} card[${i}]: no href — skipping`);
       return;
     }
-    const url = href.startsWith("http")
-      ? href
-      : `https://www.creativelisting.com${href}`;
+    // If a data-listing-id (UUID) exists, build canonical /deals/<id> URL.
+    const url = dataId
+      ? `https://www.creativelisting.com/deals/${dataId}`
+      : (href.startsWith("http") ? href : `https://www.creativelisting.com${href}`);
 
     // Address
     const address = card.find(SELECTORS.cardAddress).first().text().trim();

@@ -408,9 +408,13 @@ function dealToRawListing(deal: CLDeal): RawListing {
     ? `${deal.city}, ${deal.state} ${deal.zipCode}`
     : `${deal.streetAddress}, ${deal.city}, ${deal.state} ${deal.zipCode}`;
 
-  const url = deal.hideAddress
-    ? `https://www.creativelisting.com/deals`
-    : `https://www.creativelisting.com/listing/${deal.fullAddress ?? deal.id}`;
+  // Prefer stable ID-based deal URLs to avoid slug/slugging issues.
+  // Always point to the canonical /deals/<id> detail path when available.
+  const url = deal.id
+    ? `https://www.creativelisting.com/deals/${deal.id}`
+    : deal.hideAddress
+      ? `https://www.creativelisting.com/deals`
+      : `https://www.creativelisting.com/listing/${deal.fullAddress ?? ""}`;
 
   // Derive property type
   let propertyType: RawListing["propertyType"] = "unknown";
@@ -440,6 +444,9 @@ function dealToRawListing(deal: CLDeal): RawListing {
 
     // Creative-finance extras stored on the raw object for downstream use
     _clDealId:       deal.id,
+    // Originator contact details
+    _clOwnerName:    deal.originator?.name ?? null,
+    _clOwnerPhone:   deal.originator?.phoneNumber ?? null,
     _clDealCategory: deal.dealCategory  ?? null,   // "creative" | "cash"
     _clPurchaseType: deal.purchaseType  ?? null,   // "SubTo" | "SellerFinance" | "LeaseOption"
     _clMonthlyCost:  deal.monthlyCost   ?? null,

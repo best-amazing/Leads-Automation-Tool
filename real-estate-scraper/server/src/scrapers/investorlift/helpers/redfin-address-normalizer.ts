@@ -19,7 +19,10 @@ interface RedfinAddressComponents {
 
 /**
  * Extract address components from Investorlift data
- * Investorlift format: "City, County, State, Zip"
+ * Supports three formats:
+ * 1. County-first: "Ashtabula County, Conneaut, OH 44030"
+ * 2. Street address: "169 North Liberty Street, Conneaut, OH 44030"
+ * 3. City-first (legacy): "City, County, State, Zip"
  */
 export function extractRedfinAddressComponents(
   investorliftAddress: string | undefined
@@ -34,20 +37,40 @@ export function extractRedfinAddressComponents(
   let county: string | undefined;
   let state: string | undefined;
   let zip: string | undefined;
+  let street: string | undefined;
 
-  // Investorlift typical: ["City", "County", "State", "Zip"]
   if (parts.length >= 4) {
-    city = parts[0];
-    county = parts[1];
-    state = parts[2];
-    zip = parts[3];
+    // Detect format: county-first, street address, or city-first
+    const firstPart = parts[0];
+    const containsCounty = /\bcounty\b/i.test(firstPart);
+    const startsWithNumber = /^\d/.test(firstPart);
+
+    if (containsCounty) {
+      // County-first format: "Ashtabula County, Conneaut, OH 44030"
+      county = firstPart;
+      city = parts[1];
+      state = parts[2];
+      zip = parts[3];
+    } else if (startsWithNumber) {
+      // Street address format: "169 North Liberty Street, Conneaut, OH 44030"
+      street = firstPart;
+      city = parts[1];
+      state = parts[2];
+      zip = parts[3];
+    } else {
+      // City-first format: "City, County, State, Zip"
+      city = firstPart;
+      county = parts[1];
+      state = parts[2];
+      zip = parts[3];
+    }
   } else if (parts.length === 3) {
     city = parts[0];
     state = parts[1];
     zip = parts[2];
   }
 
-  return { city, state, county, zip };
+  return { city, state, county, zip, street };
 }
 
 /**

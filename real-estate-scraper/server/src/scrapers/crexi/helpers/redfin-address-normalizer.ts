@@ -9,6 +9,8 @@ interface CrexiListing {
   url?: string;
   source?: string;
   title?: string;
+  address?: string;
+  location?: string;
   price?: number;
   propertyType?: string;
   description?: string;
@@ -28,21 +30,59 @@ interface AddressComponents {
 function extractAddressComponents(listing: CrexiListing): AddressComponents {
   const components: AddressComponents = {};
 
-  // Crexi title format: "Description (Location markers or city names)"
-  // Example: "Great Investment Turnkey (Dalton, Fuller, E 117th)"
-  // We can extract potential city names from parentheses
-  if (listing.title) {
-    const titleMatch = listing.title.match(/\(([^)]+)\)/);
-    if (titleMatch) {
-      // Extract potential cities/locations from parentheses
-      const locations = titleMatch[1].split(/,/).map((s) => s.trim());
-      if (locations.length > 0) {
-        components.city = locations[0]; // Use first location as city
-      }
-    }
+  const haystack = [listing.address, listing.title, listing.description, listing.location]
+    .filter(Boolean)
+    .join("\n");
+
+  const reFull = /([0-9]+\s+[^,]+),\s*([^,]+),\s*([^,]*County[^,]*|[^,]+?),\s*([A-Za-z]{2})\s*(\d{5})/i;
+  const m1 = haystack.match(reFull);
+  if (m1) {
+    components.street = m1[1].trim();
+    components.city = m1[2].trim();
+    components.state = m1[4].toUpperCase();
+    components.zipCode = m1[5];
+    return components;
   }
 
-  // Crexi does not provide street, state, or zip - these remain undefined
+  const reSimple = /([0-9]+\s+[^,]+),\s*([^,]+),\s*([A-Za-z]{2})\s*(\d{5})/i;
+  const m2 = haystack.match(reSimple);
+  if (m2) {
+    components.street = m2[1].trim();
+    components.city = m2[2].trim();
+    components.state = m2[3].toUpperCase();
+    components.zipCode = m2[4];
+    return components;
+  }
+
+  const reCityCounty = /([^,]+),\s*([^,]*County[^,]*),\s*([A-Za-z]{2})\s*(\d{5})/i;
+  const m3 = haystack.match(reCityCounty);
+  if (m3) {
+    components.city = m3[1].trim();
+    components.state = m3[3].toUpperCase();
+    components.zipCode = m3[4];
+    return components;
+  }
+
+  // Generic fallback
+  const parts = haystack.split(",").map((s) => s.trim()).filter(Boolean);
+  if (parts.length > 0) {
+    const last = parts[parts.length - 1];
+    const stZip = last.match(/^([A-Za-z]{2})\s*(\d{5})$/);
+    if (stZip) {
+      components.state = stZip[1].toUpperCase();
+      components.zipCode = stZip[2];
+    } else {
+      const zipOnly = last.match(/^(\d{5})$/);
+      if (zipOnly) components.zipCode = zipOnly[1];
+    }
+
+    if (!components.street && parts.length >= 3 && /^\d/.test(parts[0])) {
+      components.street = parts[0];
+    }
+
+    components.city = listing.location || components.city || parts[0];
+  }
+
   return components;
 }
 
@@ -81,5 +121,11 @@ function formatAddress(components: AddressComponents): string {
  */
 export function normalizeToRedfinFormat(listing: CrexiListing): string {
   const components = extractAddressComponents(listing);
-  return formatAddress(components);
+  // Redfin expects: "Street Address, City, State, ZipCode"
+  const parts: string[] = [];
+  if (components.street) parts.push(components.street);
+  if (components.city) parts.push(components.city);
+  if (components.state) parts.push(components.state || "");
+  if (components.zipCode) parts.push(components.zipCode);
+  return parts.filter(Boolean).join(", ");
 }

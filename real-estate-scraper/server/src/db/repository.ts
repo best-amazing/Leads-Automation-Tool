@@ -67,52 +67,68 @@ export async function upsertMany(
 ): Promise<{ created: number; updated: number }> {
   if (payloads.length === 0) return { created: 0, updated: 0 };
 
+  // Batch upserts into transactions to reduce connection churn.
+  // Controls:
+  //  - DB_UPSERT_CONCURRENCY: number of parallel transactions (default 2)
+  //  - DB_UPSERT_BATCH_SIZE: number of upserts per transaction (default 20)
   const concurrency = Number(process.env.DB_UPSERT_CONCURRENCY) || 2;
-  const limit = pLimit(concurrency);
+  const batchSize = Number(process.env.DB_UPSERT_BATCH_SIZE) || 20;
+  const batches: ListingUpsertPayload[][] = [];
+  for (let i = 0; i < payloads.length; i += batchSize) {
+    batches.push(payloads.slice(i, i + batchSize));
+  }
 
-  const tasks = payloads.map((p) =>
-    limit(() =>
-      prisma.listing.upsert({
-        where: { url: p.url },
-        create: {
-          url: p.url,
-          source: p.source,
-          title: p.title,
-          price: p.price,
-          rawAddress: p.address,
-          location: p.location,
-          propertyType: p.propertyType,
-          bedrooms: p.bedrooms ?? (p as any).beds,
-          bathrooms: p.bathrooms ?? (p as any).baths,
-          squareFeet: p.squareFeet,
-          description: p.description,
-          ownerName: p.ownerName,
-          ownerPhone: p.ownerPhone,
-          postedDate: p.postedDate ?? (p as any).listedAt,
-          lastSeenAt: new Date(),
-        },
-        update: {
-          title: p.title,
-          price: p.price,
-          rawAddress: p.address,
-          location: p.location,
-          propertyType: p.propertyType,
-          bedrooms: p.bedrooms ?? (p as any).beds,
-          bathrooms: p.bathrooms ?? (p as any).baths,
-          squareFeet: p.squareFeet,
-          description: p.description,
-          ownerName: p.ownerName,
-          ownerPhone: p.ownerPhone,
-          postedDate: p.postedDate ?? (p as any).listedAt,
-          lastSeenAt: new Date(),
-        },
-      })
-    )
-  );
+  // Process batches sequentially to avoid exhausting DB connection pool.
+  let processed = 0;
+  for (const batch of batches) {
+    try {
+      await prisma.$transaction(
+        batch.map((p) =>
+          prisma.listing.upsert({
+            where: { url: p.url },
+            create: {
+              url: p.url,
+              source: p.source,
+              title: p.title,
+              price: p.price,
+              rawAddress: p.address,
+              location: p.location,
+              propertyType: p.propertyType,
+              bedrooms: p.bedrooms ?? (p as any).beds,
+              bathrooms: p.bathrooms ?? (p as any).baths,
+              squareFeet: p.squareFeet,
+              description: p.description,
+              ownerName: p.ownerName,
+              ownerPhone: p.ownerPhone,
+              postedDate: p.postedDate ?? (p as any).listedAt,
+              lastSeenAt: new Date(),
+            },
+            update: {
+              title: p.title,
+              price: p.price,
+              rawAddress: p.address,
+              location: p.location,
+              propertyType: p.propertyType,
+              bedrooms: p.bedrooms ?? (p as any).beds,
+              bathrooms: p.bathrooms ?? (p as any).baths,
+              squareFeet: p.squareFeet,
+              description: p.description,
+              ownerName: p.ownerName,
+              ownerPhone: p.ownerPhone,
+              postedDate: p.postedDate ?? (p as any).listedAt,
+              lastSeenAt: new Date(),
+            },
+          })
+        )
+      );
+      processed += batch.length;
+    } catch (err) {
+      logger.error(`[db] Batch upsert failed after processing ${processed} listings: ${err}`);
+      throw err;
+    }
+  }
 
-  await Promise.all(tasks);
-
-  logger.info(`[db] Successfully upserted ${payloads.length} listings (concurrency=${concurrency})`);
+  logger.info(`[db] Successfully upserted ${payloads.length} listings (batches=${batches.length}, batchSize=${batchSize})`);
   return { created: 0, updated: 0 };
 }
 

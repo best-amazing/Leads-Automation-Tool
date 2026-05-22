@@ -35,21 +35,35 @@ export function extractZillowAddressComponents(
   if (parts.length >= 1) {
     street = parts[0];
   }
-
-  if (parts.length >= 2) {
-    city = parts[1];
+  if (parts.length === 2) {
+    const first = parts[0];
+    const second = parts[1];
+    if (/^\d/.test(first)) {
+      street = first;
+      const maybeStateZip = second.split(/\s+/);
+      if (maybeStateZip.length >= 1) {
+        if (/^[A-Za-z]{2}$/.test(maybeStateZip[0])) {
+          state = maybeStateZip[0];
+          if (maybeStateZip.length >= 2) zip = maybeStateZip[1];
+        } else {
+          city = second;
+        }
+      }
+    } else {
+      city = first;
+      const stateZipParts = second.trim().split(/\s+/);
+      if (stateZipParts.length >= 1) state = stateZipParts[0];
+      if (stateZipParts.length >= 2) zip = stateZipParts[1];
+    }
   }
 
   if (parts.length >= 3) {
-    // Last part is "State ZipCode"
+    street = street ?? parts[0];
+    city = city ?? parts[1];
     const stateZip = parts[2].trim();
     const stateZipParts = stateZip.split(/\s+/);
-    if (stateZipParts.length >= 1) {
-      state = stateZipParts[0];
-    }
-    if (stateZipParts.length >= 2) {
-      zip = stateZipParts[1];
-    }
+    if (stateZipParts.length >= 1) state = stateZipParts[0];
+    if (stateZipParts.length >= 2) zip = stateZipParts[1];
   }
 
   return { street, city, state, zip };
@@ -61,16 +75,21 @@ export function extractZillowAddressComponents(
  */
 export function formatZillowAddress(components: ZillowAddressComponents): string | undefined {
   const { street, city, state, zip } = components;
-
-  if (!street || !city || !state) {
-    return undefined;
+  // If we have a street, build full format
+  if (street && city && state) {
+    const firstPart = zip ? `${street}, ${city}, ${state} ${zip}` : `${street}, ${city}, ${state}`;
+    const secondPart = zip ? `${city}, ${state}, ${zip}` : `${city}, ${state}`;
+    return `${firstPart}, ${secondPart}`;
   }
 
-  // Build standard format: "Street, City, State ZipCode, City, State, ZipCode"
-  const firstPart = zip ? `${street}, ${city}, ${state} ${zip}` : `${street}, ${city}, ${state}`;
-  const secondPart = zip ? `${city}, ${state}, ${zip}` : `${city}, ${state}`;
+  // Fallback: city/state[/zip] repeated for Zillow-style second part
+  if (city && state) {
+    const firstPart = zip ? `${city}, ${state} ${zip}` : `${city}, ${state}`;
+    const secondPart = zip ? `${city}, ${state}, ${zip}` : `${city}, ${state}`;
+    return `${firstPart}, ${secondPart}`;
+  }
 
-  return `${firstPart}, ${secondPart}`;
+  return undefined;
 }
 
 /**

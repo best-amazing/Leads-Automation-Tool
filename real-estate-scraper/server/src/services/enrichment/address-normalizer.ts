@@ -21,6 +21,7 @@ import { normalizeToPropwireFormat as crexiToPropwire } from "../../scrapers/cre
 import { normalizeToZillowFormat as investorliftToZillow } from "../../scrapers/investorlift/helpers/zillow-address-normalizer";
 import { normalizeToRedfinFormat as investorliftToRedfin } from "../../scrapers/investorlift/helpers/redfin-address-normalizer";
 import { normalizeToPropwireFormat as investorliftToPropwire } from "../../scrapers/investorlift/helpers/propwire-address-normalizer";
+
 // LoopNet normalizers
 import { normalizeToZillowFormat as loopnetToZillow } from "../../scrapers/loopnet/helpers/zillow-address-normalizer";
 import { normalizeToRedfinFormat as loopnetToRedfin } from "../../scrapers/loopnet/helpers/redfin-address-normalizer";
