@@ -6,9 +6,6 @@ import { RawListing } from "../../types/listing";
 import { logger } from "../../utils/logger";
 import { parseApiResponse, parseDomListings } from "./investorlift.parser";
 import { chromium, BrowserContext, Page, Browser } from "playwright";
-import { requestStop } from "../../scrape/status";
-import { upsertMany } from "../../db/repository";
-import { ListingUpsertPayload } from "../../types/listing";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -477,39 +474,9 @@ export class InvestorLiftScraper extends BaseScraper {
         const fullOnly = listings.filter((l) => hasFullAddress(l.address));
         logger.info(`[investorlift] ${fullOnly.length}/${listings.length} listings have full addresses`);
 
-        if (fullOnly.length > 0) {
-          // Persist full-address listings directly to the DB, bypassing the
-          // base runner filters so we guarantee storage of full addresses.
-          try {
-            const payloads: ListingUpsertPayload[] = fullOnly.map((l) => ({
-              url: l.url,
-              source: this.sourceName,
-              title: l.title,
-              price: l.price,
-              address: l.address,
-              location: l.location,
-              propertyType: l.propertyType,
-              bedrooms: l.bedrooms,
-              bathrooms: l.bathrooms,
-              squareFeet: l.squareFeet,
-              description: l.description,
-              ownerName: l.ownerName,
-              ownerPhone: l.ownerPhone,
-              listedAt: (l as any).listedAt,
-            }));
-
-            await upsertMany(payloads);
-            logger.info(`[investorlift] Directly upserted ${payloads.length} full-address listings`);
-
-            requestStop();
-            logger.info("[investorlift] Requested global stop after storing full-address listings");
-          } catch (err) {
-            logger.warn(`[investorlift] Failed to persist full-address listings: ${err}`);
-          }
-        }
-
-        // Return empty so the base runner does not attempt to save/filter them again
-        return [];
+        // Return listings with full addresses to the base runner for filtering
+        // (location, price, keywords). This ensures consistent filtering across all scrapers.
+        return fullOnly;
       } finally {
         await page.close();
       }

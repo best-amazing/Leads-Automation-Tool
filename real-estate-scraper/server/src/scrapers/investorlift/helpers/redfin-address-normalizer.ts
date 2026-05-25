@@ -2,9 +2,10 @@
  * Normalize Investorlift addresses to Redfin format
  * 
  * Redfin format: "Street Address, City, State, ZipCode"
- * Example: "7017 Colgate Ave Front, 7015 Colgate Rear Ave, Cleveland, OH, 44102"
+ * Example: "2053 Mozelle Drive, Marietta, GA, 30062"
  * 
- * Note: Investorlift provides "City, County, State, Zip" without street address
+ * When street address is available, includes it for exact matching.
+ * When unavailable, falls back to: "City, State, ZipCode"
  */
 
 import { RawListing } from "../../../types/listing";
@@ -75,19 +76,25 @@ export function extractRedfinAddressComponents(
 
 /**
  * Format address in Redfin style
- * Format: "City, State, ZipCode" (Investorlift lacks street address)
+ * Includes street address when available for exact matching:
+ * - With street: "Street, City, State, ZipCode"
+ * - Without street: "City, State, ZipCode"
  */
 export function formatRedfinAddress(
   components: RedfinAddressComponents
 ): string | undefined {
-  const { city, state, zip } = components;
+  const { street, city, state, zip } = components;
 
   if (!city || !state) {
     return undefined;
   }
 
-  // Build Redfin format: "City, State, ZipCode"
-  const parts = [city, state];
+  // Build Redfin format with street if available: "Street, City, State, ZipCode"
+  const parts: string[] = [];
+  if (street) {
+    parts.push(street);
+  }
+  parts.push(city, state);
   if (zip) parts.push(zip);
 
   return parts.join(", ");

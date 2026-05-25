@@ -2,9 +2,10 @@
  * Normalize Investorlift addresses to Propwire format
  * 
  * Propwire format: "Street Address, City, State, ZipCode"
- * Example: "367 Effington Ln, Columbus, OH, 43207"
+ * Example: "2053 Mozelle Drive, Marietta, GA, 30062"
  * 
- * Note: Investorlift doesn't include street addresses, so we format with available data
+ * When street address is available, includes it for exact matching.
+ * When unavailable, falls back to: "City, State, ZipCode"
  */
 
 import { RawListing } from "../../../types/listing";
@@ -75,19 +76,25 @@ export function extractPropwireAddressComponents(
 
 /**
  * Format address in Propwire style
- * Format: "City, State, ZipCode" (no street available from Investorlift)
+ * Includes street address when available for exact matching:
+ * - With street: "Street, City, State, ZipCode"
+ * - Without street: "City, State, ZipCode"
  */
 export function formatPropwireAddress(
   components: PropwireAddressComponents
 ): string | undefined {
-  const { city, state, zip } = components;
+  const { street, city, state, zip } = components;
 
   if (!city || !state) {
     return undefined;
   }
 
-  // Build format: "City, State, ZipCode"
-  const parts = [city, state];
+  // Build format with street if available: "Street, City, State, ZipCode"
+  const parts: string[] = [];
+  if (street) {
+    parts.push(street);
+  }
+  parts.push(city, state);
   if (zip) parts.push(zip);
 
   return parts.join(", ");

@@ -41,6 +41,7 @@ export async function findEstimateMatch(
 
     if (estimateSource === "zillow") {
       // Query ZillowListing table by address
+      logger.debug(`[EstimateMatcher] Searching Zillow for normalized address: "${normalizedAddress}"`);
       const zillowMatch = await prisma.zillowListing.findFirst({
         where: {
           address: {
@@ -54,9 +55,13 @@ export async function findEstimateMatch(
         estimateValue = zillowMatch.zestimate;
         matchedAddress = zillowMatch.address;
         sourceListingId = zillowMatch.id;
+        logger.debug(`[EstimateMatcher] ✓ Zillow match found: "${matchedAddress}" = $${estimateValue}`);
+      } else {
+        logger.debug(`[EstimateMatcher] ✗ No Zillow match for: "${normalizedAddress}"`);
       }
     } else if (estimateSource === "redfin") {
       // Query RedfinListing table by address
+      logger.debug(`[EstimateMatcher] Searching Redfin for normalized address: "${normalizedAddress}"`);
       const redfinMatch = await prisma.redfinListing.findFirst({
         where: {
           address: {
@@ -70,9 +75,14 @@ export async function findEstimateMatch(
         estimateValue = redfinMatch.estimate;
         matchedAddress = redfinMatch.address;
         sourceListingId = redfinMatch.id;
+        logger.debug(`[EstimateMatcher] ✓ Redfin match found: "${matchedAddress}" = $${estimateValue}`);
+      } else {
+        logger.debug(`[EstimateMatcher] ✗ No Redfin match for: "${normalizedAddress}"`);
       }
+      
     } else if (estimateSource === "propwire") {
       // Query PropwireListing table by address
+      logger.debug(`[EstimateMatcher] Searching Propwire for normalized address: "${normalizedAddress}"`);
       const propwireMatch = await prisma.propwireListing.findFirst({
         where: {
           address: {
@@ -86,6 +96,9 @@ export async function findEstimateMatch(
         estimateValue = propwireMatch.estimate;
         matchedAddress = propwireMatch.address;
         sourceListingId = propwireMatch.id;
+        logger.debug(`[EstimateMatcher] ✓ Propwire match found: "${matchedAddress}" = $${estimateValue}`);
+      } else {
+        logger.debug(`[EstimateMatcher] ✗ No Propwire match for: "${normalizedAddress}"`);
       }
     }
 

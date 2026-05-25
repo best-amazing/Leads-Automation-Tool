@@ -1,10 +1,11 @@
 /**
  * Normalize Investorlift addresses to Zillow format
  * 
- * Zillow format: "Street Address, City, State ZipCode, City, State, ZipCode"
- * Example: "1035 Lanedale St NW, Massillon, OH 44647, Massillon, OH, 44647"
+ * Zillow format (with street): "Street, City, State ZipCode, Street, City, State, ZipCode"
+ * Example: "2053 Mozelle Drive, Marietta, GA 30062, 2053 Mozelle Drive, Marietta, GA, 30062"
  * 
- * Note: Investorlift often lacks street address, so we format as best as possible
+ * Zillow format (without street): "City, State ZipCode, City, State, ZipCode"
+ * When street address is available, includes it for exact matching.
  */
 
 import { RawListing } from "../../../types/listing";
@@ -75,18 +76,24 @@ export function extractZillowAddressComponents(
 
 /**
  * Format address in Zillow style
- * Since Investorlift lacks street address, we use: "City, State ZipCode, City, State, ZipCode"
+ * With street: "Street, City, State ZipCode, Street, City, State, ZipCode"
+ * Without street: "City, State ZipCode, City, State, ZipCode"
  */
 export function formatZillowAddress(components: ZillowAddressComponents): string | undefined {
-  const { city, state, zip } = components;
+  const { street, city, state, zip } = components;
 
   if (!city || !state) {
     return undefined;
   }
 
-  // Without street, format: "City, State ZipCode, City, State, ZipCode"
-  const firstPart = zip ? `${city}, ${state} ${zip}` : `${city}, ${state}`;
-  const secondPart = zip ? `${city}, ${state}, ${zip}` : `${city}, ${state}`;
+  // Build both formats with street if available
+  const streetPart = street ? `${street}, ` : "";
+  const firstPart = zip 
+    ? `${streetPart}${city}, ${state} ${zip}` 
+    : `${streetPart}${city}, ${state}`;
+  const secondPart = zip 
+    ? `${streetPart}${city}, ${state}, ${zip}` 
+    : `${streetPart}${city}, ${state}`;
 
   return `${firstPart}, ${secondPart}`;
 }

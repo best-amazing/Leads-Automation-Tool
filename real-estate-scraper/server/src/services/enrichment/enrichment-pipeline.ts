@@ -66,6 +66,10 @@ export async function enrichListingsBySource(source: string): Promise<Enrichment
       try {
         let propertyId: string | null = null;
 
+        logger.info(
+          `[Enrichment] Processing listing ${listing.id}: "${listing.rawAddress || 'N/A'}"`
+        );
+
         // Try each estimate source (zillow, redfin, propwire)
         for (const estimateSource of ESTIMATE_SOURCES) {
           try {
@@ -74,17 +78,21 @@ export async function enrichListingsBySource(source: string): Promise<Enrichment
 
             if (!normalized.address) {
               logger.debug(
-                `[Enrichment] Listing ${listing.id} could not normalize to ${estimateSource} format`
+                `[Enrichment] Listing ${listing.id}: Could not normalize to ${estimateSource} format`
               );
               continue;
             }
+
+            logger.debug(
+              `[Enrichment] Listing ${listing.id}: Checking ${estimateSource} with normalized address: "${normalized.address}"`
+            );
 
             // Find matching record in reference table
             const match = await findEstimateMatch(normalized.address, estimateSource);
 
             if (match.found && match.estimateValue) {
-              logger.debug(
-                `[Enrichment] Found ${estimateSource} match for listing ${listing.id}: ${match.estimateValue}`
+              logger.info(
+                `[Enrichment] ✓ MATCH FOUND - Listing ${listing.id} matched on ${estimateSource}: "${normalized.address}" = $${match.estimateValue}`
               );
 
               // Create or find Property using the normalized address as canonical key
@@ -163,6 +171,9 @@ export async function enrichListingsBySource(source: string): Promise<Enrichment
           });
           linked++;
         } else {
+          logger.info(
+            `[Enrichment] ✗ SKIPPED - Listing ${listing.id} (${listing.rawAddress  || 'N/A'}) - No matches found in zillow/redfin/propwire reference tables`
+          );
           skipped++;
         }
 
