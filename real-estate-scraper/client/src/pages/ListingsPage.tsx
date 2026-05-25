@@ -114,7 +114,7 @@ export const ListingsPage: React.FC = () => {
               </>
             )}
           </button>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 -ml-3">
             <select
               value={exportScope}
               onChange={(e) => setExportScope(e.target.value as any)}
