@@ -194,7 +194,8 @@ function safeStr(val: unknown): string | undefined {
  *   1. r.locations[0]          — current Crexi API shape
  *   2. r.address (object)      — older nested shape
  *   3. r.city / r.stateCode    — legacy flat fields
- */
+*/
+
 function extractCityState(r: CrxRaw): { city: string | undefined; state: string | undefined } {
   // ── 1. locations array (current API shape) ──────────────────────────────
   if (Array.isArray(r.locations) && r.locations.length > 0) {
@@ -222,7 +223,8 @@ function extractCityState(r: CrxRaw): { city: string | undefined; state: string 
 /**
  * Build a human-readable address string.
  * Priority order mirrors extractCityState — newest API shape first.
- */
+*/
+
 function buildAddress(r: CrxRaw): string | undefined {
   // ── 1. locations array ───────────────────────────────────────────────────
   if (Array.isArray(r.locations) && r.locations.length > 0) {
@@ -269,13 +271,21 @@ function buildAddress(r: CrxRaw): string | undefined {
 /**
  * Build the canonical URL for a listing.
  * Crexi uses `urlSlug` (not `slug`) in its current API responses.
- */
+ * URL format: https://www.crexi.com/properties/{id}/{slug}
+*/
+
 function buildUrl(r: CrxRaw, fallback: string): string {
   if (r.url && r.url.startsWith("http")) return r.url;
   // urlSlug is the current field name; slug kept as legacy fallback
   const slug = safeStr(r.urlSlug) ?? safeStr(r.slug);
+  const id = r.id ? String(r.id) : undefined;
+  
+  // Preferred: include both ID and slug for full URL
+  if (id && slug) return `https://www.crexi.com/properties/${id}/${slug}`;
+  // Fallback: ID only
+  if (id) return `https://www.crexi.com/properties/${id}`;
+  // Last resort: slug only (legacy)
   if (slug) return `https://www.crexi.com/properties/${slug}`;
-  if (r.id)  return `https://www.crexi.com/properties/${r.id}`;
   return fallback;
 }
 
@@ -283,7 +293,8 @@ function buildUrl(r: CrxRaw, fallback: string): string {
  * Resolve the property type.
  * `types` is an array in the current API (e.g. ["Multifamily", "Apartment"]).
  * Falls back to scalar fields, then description heuristics.
- */
+*/
+
 function resolvePropertyType(r: CrxRaw): PropertyType {
   // Current API sends types as an array
   if (Array.isArray(r.types) && r.types.length > 0) {
