@@ -1,0 +1,12 @@
+FROM mcr.microsoft.com/playwright:v1.43.1-jammy
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci
+RUN npx playwright install chromium
+
+COPY . .
+
+EXPOSE 8080
+CMD ["node", "--max-old-space-size=512", "-r", "ts-node/register", "src/server.ts"]
