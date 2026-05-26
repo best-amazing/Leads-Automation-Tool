@@ -77,9 +77,9 @@ const CHROMIUM_ARGS = [
   "--no-sandbox",
   "--disable-setuid-sandbox",
   "--disable-dev-shm-usage",
-  "--disable-gpu",
-  "--no-zygote",
-  "--single-process",
+  "--disable-gpu"
+  // "--no-zygote",
+  // "--single-process",
 ];
 
 // ── Error types ─────────────────────────────────────────────────────────────
@@ -525,4 +525,5 @@ export class InvestorLiftScraper extends BaseScraper {
       logger.info(`[investorlift] Debug HTML saved: logs/investorlift_${label}.html`);
     } catch {}
   }
+
 }
