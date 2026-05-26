@@ -1,11 +1,13 @@
 /**
  * Normalize Investorlift addresses to Zillow format
  * 
+ * ⚠️  ONLY processes listings with COMPLETE STREET ADDRESSES
+ * If the address doesn't have a street number, returns undefined to skip enrichment.
+ * 
  * Zillow format (with street): "Street, City, State ZipCode, Street, City, State, ZipCode"
  * Example: "2053 Mozelle Drive, Marietta, GA 30062, 2053 Mozelle Drive, Marietta, GA, 30062"
  * 
- * Zillow format (without street): "City, State ZipCode, City, State, ZipCode"
- * When street address is available, includes it for exact matching.
+ * Listings without street addresses are skipped entirely (not enriched).
  */
 
 import { RawListing } from "../../../types/listing";
@@ -76,24 +78,27 @@ export function extractZillowAddressComponents(
 
 /**
  * Format address in Zillow style
+ * ⚠️  ONLY returns a normalized address if street is present
+ * Returns undefined for addresses without street numbers
+ * 
  * With street: "Street, City, State ZipCode, Street, City, State, ZipCode"
- * Without street: "City, State ZipCode, City, State, ZipCode"
+ * Example: "2053 Mozelle Drive, Marietta, GA 30062, 2053 Mozelle Drive, Marietta, GA, 30062"
  */
 export function formatZillowAddress(components: ZillowAddressComponents): string | undefined {
   const { street, city, state, zip } = components;
 
-  if (!city || !state) {
+  // REQUIRE street address to process this listing
+  if (!street || !city || !state) {
     return undefined;
   }
 
-  // Build both formats with street if available
-  const streetPart = street ? `${street}, ` : "";
+  // Build both formats with street (street is REQUIRED)
   const firstPart = zip 
-    ? `${streetPart}${city}, ${state} ${zip}` 
-    : `${streetPart}${city}, ${state}`;
+    ? `${street}, ${city}, ${state} ${zip}` 
+    : `${street}, ${city}, ${state}`;
   const secondPart = zip 
-    ? `${streetPart}${city}, ${state}, ${zip}` 
-    : `${streetPart}${city}, ${state}`;
+    ? `${street}, ${city}, ${state}, ${zip}` 
+    : `${street}, ${city}, ${state}`;
 
   return `${firstPart}, ${secondPart}`;
 }

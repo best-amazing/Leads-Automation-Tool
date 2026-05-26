@@ -208,6 +208,14 @@ export class InvestorLiftScraper extends BaseScraper {
     }
   }
 
+  /**
+   * Public method to enrich listings with full street-level addresses.
+   * Used by post-filter enrichment hook after location/price filtering.
+   */
+  public async enrichListingsWithAddresses(listings: RawListing[]): Promise<RawListing[]> {
+    return this.enrichWithFullAddresses(null as any, listings);
+  }
+
  private async fetchFullAddress(listingId: string): Promise<string | undefined> {
   try {
     const cookieHeader = this.buildCookieHeader();
@@ -457,37 +465,48 @@ export class InvestorLiftScraper extends BaseScraper {
           listings = parseDomListings(html, this.sourceName);
         }
 
-        listings = await this.enrichWithFullAddresses(context, listings);
-
-        // Only keep listings with a full street address (street number + street
-        // name or common street type). This avoids storing city-only stubs.
-        // const hasFullAddress = (addr?: string | null): boolean => {
-        //   if (!addr) return false;
-        //   const a = String(addr).trim();
-        //   // Common street type tokens and street number heuristic
-        //   if (/\d+\s+\w+/.test(a)) return true;
-        //   if (/\b(street|st\.?|avenue|ave\.?|road|rd\.?|drive|dr\.?|lane|ln\.?|circle|cir\.?|court|ct\.?|boulevard|blvd\.?|way|terrace|ter\.?|place|pl\.?)\b/i.test(a)) return true;
-        //   return false;
-        // };
-        const hasFullAddress = (addr?: string | null): boolean => {
-  if (!addr) return false;
-  const a = String(addr).trim();
-  // Must have a house number AND a recognizable street type
-  return /^\d+\s+\w/.test(a) &&
-    /\b(street|st|avenue|ave|road|rd|drive|dr|lane|ln|circle|cir|court|ct|boulevard|blvd|way|terrace|ter|place|pl|highway|hwy|pike|trail|trl)\b/i.test(a);
-};
-
-        const fullOnly = listings.filter((l) => hasFullAddress(l.address));
-        logger.info(`[investorlift] ${fullOnly.length}/${listings.length} listings have full addresses`);
-
-        // Return listings with full addresses to the base runner for filtering
-        // (location, price, keywords). This ensures consistent filtering across all scrapers.
-        return fullOnly;
+        // Return ALL listings to base runner for location/price filtering
+        // Post-filter enrichment (enrichAfterFilter) will handle street-level address fetching
+        // for the top 5 filtered results
+        logger.info(`[investorlift] Returning ${listings.length} listings to base runner (enrichment deferred to post-filter)`);
+        return listings;
       } finally {
         await page.close();
       }
     } finally {
       await browser.close();
+    }
+  }
+
+  /**
+   * Post-filter enrichment: enrich top 5 filtered results with full street-level addresses.
+   * This runs AFTER location/price filtering in the base runner.
+   */
+  protected async enrichAfterFilter(listings: RawListing[]): Promise<RawListing[]> {
+    if (listings.length === 0) return listings;
+
+    const topN = listings.slice(0, 5);
+    logger.info(
+      `[investorlift] Post-filter enrichment: enriching top ${topN.length} of ${listings.length} filtered listings`,
+    );
+
+    try {
+      // Need browser context for session validation, but address fetching uses cookies from file
+      const testBrowser = await chromium.launch({ headless: true });
+      try {
+        const testContext = await testBrowser.newContext({
+          storageState: SESSION_FILE,
+          userAgent: BASE_HEADERS["User-Agent"],
+        });
+        const enriched = await this.enrichWithFullAddresses(testContext, topN);
+        await testContext.close();
+        return [...enriched, ...listings.slice(5)];
+      } finally {
+        await testBrowser.close();
+      }
+    } catch (err) {
+      logger.warn(`[investorlift] Post-filter enrichment failed: ${err} — returning unenriched`);
+      return listings;
     }
   }
 }

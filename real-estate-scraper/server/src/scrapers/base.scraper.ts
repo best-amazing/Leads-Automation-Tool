@@ -48,7 +48,8 @@ export abstract class BaseScraper {
    * 2. If PROXY_URL env is set (legacy), use that
    * 3. Otherwise, get next rotated proxy from PROXY_URLS
    * 4. If no proxies configured, return null (scrape without proxy)
-   */
+  */
+ 
   protected getEffectiveProxy(): string | null {
     // Explicit override in options
     if (this.options.proxyUrl !== null) {
@@ -90,6 +91,16 @@ export abstract class BaseScraper {
     lastPageResults: RawListing[],
   ): boolean {
     return lastPageResults.length > 0;
+  }
+
+  /**
+   * Optional: Post-filter enrichment hook.
+   * Called after all filtering is complete, before results are returned.
+   * Allows scrapers to enrich filtered listings (e.g., fetch expensive data for top N results).
+   * Default: no enrichment.
+   */
+  protected async enrichAfterFilter(listings: RawListing[]): Promise<RawListing[]> {
+    return listings;
   }
 
   // ── Filtering helpers (available to all scrapers) ─────────────────────────
@@ -248,6 +259,19 @@ export abstract class BaseScraper {
     logger.info(
       `[${this.sourceName}] Finished — ${this.results.length} listings collected`,
     );
+
+    // Post-filter enrichment (e.g., fetch expensive data for top N results)
+    try {
+      this.results = await this.enrichAfterFilter(this.results);
+      if (this.results.length > 0) {
+        logger.info(
+          `[${this.sourceName}] Post-filter enrichment complete — ${this.results.length} listings`,
+        );
+      }
+    } catch (err) {
+      logger.error(`[${this.sourceName}] Post-filter enrichment failed: ${err}`);
+    }
+
     // Write JSON output for this run: accepted + rejected
     try {
       const outDir = path.join(process.cwd(), "logs");

@@ -1,11 +1,13 @@
 /**
  * Normalize Investorlift addresses to Propwire format
  * 
+ * ⚠️  ONLY processes listings with COMPLETE STREET ADDRESSES
+ * If the address doesn't have a street number, returns undefined to skip enrichment.
+ * 
  * Propwire format: "Street Address, City, State, ZipCode"
  * Example: "2053 Mozelle Drive, Marietta, GA, 30062"
  * 
- * When street address is available, includes it for exact matching.
- * When unavailable, falls back to: "City, State, ZipCode"
+ * Listings without street addresses are skipped entirely (not enriched).
  */
 
 import { RawListing } from "../../../types/listing";
@@ -76,25 +78,24 @@ export function extractPropwireAddressComponents(
 
 /**
  * Format address in Propwire style
- * Includes street address when available for exact matching:
- * - With street: "Street, City, State, ZipCode"
- * - Without street: "City, State, ZipCode"
+ * ⚠️  ONLY returns a normalized address if street is present
+ * Returns undefined for addresses without street numbers
+ * 
+ * With street: "Street, City, State, ZipCode"
+ * Example: "2053 Mozelle Drive, Marietta, GA, 30062"
  */
 export function formatPropwireAddress(
   components: PropwireAddressComponents
 ): string | undefined {
   const { street, city, state, zip } = components;
 
-  if (!city || !state) {
+  // REQUIRE street address to process this listing
+  if (!street || !city || !state) {
     return undefined;
   }
 
-  // Build format with street if available: "Street, City, State, ZipCode"
-  const parts: string[] = [];
-  if (street) {
-    parts.push(street);
-  }
-  parts.push(city, state);
+  // Build format with street (street is REQUIRED): "Street, City, State, ZipCode"
+  const parts: string[] = [street, city, state];
   if (zip) parts.push(zip);
 
   return parts.join(", ");
