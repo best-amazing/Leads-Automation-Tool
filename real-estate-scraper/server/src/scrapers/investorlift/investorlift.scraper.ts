@@ -335,6 +335,11 @@ export class InvestorLiftScraper extends BaseScraper {
     // Ensure we have a valid session before scraping (only runs login UI once)
     await this.ensureSession();
 
+    if (pageNumber > 1) {
+  logger.info("[investorlift] Non-paginated source — skipping page 2+");
+  return [];
+}
+
     // Create an authenticated browser context by loading the saved session
     const browser: Browser = await chromium.launch({
       headless: true,
@@ -356,16 +361,8 @@ export class InvestorLiftScraper extends BaseScraper {
       page.on("response", (response) => {
         const url = response.url();
 
-        if (
-          !url.includes("/api") &&
-          !url.includes("properties") &&
-          !url.includes("marketplace")
-        ) return;
 
-        const contentType = response.headers()["content-type"] || "";
-        if (!contentType.includes("application/json")) return;
-        if (url.includes("inquiry") || url.includes("login")) return;
-
+        if (!url.includes("/api/customer/api/properties")) return;
         logger.debug(`[investorlift] Intercepted JSON response: ${url}`);
 
         const p = response
@@ -425,10 +422,12 @@ export class InvestorLiftScraper extends BaseScraper {
         }
 
         try {
+          
           await page.waitForResponse(
-            (r) => r.url().includes("properties") && r.status() === 200,
-            { timeout: 15_000 }
-          );
+  (r) =>
+    r.url().includes("/api/customer/api/properties") && r.status() === 200,
+  { timeout: 15_000 }
+);
           logger.info("[investorlift] Properties XHR received");
         } catch {
           logger.warn("[investorlift] Properties XHR timed out — scrolling to trigger");
@@ -462,14 +461,21 @@ export class InvestorLiftScraper extends BaseScraper {
 
         // Only keep listings with a full street address (street number + street
         // name or common street type). This avoids storing city-only stubs.
+        // const hasFullAddress = (addr?: string | null): boolean => {
+        //   if (!addr) return false;
+        //   const a = String(addr).trim();
+        //   // Common street type tokens and street number heuristic
+        //   if (/\d+\s+\w+/.test(a)) return true;
+        //   if (/\b(street|st\.?|avenue|ave\.?|road|rd\.?|drive|dr\.?|lane|ln\.?|circle|cir\.?|court|ct\.?|boulevard|blvd\.?|way|terrace|ter\.?|place|pl\.?)\b/i.test(a)) return true;
+        //   return false;
+        // };
         const hasFullAddress = (addr?: string | null): boolean => {
-          if (!addr) return false;
-          const a = String(addr).trim();
-          // Common street type tokens and street number heuristic
-          if (/\d+\s+\w+/.test(a)) return true;
-          if (/\b(street|st\.?|avenue|ave\.?|road|rd\.?|drive|dr\.?|lane|ln\.?|circle|cir\.?|court|ct\.?|boulevard|blvd\.?|way|terrace|ter\.?|place|pl\.?)\b/i.test(a)) return true;
-          return false;
-        };
+  if (!addr) return false;
+  const a = String(addr).trim();
+  // Must have a house number AND a recognizable street type
+  return /^\d+\s+\w/.test(a) &&
+    /\b(street|st|avenue|ave|road|rd|drive|dr|lane|ln|circle|cir|court|ct|boulevard|blvd|way|terrace|ter|place|pl|highway|hwy|pike|trail|trl)\b/i.test(a);
+};
 
         const fullOnly = listings.filter((l) => hasFullAddress(l.address));
         logger.info(`[investorlift] ${fullOnly.length}/${listings.length} listings have full addresses`);
