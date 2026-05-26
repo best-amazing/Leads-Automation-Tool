@@ -71,7 +71,7 @@ const BASE_HEADERS = {
  * Chromium launch args shared by every launch() call in this file.
  * --headless=new is explicit to guard against playwright-extra stealth plugin
  * accidentally forcing headed mode via its global chromium patches.
- */
+*/
 const CHROMIUM_ARGS = [
   "--headless=new",
   "--no-sandbox",

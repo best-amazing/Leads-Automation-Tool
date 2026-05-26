@@ -83,11 +83,13 @@ function normalize(value: string): string {
  *   Zillow:   "2370 Losantiville Ave, Cincinnati, OH 45237, Cincinnati, OH, 45237"
  *   Propwire: "2370 Losantiville Ave, Cincinnati, OH, 45237"
  *   Redfin:   "2370 Losantiville Ave, Cincinnati, OH, 45237"
- */
+*/
+
 export function loopnetAddressMatchesPlatform(
   loopnetListing: RawListing,
   platformAddress: string | undefined | null
 ): boolean {
+
   if (!platformAddress || !loopnetListing.address) return false;
 
   const components = parseLoopnetAddress(loopnetListing.address);
