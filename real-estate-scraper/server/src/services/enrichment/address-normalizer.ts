@@ -22,11 +22,6 @@ import { normalizeToZillowFormat as investorliftToZillow } from "../../scrapers/
 import { normalizeToRedfinFormat as investorliftToRedfin } from "../../scrapers/investorlift/helpers/redfin-address-normalizer";
 import { normalizeToPropwireFormat as investorliftToPropwire } from "../../scrapers/investorlift/helpers/propwire-address-normalizer";
 
-// LoopNet normalizers
-import { normalizeToZillowFormat as loopnetToZillow } from "../../scrapers/loopnet/helpers/zillow-address-normalizer";
-import { normalizeToRedfinFormat as loopnetToRedfin } from "../../scrapers/loopnet/helpers/redfin-address-normalizer";
-import { normalizeToPropwireFormat as loopnetToPropwire } from "../../scrapers/loopnet/helpers/propwire-address-normalizer";
-
 // Creative Listing normalizers
 import { normalizeToZillowFormat as creativelistingToZillow } from "../../scrapers/creative-listing/helpers/zillow-address-normalizer";
 import { normalizeToRedfinFormat as creativelistingToRedfin } from "../../scrapers/creative-listing/helpers/redfin-address-normalizer";
@@ -92,15 +87,10 @@ export class AddressNormalizerService {
         }
       }
 
-      // LoopNet: support normalization to zillow/redfin/propwire
+      // LoopNet: uses component-based matching (address-matcher) instead of format normalization
+      // Returns raw address; estimate-matcher will use loopnetAddressMatchesPlatform() for matching
       else if (sourceLower.startsWith("loopnet")) {
-        if (targetEstimateSource === "zillow") {
-          normalizedAddress = loopnetToZillow(mockListing);
-        } else if (targetEstimateSource === "redfin") {
-          normalizedAddress = loopnetToRedfin(mockListing);
-        } else if (targetEstimateSource === "propwire") {
-          normalizedAddress = loopnetToPropwire(mockListing);
-        }
+        normalizedAddress = listing.rawAddress || undefined;
       } else if (sourceLower.startsWith("creativelisting")) {
         // Creative Listing stores addresses as concatenated strings
         const clMockListing = {

@@ -88,7 +88,8 @@ export async function enrichListingsBySource(source: string): Promise<Enrichment
             );
 
             // Find matching record in reference table
-            const match = await findEstimateMatch(normalized.address, estimateSource);
+            // For LoopNet: passes listing object to use address-matcher
+            const match = await findEstimateMatch(normalized.address, estimateSource, listing);
 
             if (match.found && match.estimateValue) {
               logger.info(

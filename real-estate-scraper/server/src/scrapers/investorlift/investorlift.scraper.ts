@@ -1,31 +1,88 @@
 // src/scrapers/investorlift/investorlift.scraper.ts
+// ─────────────────────────────────────────────────────────────────────────────
+// InvestorLift marketplace scraper
+//
+// Authentication:
+//   InvestorLift's login button does not fire in sandboxed Chromium, so we
+//   rely on a manually exported session file (investorlift-session.json).
+//
+//   To export your session:
+//     1. Log in to https://investorlift.com/marketplace/ in your real browser
+//     2. Run:  npm run session:investorlift
+//        (or:  node scripts/export-investorlift-session.js)
+//     3. Follow the on-screen instructions — the script saves the session file
+//
+//   The session is valid for ~30 days. Re-export when it expires.
+//
+// Data flow:
+//   • Playwright loads the marketplace with the saved session cookies
+//   • Crexi's Angular-like app fires XHR to /api/customer/api/properties
+//   • We intercept those responses and parse them via parseApiResponse()
+//   • After location/price filtering in the base runner, enrichAfterFilter()
+//     fetches full street-level addresses for the top 5 results via the
+//     inquiry API (rate-limited to 5/day by InvestorLift)
+//
+// NOTE on proxy:
+//   InvestorLift detects proxy headers and blocks them. This scraper always
+//   connects direct, overriding any global proxy config.
+//
+// NOTE on headless mode:
+//   playwright-extra's stealth plugin patches the global chromium launcher
+//   which can force headed mode on subsequent chromium.launch() calls from
+//   other scrapers. We guard against this by passing --headless=new explicitly
+//   in every launch() call and importing chromium from "playwright" directly
+//   (not from "playwright-extra").
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { chromium, BrowserContext, Page, Browser } from "playwright";
+import * as fs from "fs";
+import * as path from "path";
 
 import { BaseScraper, ScraperOptions } from "../base.scraper";
 import { BrowserHandle, sleep } from "../../utils/browser";
 import { RawListing } from "../../types/listing";
 import { logger } from "../../utils/logger";
 import { parseApiResponse, parseDomListings } from "./investorlift.parser";
-import { chromium, BrowserContext, Page, Browser } from "playwright";
-import * as fs from "fs";
-import * as path from "path";
 
-const MARKETPLACE_URL        = "https://investorlift.com/marketplace/";
-const ADDRESS_INQUIRY_URL    = "https://investorlift.com/marketplace/api/customer/api/inquiry";
+// ── Constants ──────────────────────────────────────────────────────────────
+
+const MARKETPLACE_URL     = "https://investorlift.com/marketplace/";
+const PROPERTIES_API_URL  = "https://investorlift.com/marketplace/api/customer/api/properties";
+const ADDRESS_INQUIRY_URL = "https://investorlift.com/marketplace/api/customer/api/inquiry";
+
 const ADDRESS_LIMIT_SENTINEL = "You have reached the daily address request limit";
-const SESSION_FILE        = path.join(__dirname, "../../..", "investorlift-session.json");
-const DEBUG_DIR           = path.resolve("logs");
+const ADDRESS_FETCH_LIMIT    = 5;   // InvestorLift rate-limits address lookups per day
+const ADDRESS_REQUEST_DELAY  = 800; // ms between address requests
 
-const ADDRESS_REQUEST_DELAY_MS = 800;
+const SESSION_FILE = path.join(__dirname, "../../..", "investorlift-session.json");
+const DEBUG_DIR    = path.resolve("logs");
 
-// How long to wait for the user to fully log in and reach the marketplace
-const MANUAL_LOGIN_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36";
 
 const BASE_HEADERS = {
-  "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-  "Origin":  "https://investorlift.com",
-  "Referer": "https://investorlift.com/marketplace/",
+  "User-Agent": USER_AGENT,
+  "Origin":     "https://investorlift.com",
+  "Referer":    "https://investorlift.com/marketplace/",
 };
+
+/**
+ * Chromium launch args shared by every launch() call in this file.
+ * --headless=new is explicit to guard against playwright-extra stealth plugin
+ * accidentally forcing headed mode via its global chromium patches.
+ */
+const CHROMIUM_ARGS = [
+  "--headless=new",
+  "--no-sandbox",
+  "--disable-setuid-sandbox",
+  "--disable-dev-shm-usage",
+  "--disable-gpu",
+  "--no-zygote",
+  "--single-process",
+];
+
+// ── Error types ─────────────────────────────────────────────────────────────
 
 class DailyLimitReachedError extends Error {
   constructor() {
@@ -34,6 +91,23 @@ class DailyLimitReachedError extends Error {
   }
 }
 
+class SessionExpiredError extends Error {
+  constructor() {
+    super("InvestorLift session expired or missing");
+    this.name = "SessionExpiredError";
+  }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function extractListingId(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  const m = url.match(/\/(?:deal|p)\/([^/?#]+)/);
+  return m?.[1];
+}
+
+// ── Scraper ──────────────────────────────────────────────────────────────────
+
 export class InvestorLiftScraper extends BaseScraper {
   readonly sourceName = "investorlift";
 
@@ -41,205 +115,150 @@ export class InvestorLiftScraper extends BaseScraper {
     super(options);
   }
 
+  // Always connect direct — InvestorLift blocks proxy headers
   protected getEffectiveProxy(): string | null {
-    logger.info(
-      "[investorlift] Proxy explicitly disabled — connecting direct to bypass proxy header detection"
-    );
+    logger.info("[investorlift] Proxy disabled — connecting direct");
     return null;
   }
 
-  // ── DEBUG HELPERS ──────────────────────────────────────────────────────────
-
-  private saveDebugHtml(html: string, label: string): void {
-    try {
-      fs.mkdirSync(DEBUG_DIR, { recursive: true });
-      fs.writeFileSync(path.join(DEBUG_DIR, `investorlift_${label}.html`), html);
-      logger.info(`[investorlift] Debug HTML saved: logs/investorlift_${label}.html`);
-    } catch {}
-  }
-
-  // ── SESSION PERSISTENCE ────────────────────────────────────────────────────
+  // ── Session helpers ────────────────────────────────────────────────────────
 
   private sessionExists(): boolean {
     try {
       if (!fs.existsSync(SESSION_FILE)) return false;
       const state = JSON.parse(fs.readFileSync(SESSION_FILE, "utf-8"));
-      // A valid session has at least some cookies
       return Array.isArray(state.cookies) && state.cookies.length > 0;
     } catch {
       return false;
     }
   }
 
-  private async saveSession(context: BrowserContext): Promise<void> {
+  /**
+   * Validate the saved session by hitting the properties API with a
+   * 1-item request. Uses a temporary browser so cookies are sent correctly.
+   */
+  private async isSessionValid(): Promise<boolean> {
+    const browser = await this.launchBrowser();
     try {
-      fs.mkdirSync(path.dirname(SESSION_FILE), { recursive: true });
-      await context.storageState({ path: SESSION_FILE });
-      const state = JSON.parse(fs.readFileSync(SESSION_FILE, "utf-8"));
-      logger.info(
-        `[investorlift] Session saved — ${state.cookies?.length ?? 0} cookies stored`
-      );
-    } catch (err) {
-      logger.warn(`[investorlift] Could not save session: ${err}`);
-    }
-  }
+      const context = await browser.newContext({
+        storageState: SESSION_FILE,
+        userAgent:    USER_AGENT,
+      });
+      const page = await context.newPage();
+      try {
+        logger.info("[investorlift] Validating saved session…");
+        await page.goto(MARKETPLACE_URL, { waitUntil: "domcontentloaded", timeout: 20_000 });
 
-  private async loadSession(context: BrowserContext): Promise<void> {
-    // storageState is loaded at context creation time, not after.
-    // This method is a no-op here — session is injected in newContext() below.
-  }
+        const result = await page.evaluate(async (url: string) => {
+          try {
+            const r    = await fetch(url, { credentials: "include" });
+            const body = await r.json().catch(() => null);
+            return { status: r.status, hasData: !!(body?.data?.length) };
+          } catch {
+            return { status: 0, hasData: false };
+          }
+        }, `${PROPERTIES_API_URL}?status=available&per_page=1`);
 
-  // ── CHECK IF SESSION IS STILL VALID ───────────────────────────────────────
-  //
-  // Navigate to the marketplace and see if we land on an authenticated page
-  // or get redirected to login.
-
-  private async isSessionValid(context: BrowserContext): Promise<boolean> {
-    // Hit the properties API directly — fastest and most reliable auth check.
-    // An unauthenticated request returns a non-200 or an error body.
-    const page = await context.newPage();
-    try {
-      logger.info("[investorlift] Validating saved session via API…");
-
-      // Navigate first so cookies are in scope for the fetch
-      await page.goto(MARKETPLACE_URL, { waitUntil: "domcontentloaded", timeout: 20_000 });
-
-      const result = await page.evaluate(async (url: string) => {
-        try {
-          const r = await fetch(url, { credentials: "include" });
-          const body = await r.json().catch(() => null);
-          return { status: r.status, hasData: !!(body?.data?.length) };
-        } catch {
-          return { status: 0, hasData: false };
-        }
-      }, "https://investorlift.com/marketplace/api/customer/api/properties?status=available&per_page=1");
-
-      logger.info(
-        `[investorlift] Session check — status: ${result.status}, hasData: ${result.hasData}`
-      );
-
-      return result.status === 200 && result.hasData;
+        logger.info(
+          `[investorlift] Session check — HTTP ${result.status}, hasData: ${result.hasData}`
+        );
+        return result.status === 200 && result.hasData;
+      } finally {
+        await page.close();
+        await context.close();
+      }
     } catch (err) {
       logger.warn(`[investorlift] Session validation error: ${err}`);
       return false;
     } finally {
-      await page.close();
+      await browser.close();
     }
   }
 
-    // ── MANUAL SESSION EXPORT ────────────────────────────────────────────────────────────────────────────
-  //
-  // InvestorLift uses a session cookie (.investorlift.com domain, not HttpOnly)
-  // that cannot be captured by a Playwright-launched browser because the login
-  // button does not work in sandboxed Chromium (no click handler fires).
-  //
-  // Instead, export your session from your real browser by running the snippet
-  // in export-investorlift-session.js in the browser console, then saving the
-  // output as investorlift-session.json in the project root.
-  //
-  // Run:  node scripts/export-investorlift-session.js
-  // Or:   npm run session:investorlift
-  //
-  // The session is valid for ~30 days. Re-export when it expires.
-
-  private runManualLoginFlow(): never {
-    throw new Error(
-      "\n\n" +
-      "═".repeat(60) + "\n" +
-      "  InvestorLift session not found or expired.\n\n" +
-      "  To export your session:\n\n" +
-      "  1. Log in to https://investorlift.com/marketplace/ in your browser\n" +
-      "  2. Open DevTools console (F12)\n" +
-      "  3. Run: node scripts/export-investorlift-session.js\n" +
-      "     (it will print the command to open the right URL)\n" +
-      "  4. Paste the console snippet it shows, copy the output\n" +
-      "  5. Save it as investorlift-session.json in the project root\n\n" +
-      "  Or run: npm run session:investorlift\n" +
-      "═".repeat(60) + "\n"
-    );
-  }
-
-    // ── ENSURE AUTHENTICATED SESSION ──────────────────────────────────────────
-
+  /**
+   * Ensure a valid session file exists. Throws SessionExpiredError with
+   * clear instructions if the session is missing or stale.
+   */
   private async ensureSession(): Promise<void> {
     if (this.sessionExists()) {
-      // Validate the saved session with a quick browser check
-      const testBrowser = await chromium.launch({ headless: true });
-      try {
-        const testContext = await testBrowser.newContext({
-          storageState: SESSION_FILE,
-          userAgent: BASE_HEADERS["User-Agent"],
-        });
-        const valid = await this.isSessionValid(testContext);
-        await testContext.close();
-
-        if (valid) {
-          logger.info("[investorlift] Saved session is valid — skipping login");
-          return;
-        }
-
-        logger.info("[investorlift] Saved session is invalid — deleting and re-logging in");
-        fs.unlinkSync(SESSION_FILE);
-      } finally {
-        await testBrowser.close();
+      const valid = await this.isSessionValid();
+      if (valid) {
+        logger.info("[investorlift] Session is valid");
+        return;
       }
+      logger.warn("[investorlift] Session invalid — deleting stale session file");
+      fs.unlinkSync(SESSION_FILE);
     } else {
-      logger.info("[investorlift] No saved session found");
+      logger.info("[investorlift] No session file found");
     }
 
-    // Run manual login — this only needs to happen once; session is reused after
-    await this.runManualLoginFlow();
+    throw new SessionExpiredError();
   }
 
-  // ── ADDRESS ENRICHMENT ─────────────────────────────────────────────────────
+  // ── Browser factory ────────────────────────────────────────────────────────
 
+  /**
+   * Single launch point — ensures headless is always enforced regardless of
+   * any global stealth plugin patches applied by other scrapers.
+   */
+  private async launchBrowser(): Promise<Browser> {
+    return chromium.launch({
+      headless: true,
+      args:     CHROMIUM_ARGS,
+    });
+  }
+
+  // ── Address enrichment ─────────────────────────────────────────────────────
+
+  /**
+   * Build a Cookie header string from the saved session file.
+   * Used for direct Node fetch() calls (no browser needed).
+   */
   private buildCookieHeader(): string | null {
-    // Read cookies from the saved session file and build a Cookie header string.
-    // This lets Node fetch() send the same cookies as the browser would.
     try {
       if (!fs.existsSync(SESSION_FILE)) return null;
-      const state = JSON.parse(fs.readFileSync(SESSION_FILE, "utf-8"));
-      const cookies: Array<{ name: string; value: string }> = state.cookies ?? [];
+      const state   = JSON.parse(fs.readFileSync(SESSION_FILE, "utf-8"));
+      const cookies = (state.cookies ?? []) as Array<{ name: string; value: string }>;
       if (cookies.length === 0) return null;
       return cookies.map((c) => `${c.name}=${c.value}`).join("; ");
     } catch (err) {
-      logger.warn(`[investorlift] Could not read cookies for request: ${err}`);
+      logger.warn(`[investorlift] Could not read session cookies: ${err}`);
       return null;
     }
   }
 
   /**
-   * Public method to enrich listings with full street-level addresses.
-   * Used by post-filter enrichment hook after location/price filtering.
+   * Fetch the full street-level address for a single listing.
+   * Throws DailyLimitReachedError if the account's daily quota is exhausted.
    */
-  public async enrichListingsWithAddresses(listings: RawListing[]): Promise<RawListing[]> {
-    return this.enrichWithFullAddresses(null as any, listings);
-  }
-
- private async fetchFullAddress(listingId: string): Promise<string | undefined> {
-  try {
+  private async fetchFullAddress(listingId: string): Promise<string | undefined> {
     const cookieHeader = this.buildCookieHeader();
     if (!cookieHeader) {
-      logger.warn("[investorlift] No cookies available for address request");
+      logger.warn("[investorlift] No session cookies — cannot fetch address");
       return undefined;
     }
 
-    const response = await fetch(ADDRESS_INQUIRY_URL, {
-      method: "POST",
-      headers: {
-        ...BASE_HEADERS,
-        "Content-Type": "text/plain;charset=UTF-8",
-        "Referer": `https://investorlift.com/marketplace/deal/${listingId}`,
-        "Cookie": cookieHeader,
-      },
-      body: JSON.stringify({
-        property_id: listingId,
-        type: "address_request",
-      }),
-    });
+    let response: Response;
+    try {
+      response = await fetch(ADDRESS_INQUIRY_URL, {
+        method:  "POST",
+        headers: {
+          ...BASE_HEADERS,
+          "Content-Type": "text/plain;charset=UTF-8",
+          "Referer":      `https://investorlift.com/marketplace/deal/${listingId}`,
+          "Cookie":       cookieHeader,
+        },
+        body: JSON.stringify({ property_id: listingId, type: "address_request" }),
+      });
+    } catch (err) {
+      logger.warn(`[investorlift] Network error fetching address for ${listingId}: ${err}`);
+      return undefined;
+    }
 
     if (!response.ok) {
-      logger.warn(`[investorlift] Address inquiry HTTP ${response.status} for listing ${listingId}`);
+      logger.warn(
+        `[investorlift] Address inquiry returned HTTP ${response.status} for ${listingId}`
+      );
       return undefined;
     }
 
@@ -247,138 +266,153 @@ export class InvestorLiftScraper extends BaseScraper {
     const address = text.trim().replace(/^"|"$/g, "");
 
     if (address.includes(ADDRESS_LIMIT_SENTINEL)) {
-      throw new DailyLimitReachedError(); // ← thrown here, must NOT be caught below
+      throw new DailyLimitReachedError();
     }
 
-    if (address) {
-      logger.debug(`[investorlift] Full address for ${listingId}: ${address}`);
-    } else {
-      logger.warn(`[investorlift] No address returned for listing ${listingId}`);
+    if (!address) {
+      logger.warn(`[investorlift] Empty address returned for ${listingId}`);
+      return undefined;
     }
 
-    return address || undefined;
-  } catch (err) {
-    if (err instanceof DailyLimitReachedError) {
-      throw err; // ← re-throw so enrichWithFullAddresses can catch and break
-    }
-    logger.warn(`[investorlift] Address fetch failed for ${listingId}: ${err}`);
-    return undefined;
+    logger.debug(`[investorlift] Address for ${listingId}: ${address}`);
+    return address;
   }
-}
 
-  private async enrichWithFullAddresses(
-  _context: BrowserContext,
-  listings: RawListing[]
-): Promise<RawListing[]> {
-  if (listings.length === 0) return listings;
+  /**
+   * Enrich up to ADDRESS_FETCH_LIMIT listings with full street-level addresses.
+   * Stops early if the daily quota is reached.
+   */
+  private async enrichWithAddresses(listings: RawListing[]): Promise<RawListing[]> {
+    if (listings.length === 0) return listings;
 
-  const ADDRESS_FETCH_LIMIT = 5;
+    logger.info(
+      `[investorlift] Enriching up to ${ADDRESS_FETCH_LIMIT} of ${listings.length} listings with addresses`
+    );
 
-  logger.info(
-    `[investorlift] Enriching up to ${ADDRESS_FETCH_LIMIT} listings with full addresses ` +
-    `(${listings.length} candidates)`
-  );
+    const result:       RawListing[] = [];
+    let   fetchedCount               = 0;
+    let   limitReached               = false;
 
-  const result: RawListing[] = [];
-  let fetchedCount = 0;
+    for (let i = 0; i < listings.length; i++) {
+      const listing = { ...listings[i] };
 
-  for (let i = 0; i < listings.length; i++) {
-    const listing = { ...listings[i] } as RawListing;
+      // Once we've hit the limit (either our cap or InvestorLift's daily limit),
+      // pass remaining listings through unchanged
+      if (limitReached || fetchedCount >= ADDRESS_FETCH_LIMIT) {
+        result.push(listing);
+        continue;
+      }
 
-    const listingId = extractListingId(listing.url);
-    if (!listingId) {
-      logger.warn(`[investorlift] No listing ID in URL: ${listing.url}`);
-      result.push(listing);
-      continue;
+      const listingId = extractListingId(listing.url);
+      if (!listingId) {
+        logger.warn(`[investorlift] Cannot extract listing ID from: ${listing.url}`);
+        result.push(listing);
+        continue;
+      }
+
+      try {
+        const fullAddress = await this.fetchFullAddress(listingId);
+        if (fullAddress) {
+          listing.address = fullAddress;
+          fetchedCount++;
+        }
+        result.push(listing);
+        await sleep(ADDRESS_REQUEST_DELAY);
+      } catch (err) {
+        if (err instanceof DailyLimitReachedError) {
+          logger.warn(
+            `[investorlift] Daily address limit reached after ${fetchedCount} fetches — ` +
+            `passing remaining ${listings.length - i} listings through unchanged`
+          );
+          limitReached = true;
+          // Push current listing (no address) and continue loop to drain remaining
+          result.push(listing);
+          continue;
+        }
+        logger.warn(`[investorlift] Address fetch failed for ${listingId}: ${err}`);
+        result.push(listing);
+      }
     }
 
-    // If we've already reached the address-fetch limit, don't attempt more
-    if (fetchedCount >= ADDRESS_FETCH_LIMIT) {
-      result.push(listing);
-      continue;
-    }
+    logger.info(
+      `[investorlift] Enrichment done — ${fetchedCount} addresses fetched, ` +
+      `${result.length} listings total`
+    );
+    return result;
+  }
+
+  // ── Public enrichment surface ──────────────────────────────────────────────
+
+  /** Exposed for external callers (e.g. manual enrichment scripts). */
+  public async enrichListingsWithAddresses(listings: RawListing[]): Promise<RawListing[]> {
+    return this.enrichWithAddresses(listings);
+  }
+
+  // ── Post-filter hook ───────────────────────────────────────────────────────
+
+  /**
+   * Called by the base runner AFTER location/price filtering.
+   * Enriches only the top 5 filtered results — avoids burning the daily
+   * address quota on listings that would be filtered out anyway.
+   */
+  protected async enrichAfterFilter(listings: RawListing[]): Promise<RawListing[]> {
+    if (listings.length === 0) return listings;
+
+    const topN = listings.slice(0, ADDRESS_FETCH_LIMIT);
+    logger.info(
+      `[investorlift] Post-filter enrichment: top ${topN.length} of ${listings.length} listings`
+    );
 
     try {
-      const fullAddress = await this.fetchFullAddress(listingId);
-      if (fullAddress) {
-        listing.address = fullAddress;
-        fetchedCount++;
-        logger.debug(`[investorlift] Address enrichment succeeded for ${listingId}`);
-      } else {
-        logger.debug(`[investorlift] No full address for ${listingId} — keeping original listing`);
-      }
-
-      result.push(listing);
-      await sleep(ADDRESS_REQUEST_DELAY_MS);
+      const enriched = await this.enrichWithAddresses(topN);
+      return [...enriched, ...listings.slice(ADDRESS_FETCH_LIMIT)];
     } catch (err) {
-      if (err instanceof DailyLimitReachedError) {
-        logger.warn(
-          `[investorlift] Daily address request limit reached after ${fetchedCount} addresses — stopping enrichment attempts.`
-        );
-        // Push remaining listings unchanged
-        for (let j = i; j < listings.length; j++) {
-          result.push(listings[j]);
-        }
-        break;
-      }
-      logger.warn(`[investorlift] Address fetch failed for ${listingId}: ${err}`);
-      // On other errors, keep the original listing
-      result.push(listing);
+      logger.warn(`[investorlift] Post-filter enrichment failed: ${err} — returning unenriched`);
+      return listings;
     }
   }
 
-  logger.info(
-    `[investorlift] Address enrichment complete — ${fetchedCount} addresses fetched, ${result.length} total listings returned`
-  );
-
-  return result;
-}
-
-  // ── MAIN SCRAPE ────────────────────────────────────────────────────────────
+  // ── Main scrape ────────────────────────────────────────────────────────────
 
   protected async scrapePage(
-    handle: BrowserHandle,
+    _handle: BrowserHandle,
     pageNumber: number
   ): Promise<RawListing[]> {
-    // Ensure we have a valid session before scraping (only runs login UI once)
+    // InvestorLift is not paginated — skip early before doing any IO
+    if (pageNumber > 1) {
+      logger.info("[investorlift] Non-paginated source — skipping page 2+");
+      return [];
+    }
+
+    // Validate session — throws SessionExpiredError with instructions if stale
     await this.ensureSession();
 
-    if (pageNumber > 1) {
-  logger.info("[investorlift] Non-paginated source — skipping page 2+");
-  return [];
-}
-
-    // Create an authenticated browser context by loading the saved session
-    const browser: Browser = await chromium.launch({
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    });
-
+    const browser = await this.launchBrowser();
     try {
-      const context: BrowserContext = await browser.newContext({
-        storageState: SESSION_FILE, // restores all cookies + localStorage
-        userAgent: BASE_HEADERS["User-Agent"],
+      const context = await browser.newContext({
+        storageState: SESSION_FILE,
+        userAgent:    USER_AGENT,
       });
 
-      const page: Page = await context.newPage();
+      const page = await context.newPage();
 
-      const seenUrls: Set<string>             = new Set();
-      const apiListings: RawListing[]         = [];
-      const responsePromises: Promise<void>[] = [];
+      const seenUrls:       Set<string>             = new Set();
+      const apiListings:    RawListing[]             = [];
+      const pendingParses:  Promise<void>[]          = [];
 
+      // Intercept all /api/customer/api/properties XHR responses
       page.on("response", (response) => {
-        const url = response.url();
-
-
-        if (!url.includes("/api/customer/api/properties")) return;
-        logger.debug(`[investorlift] Intercepted JSON response: ${url}`);
+        if (!response.url().includes("/api/customer/api/properties")) return;
+        logger.debug(`[investorlift] XHR intercepted: ${response.url()}`);
 
         const p = response
           .json()
           .then((json) => {
             const parsed = parseApiResponse(json, this.sourceName);
             if (parsed.length > 0) {
-              logger.info(`[investorlift] API hit → ${parsed.length} listings from ${url}`);
+              logger.info(
+                `[investorlift] ${parsed.length} listings from ${response.url()}`
+              );
             }
             for (const listing of parsed) {
               if (!listing.url || seenUrls.has(listing.url)) continue;
@@ -387,134 +421,108 @@ export class InvestorLiftScraper extends BaseScraper {
             }
           })
           .catch((err) => {
-            logger.debug(`[investorlift] Failed to parse from ${url}: ${err}`);
+            logger.debug(`[investorlift] XHR parse error from ${response.url()}: ${err}`);
           });
 
-        responsePromises.push(p);
+        pendingParses.push(p);
       });
 
       try {
-        logger.info(`[investorlift] Loading marketplace (page ${pageNumber})`);
-        await page.goto(MARKETPLACE_URL, {
-          waitUntil: "domcontentloaded",
-          timeout: 30_000,
-        });
+        logger.info("[investorlift] Loading marketplace…");
+        await page.goto(MARKETPLACE_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
 
+        // ── Guard: session expiry / bot detection ────────────────────────
         const landedUrl = page.url();
-        const pageTitle = await page.title();
-        logger.info(`[investorlift] Landed on: ${landedUrl} | title: "${pageTitle}"`);
+        const pageTitle = (await page.title()).toLowerCase();
 
-        // Detect if session expired mid-run
         if (
           landedUrl.includes("/login") ||
           landedUrl.includes("/signin") ||
-          pageTitle.toLowerCase().includes("sign in") ||
-          pageTitle.toLowerCase().includes("log in")
+          pageTitle.includes("sign in") ||
+          pageTitle.includes("log in")
         ) {
-          logger.warn(
-            "[investorlift] Session expired during scrape — deleting session file"
-          );
+          logger.warn("[investorlift] Redirected to login — session expired, deleting file");
           fs.unlinkSync(SESSION_FILE);
-          throw new Error("[investorlift] Session expired — re-run to trigger re-login");
+          throw new SessionExpiredError();
         }
 
         if (
-          pageTitle.toLowerCase().includes("access denied") ||
-          pageTitle.toLowerCase().includes("captcha") ||
-          pageTitle.toLowerCase().includes("just a moment") ||
+          pageTitle.includes("access denied") ||
+          pageTitle.includes("captcha") ||
+          pageTitle.includes("just a moment") ||
           landedUrl.includes("challenge") ||
           landedUrl.includes("blocked")
         ) {
-          logger.error(`[investorlift] IP blocked or CAPTCHA — aborting page ${pageNumber}`);
+          logger.error("[investorlift] IP blocked or CAPTCHA challenge detected");
           return [];
         }
 
+        logger.info(`[investorlift] Landed on: ${landedUrl} | title: "${pageTitle}"`);
+
+        // ── Wait for first XHR ───────────────────────────────────────────
         try {
-          
           await page.waitForResponse(
-  (r) =>
-    r.url().includes("/api/customer/api/properties") && r.status() === 200,
-  { timeout: 15_000 }
-);
+            (r) => r.url().includes("/api/customer/api/properties") && r.status() === 200,
+            { timeout: 15_000 }
+          );
           logger.info("[investorlift] Properties XHR received");
         } catch {
-          logger.warn("[investorlift] Properties XHR timed out — scrolling to trigger");
+          logger.warn("[investorlift] XHR timeout — scrolling to trigger lazy load");
         }
 
         await sleep(2000);
-        await Promise.allSettled([...responsePromises]);
+        await Promise.allSettled(pendingParses);
 
+        // ── Scroll to trigger additional XHRs if first load was empty ───
         if (apiListings.length === 0) {
-          logger.info("[investorlift] No listings on load — scrolling to trigger XHR");
+          logger.info("[investorlift] No listings yet — scrolling to trigger XHR");
           for (let i = 0; i < 5; i++) {
             await page.mouse.wheel(0, 5000);
             await sleep(2500);
           }
           await sleep(3000);
-          await Promise.allSettled([...responsePromises]);
+          await Promise.allSettled(pendingParses);
         }
 
+        // ── Collect results ──────────────────────────────────────────────
         let listings: RawListing[];
+
         if (apiListings.length > 0) {
-          logger.info(`[investorlift] Collected ${apiListings.length} listings via API`);
+          logger.info(`[investorlift] ${apiListings.length} listings collected via XHR`);
           listings = apiListings;
         } else {
-          logger.warn("[investorlift] No API data — falling back to DOM parsing");
+          logger.warn("[investorlift] No XHR data — falling back to DOM parse");
           const html = await page.content();
           this.saveDebugHtml(html, "no_api_data");
           listings = parseDomListings(html, this.sourceName);
         }
 
-        // Return ALL listings to base runner for location/price filtering
-        // Post-filter enrichment (enrichAfterFilter) will handle street-level address fetching
-        // for the top 5 filtered results
-        logger.info(`[investorlift] Returning ${listings.length} listings to base runner (enrichment deferred to post-filter)`);
+        logger.info(
+          `[investorlift] Returning ${listings.length} listings for filtering ` +
+          `(address enrichment deferred to post-filter)`
+        );
         return listings;
+
       } finally {
         await page.close();
+        await context.close();
       }
     } finally {
       await browser.close();
     }
   }
 
-  /**
-   * Post-filter enrichment: enrich top 5 filtered results with full street-level addresses.
-   * This runs AFTER location/price filtering in the base runner.
-   */
-  protected async enrichAfterFilter(listings: RawListing[]): Promise<RawListing[]> {
-    if (listings.length === 0) return listings;
-
-    const topN = listings.slice(0, 5);
-    logger.info(
-      `[investorlift] Post-filter enrichment: enriching top ${topN.length} of ${listings.length} filtered listings`,
-    );
-
-    try {
-      // Need browser context for session validation, but address fetching uses cookies from file
-      const testBrowser = await chromium.launch({ headless: true });
-      try {
-        const testContext = await testBrowser.newContext({
-          storageState: SESSION_FILE,
-          userAgent: BASE_HEADERS["User-Agent"],
-        });
-        const enriched = await this.enrichWithFullAddresses(testContext, topN);
-        await testContext.close();
-        return [...enriched, ...listings.slice(5)];
-      } finally {
-        await testBrowser.close();
-      }
-    } catch (err) {
-      logger.warn(`[investorlift] Post-filter enrichment failed: ${err} — returning unenriched`);
-      return listings;
-    }
+  protected shouldContinue(pageNumber: number): boolean {
+    return pageNumber <= 1;
   }
-}
 
-// ── Utilities ──────────────────────────────────────────────────────────────
+  // ── Debug helpers ──────────────────────────────────────────────────────────
 
-function extractListingId(url: string | undefined): string | undefined {
-  if (!url) return undefined;
-  const m = url.match(/\/(?:deal|p)\/([^/?#]+)/);
-  return m?.[1];
+  private saveDebugHtml(html: string, label: string): void {
+    try {
+      fs.mkdirSync(DEBUG_DIR, { recursive: true });
+      fs.writeFileSync(path.join(DEBUG_DIR, `investorlift_${label}.html`), html);
+      logger.info(`[investorlift] Debug HTML saved: logs/investorlift_${label}.html`);
+    } catch {}
+  }
 }
