@@ -30,8 +30,7 @@
     "enrich:zillow:dry": "node --max-old-space-size=512 -r ./polyfill-file.js -r ts-node/register index.ts --enrich zillow --dry-run",
     "test:zillow": "node --max-old-space-size=512 -r ./polyfill-file.js -r ts-node/register src/enrichers/zillow/test.ts",
     "test:zillow:debug": "node --max-old-space-size=512 -r ./polyfill-file.js -r ts-node/register src/enrichers/zillow/test.debug.ts",
-    "test:scraperapi": "node --max-old-space-size=512 -r ./polyfill-file.js -r ts-node/register src/scrapers/loopnet/test-scraperapi.ts",
-    "postinstall": "prisma generate"
+    "test:scraperapi": "node --max-old-space-size=512 -r ./polyfill-file.js -r ts-node/register src/scrapers/loopnet/test-scraperapi.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.13.0",
