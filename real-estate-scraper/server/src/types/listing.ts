@@ -21,6 +21,7 @@ export type DealScore = "good_deal" | "average_deal" | "low_potential" | "unknow
 export interface RawListing {
   url: string;
   source: string;                    // e.g. "loopnet", "realtor", "craigslist_milwaukee"
+  sourceUrl?: string;                // URL of the matched estimate page, e.g. Zillow/Redfin/Propwire
 
   title?: string;
   price?: number;

@@ -24,6 +24,13 @@ model Property {
   latitude            Float?
   longitude           Float?
 
+  // ── Estimate source URLs ───────────────────────────────────
+  // URLs to the Zillow/Redfin/Propwire/Realtor property pages where estimates were found
+  zillowUrl           String?
+  redfinUrl           String?
+  propwireUrl         String?
+  realtorUrl          String?
+
   // Relations
   listings            Listing[]
   estimates           Estimate[]

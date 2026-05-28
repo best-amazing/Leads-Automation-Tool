@@ -153,9 +153,11 @@ export async function runScrapers(options: RunOptions): Promise<void> {
           if (enrichedListing?.zestimate != null && enrichedListing.address) {
             const propertyId = await upsertPropertyFromEnrichment(
               enrichedListing.address,
-              enrichedListing.zpid
+              enrichedListing.zpid,
+              "zillow",
+              enrichedListing.sourceUrl ?? payload.url
             );
-            await upsertEstimateFromZillow(propertyId, enrichedListing.zestimate, listingId);
+            await upsertEstimateFromZillow(propertyId, enrichedListing.zestimate, listingId, enrichedListing.sourceUrl ?? payload.url);
             
             // 3. Link listing to property
             await updateListingPropertyId(listingId, propertyId);

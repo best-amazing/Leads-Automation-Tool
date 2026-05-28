@@ -11,11 +11,59 @@ import { logger } from "../utils/logger";
 import pLimit from "p-limit";
 import { zillowEnrichmentService } from "../services/zillow-enrichment.service";
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Normalize an address for comparison purposes (address-based deduplication)
+ * Converts to lowercase, removes extra whitespace and punctuation
+ */
+function normalizeAddressForComparison(address: string | null | undefined): string {
+  if (!address) return "";
+  return address
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ") // collapse multiple spaces
+    .replace(/[.,#\-()]/g, ""); // remove common punctuation
+}
+
+/**
+ * Check if a listing with the same address + source already exists
+ * This prevents duplicate listings when the same property appears at different URLs
+ */
+async function findListingByAddressAndSource(
+  address: string | null | undefined,
+  source: string
+): Promise<Listing | null> {
+  if (!address) return null;
+  
+  const normalized = normalizeAddressForComparison(address);
+  
+  // Find listings with matching normalized address and source
+  const listings = await prisma.listing.findMany({
+    where: { source },
+    select: { id: true, url: true, rawAddress: true },
+  });
+  
+  // Filter by normalized address match
+  for (const listing of listings) {
+    if (normalizeAddressForComparison(listing.rawAddress) === normalized) {
+      return listing as any;
+    }
+  }
+  
+  return null;
+}
+
 // ── Write ─────────────────────────────────────────────────────────────────────
 
 /**
  * Upsert a single listing to the general Listing table.
  * Raw data only — no estimates or property linking.
+ * 
+ * Deduplication strategy:
+ * 1. First check if URL exists → upsert by URL
+ * 2. If URL doesn't exist, check if address+source exists → upsert by address to prevent duplicates
+ * 3. Otherwise create new listing
  */
 export async function upsertListing(
   payload: ListingUpsertPayload,
@@ -38,30 +86,59 @@ export async function upsertListing(
     lastSeenAt: new Date(),
   };
 
-  return prisma.listing.upsert({
-    where: { url: payload.url },
-    create: listingData,
-    update: {
-      title: payload.title,
-      price: payload.price,
-      rawAddress: payload.address,
-      location: payload.location,
-      propertyType: payload.propertyType,
-      bedrooms: payload.bedrooms,
-      bathrooms: payload.bathrooms,
-      squareFeet: payload.squareFeet,
-      description: payload.description,
-      ownerName: payload.ownerName,
-      ownerPhone: payload.ownerPhone,
-      postedDate: payload.postedDate ?? payload.listedAt,
-      lastSeenAt: new Date(),
-    },
-  });
+  const updateData = {
+    url: payload.url, // Update URL if it changed
+    title: payload.title,
+    price: payload.price,
+    rawAddress: payload.address,
+    location: payload.location,
+    propertyType: payload.propertyType,
+    bedrooms: payload.bedrooms,
+    bathrooms: payload.bathrooms,
+    squareFeet: payload.squareFeet,
+    description: payload.description,
+    ownerName: payload.ownerName,
+    ownerPhone: payload.ownerPhone,
+    postedDate: payload.postedDate ?? payload.listedAt,
+    lastSeenAt: new Date(),
+  };
+
+  // Strategy: First try to upsert by URL (same listing page)
+  try {
+    return await prisma.listing.upsert({
+      where: { url: payload.url },
+      create: listingData,
+      update: updateData,
+    });
+  } catch (err: any) {
+    // If URL doesn't exist yet, check if this address+source already exists
+    // This prevents creating duplicates when the same property is at a different URL
+    if (err.code === "P2025" || err.message?.includes("not found")) {
+      const existing = await findListingByAddressAndSource(payload.address, payload.source);
+      
+      if (existing) {
+        logger.debug(
+          `[db] Listing with address "${payload.address}" from source "${payload.source}" already exists (id=${existing.id}). ` +
+          `Updating URL from "${existing.url}" to "${payload.url}" to reflect new location.`
+        );
+        // Update the existing listing with the new URL
+        return await prisma.listing.update({
+          where: { id: existing.id },
+          data: updateData,
+        });
+      }
+    }
+    throw err;
+  }
 }
 
 /**
  * Upsert many listings (batch version)
  * Uses transaction for better performance.
+ * 
+ * Deduplication strategy: Same as upsertListing()
+ * - First tries URL-based upsert
+ * - Falls back to address+source check to prevent duplicates
  */
 export async function upsertMany(
   payloads: ListingUpsertPayload[],
@@ -79,49 +156,27 @@ export async function upsertMany(
     batches.push(payloads.slice(i, i + batchSize));
   }
 
+  // Pre-fetch all existing listings by source for address deduplication
+  // This is more efficient than looking up individually for each payload
+  const sources = new Set(payloads.map(p => p.source));
+  const existingBySourceAndAddress: Map<string, Listing[]> = new Map();
+  
+  for (const source of sources) {
+    const listings = await prisma.listing.findMany({
+      where: { source },
+      select: { id: true, url: true, rawAddress: true, source: true },
+    });
+    existingBySourceAndAddress.set(source, listings as any);
+  }
+
   // Process batches sequentially to avoid exhausting DB connection pool.
   let processed = 0;
   for (const batch of batches) {
     try {
-      await prisma.$transaction(
-        batch.map((p) =>
-          prisma.listing.upsert({
-            where: { url: p.url },
-            create: {
-              url: p.url,
-              source: p.source,
-              title: p.title,
-              price: p.price,
-              rawAddress: p.address,
-              location: p.location,
-              propertyType: p.propertyType,
-              bedrooms: p.bedrooms ?? (p as any).beds,
-              bathrooms: p.bathrooms ?? (p as any).baths,
-              squareFeet: p.squareFeet,
-              description: p.description,
-              ownerName: p.ownerName,
-              ownerPhone: p.ownerPhone,
-              postedDate: p.postedDate ?? (p as any).listedAt,
-              lastSeenAt: new Date(),
-            },
-            update: {
-              title: p.title,
-              price: p.price,
-              rawAddress: p.address,
-              location: p.location,
-              propertyType: p.propertyType,
-              bedrooms: p.bedrooms ?? (p as any).beds,
-              bathrooms: p.bathrooms ?? (p as any).baths,
-              squareFeet: p.squareFeet,
-              description: p.description,
-              ownerName: p.ownerName,
-              ownerPhone: p.ownerPhone,
-              postedDate: p.postedDate ?? (p as any).listedAt,
-              lastSeenAt: new Date(),
-            },
-          })
-        )
-      );
+      // Process each payload individually to handle address deduplication
+      for (const p of batch) {
+        await upsertListing(p);
+      }
       processed += batch.length;
     } catch (err) {
       logger.error(`[db] Batch upsert failed after processing ${processed} listings: ${err}`);
@@ -536,7 +591,6 @@ export async function getExistingUrls(source: string): Promise<Set<string>> {
 */
 
 export async function getAllPropertiesWithListings(limit = 1000) {
-  // First, fetch all properties with their listings and estimates (including sourceListingId)
   const properties = await prisma.property.findMany({
     select: {
       id: true,
@@ -548,6 +602,10 @@ export async function getAllPropertiesWithListings(limit = 1000) {
       zip: true,
       latitude: true,
       longitude: true,
+      zillowUrl: true,
+      redfinUrl: true,
+      propwireUrl: true,
+      realtorUrl: true,
       createdAt: true,
       updatedAt: true,
       listings: {
@@ -584,96 +642,27 @@ export async function getAllPropertiesWithListings(limit = 1000) {
     take: limit,
   });
 
-  // Collect all sourceListingIds grouped by source for batch fetching
-  const zillowIds = new Set<string>();
-  const redfinIds = new Set<string>();
-  const realtorIds = new Set<string>();
-  const propwireIds = new Set<string>();
-
-  properties.forEach((property) => {
-    property.estimates.forEach((estimate) => {
-      if (!estimate.sourceListingId) return;
-      
-      switch (estimate.source) {
-        case "zillow":
-          zillowIds.add(estimate.sourceListingId);
-          break;
-        case "redfin":
-          redfinIds.add(estimate.sourceListingId);
-          break;
-        case "realtor":
-          realtorIds.add(estimate.sourceListingId);
-          break;
-        case "propwire":
-          propwireIds.add(estimate.sourceListingId);
-          break;
-      }
-    });
-  });
-
-  // Fetch source listings in parallel for each source
-  const [zillowListings, redfinListings, realtorListings, propwireListings] = await Promise.all([
-    zillowIds.size > 0
-      ? (prisma.zillowListing as any).findMany({
-          where: { id: { in: Array.from(zillowIds) } },
-          select: { id: true, url: true },
-        })
-      : Promise.resolve([]),
-    redfinIds.size > 0
-      ? (prisma.redfinListing as any).findMany({
-          where: { id: { in: Array.from(redfinIds) } },
-          select: { id: true, url: true },
-        })
-      : Promise.resolve([]),
-    realtorIds.size > 0
-      ? (prisma.realtorListing as any).findMany({
-          where: { id: { in: Array.from(realtorIds) } },
-          select: { id: true, url: true },
-        })
-      : Promise.resolve([]),
-    propwireIds.size > 0
-      ? (prisma.propwireListing as any).findMany({
-          where: { id: { in: Array.from(propwireIds) } },
-          select: { id: true, url: true },
-        })
-      : Promise.resolve([]),
-  ]);
-
-  // Create maps for quick lookup
-  const zillowMap = new Map(zillowListings.map((z: any) => [z.id, z.url]));
-  const redfinMap = new Map(redfinListings.map((r: any) => [r.id, r.url]));
-  const realtorMap = new Map(realtorListings.map((r: any) => [r.id, r.url]));
-  const propwireMap = new Map(propwireListings.map((p: any) => [p.id, p.url]));
-
-  // Enrich estimates with source URLs
   properties.forEach((property) => {
     property.estimates = property.estimates.map((estimate: any) => {
-      let sourceUrl: any;
-
-      if (estimate.sourceListingId) {
-        switch (estimate.source) {
-          case "zillow":
-            sourceUrl = zillowMap.get(estimate.sourceListingId);
-            break;
-          case "redfin":
-            sourceUrl = redfinMap.get(estimate.sourceListingId);
-            break;
-          case "realtor":
-            sourceUrl = realtorMap.get(estimate.sourceListingId);
-            break;
-          case "propwire":
-            sourceUrl = propwireMap.get(estimate.sourceListingId);
-            break;
-        }
+      let sourceUrl: string | null = null;
+      switch (estimate.source) {
+        case "zillow":
+          sourceUrl = property.zillowUrl ?? null;
+          break;
+        case "redfin":
+          sourceUrl = property.redfinUrl ?? null;
+          break;
+        case "realtor":
+          sourceUrl = property.realtorUrl ?? null;
+          break;
+        case "propwire":
+          sourceUrl = property.propwireUrl ?? null;
+          break;
       }
 
       return {
-        id: estimate.id,
-        source: estimate.source,
-        value: estimate.value,
-        sourceListingId: estimate.sourceListingId ?? null,
+        ...estimate,
         sourceUrl,
-        fetchedAt: estimate.fetchedAt,
       };
     });
   });
@@ -838,22 +827,43 @@ export async function getSummaryStats(): Promise<{
 /**
  * Create or get a Property record from an enriched listing
  * Generates a normalized address key for deduplication
+ * Also stores the source URL (Zillow/Redfin/etc) in the appropriate field
  */
 export async function upsertPropertyFromEnrichment(
   address: string,
   zpid?: string | null,
+  source?: string,
+  sourceUrl?: string,
 ): Promise<string> {
   const normalizedAddress = (address || "").toLowerCase().trim();
+
+  // Map source to the corresponding URL field
+  const urlUpdate: Record<string, any> = { address };
+  if (sourceUrl && source) {
+    switch (source) {
+      case "zillow":
+        urlUpdate.zillowUrl = sourceUrl;
+        break;
+      case "redfin":
+        urlUpdate.redfinUrl = sourceUrl;
+        break;
+      case "propwire":
+        urlUpdate.propwireUrl = sourceUrl;
+        break;
+      case "realtor":
+        urlUpdate.realtorUrl = sourceUrl;
+        break;
+    }
+  }
 
   const property = await prisma.property.upsert({
     where: { normalizedAddress },
     create: {
       normalizedAddress,
       address,
+      ...urlUpdate,
     },
-    update: {
-      address,
-    },
+    update: urlUpdate,
   });
 
   return property.id;
@@ -867,6 +877,7 @@ export async function upsertEstimateFromZillow(
   propertyId: string,
   zestimate: number,
   sourceListingId?: string,
+  sourceUrl?: string,
 ): Promise<void> {
   await prisma.estimate.upsert({
     where: {
@@ -892,50 +903,80 @@ export async function upsertEstimateFromZillow(
 /**
  * Upsert a single listing and return its ID
  * Used during enrichment to link Property+Estimate records to listings
+ * 
+ * Deduplication strategy: Same as upsertListing()
+ * - First tries URL-based upsert
+ * - Falls back to address+source check to prevent duplicates
  */
 export async function upsertSingleListing(
   payload: ListingUpsertPayload,
 ): Promise<string> {
-  const listing = await prisma.listing.upsert({
-    where: { url: payload.url },
-    create: {
-      url: payload.url,
-      source: payload.source,
-      title: payload.title,
-      price: payload.price,
-      rawAddress: payload.address,
-      location: payload.location,
-      propertyType: payload.propertyType,
-      bedrooms: payload.bedrooms,
-      bathrooms: payload.bathrooms,
-      squareFeet: payload.squareFeet,
-      description: payload.description,
-      ownerName: payload.ownerName,
-      ownerPhone: payload.ownerPhone,
-      postedDate: payload.postedDate ?? payload.listedAt,
-      lastSeenAt: new Date(),
-      dealScore: (payload as any).dealScore,
-      equityEstimate: (payload as any).equityEstimate,
-    },
-    update: {
-      title: payload.title,
-      price: payload.price,
-      rawAddress: payload.address,
-      location: payload.location,
-      propertyType: payload.propertyType,
-      bedrooms: payload.bedrooms,
-      bathrooms: payload.bathrooms,
-      squareFeet: payload.squareFeet,
-      description: payload.description,
-      ownerName: payload.ownerName,
-      ownerPhone: payload.ownerPhone,
-      postedDate: payload.postedDate ?? payload.listedAt,
-      lastSeenAt: new Date(),
-      dealScore: (payload as any).dealScore,
-      equityEstimate: (payload as any).equityEstimate,
-    },
-  });
-  return listing.id;
+  const createData = {
+    url: payload.url,
+    source: payload.source,
+    title: payload.title,
+    price: payload.price,
+    rawAddress: payload.address,
+    location: payload.location,
+    propertyType: payload.propertyType,
+    bedrooms: payload.bedrooms,
+    bathrooms: payload.bathrooms,
+    squareFeet: payload.squareFeet,
+    description: payload.description,
+    ownerName: payload.ownerName,
+    ownerPhone: payload.ownerPhone,
+    postedDate: payload.postedDate ?? payload.listedAt,
+    lastSeenAt: new Date(),
+    dealScore: (payload as any).dealScore,
+    equityEstimate: (payload as any).equityEstimate,
+  };
+
+  const updateData = {
+    url: payload.url,
+    title: payload.title,
+    price: payload.price,
+    rawAddress: payload.address,
+    location: payload.location,
+    propertyType: payload.propertyType,
+    bedrooms: payload.bedrooms,
+    bathrooms: payload.bathrooms,
+    squareFeet: payload.squareFeet,
+    description: payload.description,
+    ownerName: payload.ownerName,
+    ownerPhone: payload.ownerPhone,
+    postedDate: payload.postedDate ?? payload.listedAt,
+    lastSeenAt: new Date(),
+    dealScore: (payload as any).dealScore,
+    equityEstimate: (payload as any).equityEstimate,
+  };
+
+  try {
+    const listing = await prisma.listing.upsert({
+      where: { url: payload.url },
+      create: createData,
+      update: updateData,
+    });
+    return listing.id;
+  } catch (err: any) {
+    // If URL doesn't exist yet, check if this address+source already exists
+    if (err.code === "P2025" || err.message?.includes("not found")) {
+      const existing = await findListingByAddressAndSource(payload.address, payload.source);
+      
+      if (existing) {
+        logger.debug(
+          `[db] Listing with address "${payload.address}" from source "${payload.source}" already exists (id=${existing.id}). ` +
+          `Updating URL from "${existing.url}" to "${payload.url}".`
+        );
+        // Update the existing listing with the new URL
+        const updated = await prisma.listing.update({
+          where: { id: existing.id },
+          data: updateData,
+        });
+        return updated.id;
+      }
+    }
+    throw err;
+  }
 }
 
 /**
@@ -959,6 +1000,7 @@ export async function updateListingPropertyId(
  * @param limit Maximum number of old listings to fetch
  * @returns Array of Listing records
  */
+
 export async function getOldListingsWithoutPropertyLink(
   platform: string,
   limit: number = 50
@@ -1067,8 +1109,13 @@ export async function reEnrichOldListingsFromPlatform(
     // If zestimate was found, create records
     if (listing.zestimate != null && listing.address) {
       try {
-        const propertyId = await upsertPropertyFromEnrichment(listing.address, listing.zpid);
-        await upsertEstimateFromZillow(propertyId, listing.zestimate, listing.url);
+        const propertyId = await upsertPropertyFromEnrichment(
+          listing.address,
+          listing.zpid,
+          "zillow",
+          listing.sourceUrl ?? listing.url
+        );
+        await upsertEstimateFromZillow(propertyId, listing.zestimate, listing.url, listing.sourceUrl ?? listing.url);
         enriched++;
       } catch (err) {
         logger.warn(`[re-enrich] Failed to create property/estimate for ${listing.address}: ${err}`);

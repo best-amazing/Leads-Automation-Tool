@@ -1,84 +1,95 @@
 /**
  * Test script for Redfin Address Enricher
- * 
+ *
  * Usage: npx ts-node test-redfin-enricher.ts
- * 
- * Make sure to set environment variables:
- *   OXYLABS_USERNAME=your_username
- *   OXYLABS_PASSWORD=your_password
- *   REDFIN_ENRICHER_DEBUG=true  (optional, for debug output)
+ *
+ * Environment variables:
+ *   OXYLABS_USERNAME=your_username   (required)
+ *   OXYLABS_PASSWORD=your_password   (required)
+ *   REDFIN_ENRICHER_DEBUG=true       (optional — saves raw API responses to logs/)
+ *   TEST_ADDRESS="123 Main St, ..."  (optional — override the default test address)
  */
 
-import { RedfinAddressEnricher, lookupRedfinEstimate } from "./src/scrapers/redfin/redfin.address.enricher";
+import { lookupRedfinEstimate } from "./src/scrapers/redfin/redfin.address.enricher";
 
-// Test address
-const testAddress = "4433 E 158th St, Cleveland, OH 44128";
+const testAddress = process.env.TEST_ADDRESS ?? "4433 E 158th St, Cleveland, OH 44128";
 
 async function main() {
   console.log("═══════════════════════════════════════════════════════════════");
-  console.log("Redfin Address Enricher Test");
+  console.log("Redfin Address Enricher — Test");
   console.log("═══════════════════════════════════════════════════════════════\n");
 
-  // Check if Oxylabs credentials are set
-  const oxylabsUsername = process.env.OXYLABS_USERNAME;
-  const oxylabsPassword = process.env.OXYLABS_PASSWORD;
+  // ── Credential check ──────────────────────────────────────────────────────
 
-  if (!oxylabsUsername || !oxylabsPassword) {
+  if (!process.env.OXYLABS_USERNAME || !process.env.OXYLABS_PASSWORD) {
     console.error("❌ ERROR: Oxylabs credentials not set");
-    console.error("   Please set the following environment variables:");
-    console.error("   - OXYLABS_USERNAME");
-    console.error("   - OXYLABS_PASSWORD");
-    console.error("\n   Example:");
     console.error("   export OXYLABS_USERNAME=your_username");
     console.error("   export OXYLABS_PASSWORD=your_password");
     process.exit(1);
   }
+  console.log("✓ Oxylabs credentials found");
 
-  console.log("✓ Oxylabs credentials found\n");
-  console.log("Testing address lookup:");
-  console.log(`  Address: "${testAddress}"\n`);
+  if (process.env.REDFIN_ENRICHER_DEBUG === "true") {
+    console.log("✓ Debug mode ON — raw API responses saved to logs/");
+  }
+
+  console.log(`\nTesting: "${testAddress}"\n`);
+
+  // ── Lookup ────────────────────────────────────────────────────────────────
+
+  let result: Awaited<ReturnType<typeof lookupRedfinEstimate>>;
 
   try {
-    // Method 1: Using convenience function
-    console.log("→ Calling lookupRedfinEstimate()...\n");
-    const result = await lookupRedfinEstimate(testAddress);
-
-    console.log("Result:");
-    console.log("───────────────────────────────────────────────────────────────");
-    console.log(JSON.stringify(result, null, 2));
-    console.log("───────────────────────────────────────────────────────────────\n");
-
-    // Summary
-    if (result.found) {
-      console.log("✓ SUCCESS: Address found on Redfin\n");
-      if (result.redfinEstimate != null) {
-        console.log(`💰 Redfin Estimate: $${result.redfinEstimate.toLocaleString()}`);
-        if (result.redfinEstimateLow != null && result.redfinEstimateHigh != null) {
-          console.log(`   Range: $${result.redfinEstimateLow.toLocaleString()} – $${result.redfinEstimateHigh.toLocaleString()}`);
-        }
-      } else {
-        console.log("⚠️  No Redfin estimate found for this property");
-      }
-      if (result.propertyId) {
-        console.log(`📍 Property ID: ${result.propertyId}`);
-      }
-      if (result.url) {
-        console.log(`🔗 URL: ${result.url}`);
-      }
-      if (result.address) {
-        console.log(`🏠 Address: ${result.address}`);
-      }
-      if (result.listPrice != null) {
-        console.log(`💵 List Price: $${result.listPrice.toLocaleString()}`);
-      }
-    } else {
-      console.log(`❌ FAILED: Address not found`);
-      console.log(`   Error: ${result.error}`);
-    }
-  } catch (error) {
-    console.error("❌ Error during lookup:");
-    console.error(error);
+    result = await lookupRedfinEstimate(testAddress);
+  } catch (err: any) {
+    console.error("❌ Fatal error during lookup:");
+    console.error(err?.message ?? err);
     process.exit(1);
+  }
+
+  // ── Raw result ────────────────────────────────────────────────────────────
+
+  console.log("Raw result:");
+  console.log("───────────────────────────────────────────────────────────────");
+  console.log(JSON.stringify(result, null, 2));
+  console.log("───────────────────────────────────────────────────────────────\n");
+
+  // ── Summary ───────────────────────────────────────────────────────────────
+
+  if (result.found) {
+    console.log("✅ SUCCESS\n");
+    console.log(`💰 Redfin Estimate : $${result.redfinEstimate!.toLocaleString()}`);
+    if (result.redfinEstimateLow != null && result.redfinEstimateHigh != null) {
+      console.log(
+        `   Range           : $${result.redfinEstimateLow.toLocaleString()} – ` +
+        `$${result.redfinEstimateHigh.toLocaleString()}`
+      );
+    }
+    if (result.listPrice != null) {
+      console.log(`💵 List Price       : $${result.listPrice.toLocaleString()}`);
+    }
+    console.log(`📍 Property ID      : ${result.propertyId}`);
+    console.log(`🔗 URL              : ${result.url}`);
+    console.log(`🏠 Address          : ${result.address}`);
+  } else {
+    // Partial success — property found on Redfin but no AVM estimate
+    if (result.propertyId != null) {
+      console.log("⚠️  PARTIAL: Property found on Redfin but no AVM estimate\n");
+      console.log(`📍 Property ID : ${result.propertyId}`);
+      console.log(`🔗 URL         : ${result.url}`);
+      console.log(`🏠 Address     : ${result.address}`);
+      console.log(`   Error       : ${result.error}`);
+      console.log(
+        "\n   This is expected for off-market / low-data properties." +
+        "\n   Redfin does not publish AVM estimates for all properties."
+      );
+    } else {
+      console.log(`❌ FAILED: ${result.error}\n`);
+      console.log("   Possible reasons:");
+      console.log("   • Address not found in Redfin's database");
+      console.log("   • Oxylabs returned 613 (bot block) — check headers are forwarded");
+      console.log("   • Autocomplete endpoint path changed — check /stingray/do/ is correct");
+    }
   }
 }
 
