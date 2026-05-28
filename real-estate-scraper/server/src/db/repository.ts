@@ -6,9 +6,10 @@
 
 import { Listing, Prisma } from "@prisma/client";
 import { prisma } from "./client";
-import { ListingUpsertPayload } from "../types/listing";
+import { ListingUpsertPayload, RawListing } from "../types/listing";
 import { logger } from "../utils/logger";
 import pLimit from "p-limit";
+import { zillowEnrichmentService } from "../services/zillow-enrichment.service";
 
 // ── Write ─────────────────────────────────────────────────────────────────────
 
@@ -829,5 +830,277 @@ export async function getSummaryStats(): Promise<{
     byDealScore: Object.fromEntries(
       byScore.map((r) => [r.dealScore ?? "unscored", r._count])
     ),
+  };
+}
+
+// ── Enrichment (Zillow zestimate) ─────────────────────────────────────────────
+
+/**
+ * Create or get a Property record from an enriched listing
+ * Generates a normalized address key for deduplication
+ */
+export async function upsertPropertyFromEnrichment(
+  address: string,
+  zpid?: string | null,
+): Promise<string> {
+  const normalizedAddress = (address || "").toLowerCase().trim();
+
+  const property = await prisma.property.upsert({
+    where: { normalizedAddress },
+    create: {
+      normalizedAddress,
+      address,
+    },
+    update: {
+      address,
+    },
+  });
+
+  return property.id;
+}
+
+/**
+ * Create an Estimate record for a property from Zillow enrichment
+ * Uses upsert to handle duplicate enrichment attempts
+ */
+export async function upsertEstimateFromZillow(
+  propertyId: string,
+  zestimate: number,
+  sourceListingId?: string,
+): Promise<void> {
+  await prisma.estimate.upsert({
+    where: {
+      propertyId_source: {
+        propertyId,
+        source: "zillow",
+      },
+    },
+    create: {
+      propertyId,
+      source: "zillow",
+      value: zestimate,
+      sourceListingId,
+    },
+    update: {
+      value: zestimate,
+      sourceListingId,
+      fetchedAt: new Date(),
+    },
+  });
+}
+
+/**
+ * Upsert a single listing and return its ID
+ * Used during enrichment to link Property+Estimate records to listings
+ */
+export async function upsertSingleListing(
+  payload: ListingUpsertPayload,
+): Promise<string> {
+  const listing = await prisma.listing.upsert({
+    where: { url: payload.url },
+    create: {
+      url: payload.url,
+      source: payload.source,
+      title: payload.title,
+      price: payload.price,
+      rawAddress: payload.address,
+      location: payload.location,
+      propertyType: payload.propertyType,
+      bedrooms: payload.bedrooms,
+      bathrooms: payload.bathrooms,
+      squareFeet: payload.squareFeet,
+      description: payload.description,
+      ownerName: payload.ownerName,
+      ownerPhone: payload.ownerPhone,
+      postedDate: payload.postedDate ?? payload.listedAt,
+      lastSeenAt: new Date(),
+      dealScore: (payload as any).dealScore,
+      equityEstimate: (payload as any).equityEstimate,
+    },
+    update: {
+      title: payload.title,
+      price: payload.price,
+      rawAddress: payload.address,
+      location: payload.location,
+      propertyType: payload.propertyType,
+      bedrooms: payload.bedrooms,
+      bathrooms: payload.bathrooms,
+      squareFeet: payload.squareFeet,
+      description: payload.description,
+      ownerName: payload.ownerName,
+      ownerPhone: payload.ownerPhone,
+      postedDate: payload.postedDate ?? payload.listedAt,
+      lastSeenAt: new Date(),
+      dealScore: (payload as any).dealScore,
+      equityEstimate: (payload as any).equityEstimate,
+    },
+  });
+  return listing.id;
+}
+
+/**
+ * Update a listing with its linked property ID
+ */
+export async function updateListingPropertyId(
+  listingId: string,
+  propertyId: string,
+): Promise<void> {
+  await prisma.listing.update({
+    where: { id: listingId },
+    data: { propertyId },
+  });
+}
+
+/**
+ * Get old listings from database that have not been linked to a Property yet
+ * (i.e., have no Zillow enrichment)
+ * 
+ * @param platform Source platform
+ * @param limit Maximum number of old listings to fetch
+ * @returns Array of Listing records
+ */
+export async function getOldListingsWithoutPropertyLink(
+  platform: string,
+  limit: number = 50
+): Promise<Listing[]> {
+  return prisma.listing.findMany({
+    where: {
+      source: platform,
+      propertyId: null,  // Not yet linked to a Property
+    },
+    take: limit,
+  });
+}
+
+/**
+ * Batch re-enrich old listings from the database with Zillow zestimates.
+ * Queries listings by platform, extracts addresses, passes to enricher,
+ * and creates Property+Estimate records for any matches.
+ * 
+ * @param platform Source platform (e.g., "crexi", "redfin", "loopnet")
+ * @param options Configuration (limit, concurrency)
+ * @returns Summary statistics of the re-enrichment run
+ */
+export async function reEnrichOldListingsFromPlatform(
+  platform: string,
+  options?: {
+    limit?: number;
+    concurrency?: number;
+  }
+): Promise<{
+  processed: number;
+  enriched: number;
+  foundNoEstimate: number;
+  notFound: number;
+  failed: number;
+  duration_ms: number;
+}> {
+  const startTime = Date.now();
+  const limit = options?.limit ?? 100;
+  const concurrency = options?.concurrency ?? 2;
+
+  logger.info(`\n${"─".repeat(60)}`);
+  logger.info(`Starting batch re-enrichment for platform: ${platform}`);
+  logger.info(`Limit: ${limit}, Concurrency: ${concurrency}`);
+  logger.info(`${"─".repeat(60)}\n`);
+
+  // Query listings from database by platform
+  let dbListings: Listing[] = [];
+  try {
+    dbListings = await prisma.listing.findMany({
+      where: { source: platform },
+      take: limit,
+    });
+    logger.info(`[re-enrich] Found ${dbListings.length} old listings from platform: ${platform}`);
+  } catch (err) {
+    logger.error(`[re-enrich] Failed to query listings for platform "${platform}": ${err}`);
+    return {
+      processed: 0,
+      enriched: 0,
+      foundNoEstimate: 0,
+      notFound: 0,
+      failed: 0,
+      duration_ms: Date.now() - startTime,
+    };
+  }
+
+  // Convert DB listings to RawListing format for enrichment service
+  const rawListings: RawListing[] = dbListings.map((l) => ({
+    url: l.url,
+    source: l.source,
+    title: l.title ?? undefined,
+    price: l.price ?? undefined,
+    address: l.rawAddress ?? undefined,
+    location: l.location ?? undefined,
+    propertyType: (l.propertyType as any) ?? undefined,
+    bedrooms: l.bedrooms ?? undefined,
+    bathrooms: l.bathrooms ?? undefined,
+    squareFeet: l.squareFeet ?? undefined,
+    description: l.description ?? undefined,
+    ownerName: l.ownerName ?? undefined,
+    ownerPhone: l.ownerPhone ?? undefined,
+    postedDate: l.postedDate ?? undefined,
+  }));
+
+  // Call enrichment service
+  let enrichedListings: RawListing[] = [];
+  try {
+    enrichedListings = await zillowEnrichmentService.enrichAllListings(rawListings, concurrency);
+  } catch (err) {
+    logger.error(`[re-enrich] Enrichment service error: ${err}`);
+    return {
+      processed: rawListings.length,
+      enriched: 0,
+      foundNoEstimate: 0,
+      notFound: 0,
+      failed: 1,
+      duration_ms: Date.now() - startTime,
+    };
+  }
+
+  // Create Property+Estimate records for enriched listings
+  let enriched = 0;
+  let foundNoEstimate = 0;
+  let notFound = 0;
+
+  for (const listing of enrichedListings) {
+    // If zestimate was found, create records
+    if (listing.zestimate != null && listing.address) {
+      try {
+        const propertyId = await upsertPropertyFromEnrichment(listing.address, listing.zpid);
+        await upsertEstimateFromZillow(propertyId, listing.zestimate, listing.url);
+        enriched++;
+      } catch (err) {
+        logger.warn(`[re-enrich] Failed to create property/estimate for ${listing.address}: ${err}`);
+      }
+    }
+    // If zpid was found but no zestimate, just track it
+    else if (listing.zpid != null && listing.address) {
+      foundNoEstimate++;
+    }
+    // Otherwise not found
+    else if (listing.address) {
+      notFound++;
+    }
+  }
+
+  const duration_ms = Date.now() - startTime;
+  logger.info(`\n${"─".repeat(60)}`);
+  logger.info(`[re-enrich] Batch re-enrichment complete for: ${platform}`);
+  logger.info(`[re-enrich]   • Listings processed: ${rawListings.length}`);
+  logger.info(`[re-enrich]   • Successfully enriched (with zestimate): ${enriched}`);
+  logger.info(`[re-enrich]   • Found but no zestimate: ${foundNoEstimate}`);
+  logger.info(`[re-enrich]   • Not found on Zillow: ${notFound}`);
+  logger.info(`[re-enrich]   • Duration: ${duration_ms}ms`);
+  logger.info(`[re-enrich]   • Success rate: ${((enriched / rawListings.length) * 100).toFixed(1)}%`);
+  logger.info(`${"─".repeat(60)}\n`);
+
+  return {
+    processed: rawListings.length,
+    enriched,
+    foundNoEstimate,
+    notFound,
+    failed: rawListings.length - enriched - foundNoEstimate - notFound,
+    duration_ms,
   };
 }

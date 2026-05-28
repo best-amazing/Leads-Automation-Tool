@@ -93,11 +93,11 @@ model Estimate {
   source      String   // "zillow" | "redfin" | "realtor" | "propwire"
   value       Int
 
-  sourceListingId String?  // ID of ZillowListing/RedfinListing/RealtorListing/PropwireListing
+  sourceListingId String?  // ID of source listing URL or listing table record
 
   fetchedAt   DateTime @default(now())
 
-  @@unique([propertyId, source]) // 🔥 prevents duplicates
+  @@unique([propertyId, source]) // ✨ prevents duplicate estimates per source per property
   @@index([source])
 }
 

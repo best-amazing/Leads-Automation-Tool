@@ -50,13 +50,15 @@ export interface RawListing {
   daysOnMarket?: number;
 
   // Legacy / scraper-specific fields (kept for compatibility)
-  zpid?: string;
   daysOnZillow?: number;
   listedDate?: number;               // timestamp
 
   // Estimates — these will be moved to the Estimate model in repository
   // We still accept them here for backward compatibility with runner/scorers
-  zestimate?: number;
+  zpid?: string;                     // Zillow property ID from enrichment
+  zestimate?: number;                // Zillow estimate from enrichment
+  zestimateLow?: number;             // Zillow estimate range (low)
+  zestimateHigh?: number;            // Zillow estimate range (high)
   realtorEstimate?: number;
   realtorEstimateLow?: number;
   realtorEstimateHigh?: number;

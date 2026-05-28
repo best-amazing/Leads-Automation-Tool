@@ -1,7 +1,7 @@
 // src/runner.ts
 import { RawListing, ListingUpsertPayload, DealScore } from "./types/listing";
-import { upsertMany, upsertZillowListings, upsertRedfinListings, upsertRealtorListings, upsertPropwireListings, getSummaryStats } from "./db/repository";
-import { enrichListingsBySource } from "./services/enrichment";
+import { upsertMany, upsertZillowListings, upsertRedfinListings, upsertRealtorListings, upsertPropwireListings, getSummaryStats, upsertPropertyFromEnrichment, upsertEstimateFromZillow, upsertSingleListing, updateListingPropertyId, getOldListingsWithoutPropertyLink } from "./db/repository";
+import { zillowEnrichmentService } from "./services/zillow-enrichment.service";
 import { logger } from "./utils/logger";
 import { setRunning, setProgress, getStatus } from "./scrape/status";
 
@@ -83,19 +83,105 @@ export async function runScrapers(options: RunOptions): Promise<void> {
     }
 
     if (rawListings.length === 0) {
-      logger.warn(`[${key}] No listings returned — nothing to save`);
-      // update progress counts even if zero
+      logger.warn(`[${key}] No fresh listings from scraper — checking for old unenriched listings`);
+      // Continue to check for old listings anyway
+    }
+
+    // ✨ NEW: Also fetch old listings from database that haven't been enriched yet
+    let oldDbListings: RawListing[] = [];
+    try {
+      const oldListings = await getOldListingsWithoutPropertyLink(key, 50);
+      oldDbListings = oldListings.map((l) => ({
+        url: l.url,
+        source: l.source,
+        title: l.title ?? undefined,
+        price: l.price ?? undefined,
+        address: l.rawAddress ?? undefined,
+        location: l.location ?? undefined,
+        propertyType: (l.propertyType as any) ?? undefined,
+        bedrooms: l.bedrooms ?? undefined,
+        bathrooms: l.bathrooms ?? undefined,
+        squareFeet: l.squareFeet ?? undefined,
+        description: l.description ?? undefined,
+        ownerName: l.ownerName ?? undefined,
+        ownerPhone: l.ownerPhone ?? undefined,
+        postedDate: l.postedDate ?? undefined,
+      } as RawListing));
+      
+      if (oldDbListings.length > 0) {
+        logger.info(`[${key}] Found ${oldDbListings.length} old unenriched listings from database`);
+      }
+    } catch (err) {
+      logger.warn(`[${key}] Could not fetch old listings for re-enrichment: ${err}`);
+    }
+
+    // Combine fresh + old listings for unified enrichment
+    const allListings = [...rawListings, ...oldDbListings];
+
+    if (allListings.length === 0) {
+      logger.warn(`[${key}] No listings to process (fresh or old) — skipping`);
       setProgress({ current: key });
       setProgress({ completed: (getStatus().completed || 0) + 1 });
       continue;
     }
 
-    // Score listings for deal evaluation
-    const payloads = scoreListings(rawListings);
+    // ✨ NEW: Enrich ALL listings with Zillow zestimates (fresh + old, cross-platform)
+    const enrichmentConcurrency = parseInt(process.env.ZILLOW_ENRICHMENT_CONCURRENCY || "2");
+    logger.info(`\n${"─".repeat(60)}`);
+    logger.info(`[${key}] Starting Zillow enrichment phase`);
+    logger.info(`[${key}] Input: ${rawListings.length} fresh + ${oldDbListings.length} old = ${allListings.length} total listings`);
+    logger.info(`[${key}] Enrichment concurrency: ${enrichmentConcurrency}`);
+    logger.info(`${"─".repeat(60)}\n`);
+    
+    const enrichedListings = await zillowEnrichmentService.enrichAllListings(allListings, enrichmentConcurrency);
 
+    // Score listings first
+    const payloads = scoreListings(enrichedListings);
+
+    // Upsert listings to main Listing table and link to Property+Estimate
+    let propertiesCreated = 0;
     try {
       setProgress({ current: key });
-      // Route to appropriate table based on source
+      
+      for (const payload of payloads) {
+        try {
+          // 1. Upsert listing to main table and get its ID
+          const listingId = await upsertSingleListing(payload);
+          
+          // 2. If enriched with Zillow zestimate, create Property+Estimate and link
+          const enrichedListing = enrichedListings.find(l => l.url === payload.url);
+          if (enrichedListing?.zestimate != null && enrichedListing.address) {
+            const propertyId = await upsertPropertyFromEnrichment(
+              enrichedListing.address,
+              enrichedListing.zpid
+            );
+            await upsertEstimateFromZillow(propertyId, enrichedListing.zestimate, listingId);
+            
+            // 3. Link listing to property
+            await updateListingPropertyId(listingId, propertyId);
+            propertiesCreated++;
+          }
+        } catch (err) {
+          logger.warn(`[${key}] Error processing listing ${payload.url}: ${err}`);
+        }
+      }
+
+      totalSaved += payloads.length;
+      logger.info(`[${key}] Saved ${payloads.length} listings to DB`);
+      
+      // Log enrichment summary
+      const enrichedCount = enrichedListings.filter(l => l.zestimate != null).length;
+      logger.info(`\n${"─".repeat(60)}`);
+      logger.info(`[${key}] Enrichment phase complete:`);
+      logger.info(`[${key}]   • Fresh listings processed: ${rawListings.length}`);
+      logger.info(`[${key}]   • Old listings re-enriched: ${oldDbListings.length}`);
+      logger.info(`[${key}]   • Total processed: ${allListings.length}`);
+      logger.info(`[${key}]   • Successfully enriched with zestimate: ${enrichedCount}`);
+      logger.info(`[${key}]   • Property+Estimate records created: ${propertiesCreated}`);
+      logger.info(`[${key}]   • Success rate: ${((enrichedCount / allListings.length) * 100).toFixed(1)}%`);
+      logger.info(`${"─".repeat(60)}\n`);
+
+      // 4. Also upsert to source-specific tables (mirrors)
       if (key === "zillow") {
         await upsertZillowListings(payloads);
       } else if (key === "redfin") {
@@ -104,22 +190,6 @@ export async function runScrapers(options: RunOptions): Promise<void> {
         await upsertRealtorListings(payloads);
       } else if (key === "propwire") {
         await upsertPropwireListings(payloads);
-      } else {
-        await upsertMany(payloads);
-      }
-
-      totalSaved += payloads.length;
-      logger.info(`[${key}] Saved ${payloads.length} listings to DB`);
-
-      // ── ENRICHMENT PHASE: Normalize addresses and match against reference tables
-      logger.info(`[${key}] Starting enrichment phase...`);
-      try {
-        const stats = await enrichListingsBySource(key);
-        logger.info(
-          `[${key}] Enrichment complete: ${stats.linked} linked, ${stats.estimatesCreated} estimates created, ${stats.skipped} skipped, ${stats.failed} failed in ${stats.duration_ms}ms`
-        );
-      } catch (enrichErr) {
-        logger.error(`[${key}] Enrichment failed: ${enrichErr}`);
       }
     } catch (err) {
       logger.error(`[${key}] DB save failed: ${err}`);
