@@ -10,6 +10,7 @@ import { ListingUpsertPayload, RawListing } from "../types/listing";
 import { logger } from "../utils/logger";
 import pLimit from "p-limit";
 import { zillowEnrichmentService } from "../services/zillow-enrichment.service";
+import { redfinEnrichmentService } from "../services/redfin-enrichment.service";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -894,6 +895,37 @@ export async function upsertEstimateFromZillow(
     },
     update: {
       value: zestimate,
+      sourceListingId,
+      fetchedAt: new Date(),
+    },
+  });
+}
+
+/**
+ * Create an Estimate record for a property from Redfin enrichment
+ * Uses upsert to handle duplicate enrichment attempts
+ */
+export async function upsertEstimateFromRedfin(
+  propertyId: string,
+  redfinEstimate: number,
+  sourceListingId?: string,
+  sourceUrl?: string,
+): Promise<void> {
+  await prisma.estimate.upsert({
+    where: {
+      propertyId_source: {
+        propertyId,
+        source: "redfin",
+      },
+    },
+    create: {
+      propertyId,
+      source: "redfin",
+      value: redfinEstimate,
+      sourceListingId,
+    },
+    update: {
+      value: redfinEstimate,
       sourceListingId,
       fetchedAt: new Date(),
     },

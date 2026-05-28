@@ -36,6 +36,22 @@ function buildDetailUrl(listingId: string | number): string {
   return `https://app.investorlift.com/properties/${listingId}`;
 }
 
+/**
+ * Validate that an address looks like a real street address.
+ * Must start with a street number (one or more digits).
+ * Examples:
+ *   ✓ "1863 Clarion Avenue, Cincinnati, OH 45207"
+ *   ✓ "786 Noah Avenue, Akron, OH 44320"
+ *   ✗ "Your request has been submitted. Our manager will contact you shortly."
+ *   ✗ "Columbus, OH 43215"
+ */
+function isValidStreetAddress(address: string | undefined): boolean {
+  if (!address || typeof address !== "string") return false;
+  const trimmed = address.trim();
+  // Must start with digits (street number)
+  return /^\d+\s/.test(trimmed);
+}
+
 // ── API response parser ────────────────────────────────────────────────────
 
 /**
@@ -261,13 +277,20 @@ export function parseDomListings(html: string, source: string): RawListing[] {
         .text();
     const price = normalizePrice(priceText);
 
-    // Address
-    const address =
-      card
-        .find("[class*='address'], [data-testid*='address']")
-        .first()
-        .text()
-        .trim() || anchor.text().trim();
+    // Address — try dedicated selector first, NEVER fall back to anchor text
+    const addressFromCard = card
+      .find("[class*='address'], [data-testid*='address']")
+      .first()
+      .text()
+      .trim();
+
+    // Validate that address has a street number (leading digits)
+    if (!isValidStreetAddress(addressFromCard)) {
+      logger.debug(
+        `[il-parser] DOM: skipping card — invalid address "${addressFromCard}" (no street number)`
+      );
+      return;
+    }
 
     // Beds / baths / sqft
     const detailText = card
@@ -280,8 +303,8 @@ export function parseDomListings(html: string, source: string): RawListing[] {
     results.push({
       url,
       source,
-      title: address || undefined,
-      address: address || undefined,
+      title: addressFromCard || undefined,
+      address: addressFromCard || undefined,
       price,
       bedrooms: bedsM ? parseInt(bedsM[1], 10) : undefined,
       bathrooms: bathsM ? parseFloat(bathsM[1]) : undefined,

@@ -1,7 +1,8 @@
 // src/runner.ts
 import { RawListing, ListingUpsertPayload, DealScore } from "./types/listing";
-import { upsertMany, upsertZillowListings, upsertRedfinListings, upsertRealtorListings, upsertPropwireListings, getSummaryStats, upsertPropertyFromEnrichment, upsertEstimateFromZillow, upsertSingleListing, updateListingPropertyId, getOldListingsWithoutPropertyLink } from "./db/repository";
+import { upsertMany, upsertZillowListings, upsertRedfinListings, upsertRealtorListings, upsertPropwireListings, getSummaryStats, upsertPropertyFromEnrichment, upsertEstimateFromZillow, upsertEstimateFromRedfin, upsertSingleListing, updateListingPropertyId, getOldListingsWithoutPropertyLink } from "./db/repository";
 import { zillowEnrichmentService } from "./services/zillow-enrichment.service";
+import { redfinEnrichmentService } from "./services/redfin-enrichment.service";
 import { logger } from "./utils/logger";
 import { setRunning, setProgress, getStatus } from "./scrape/status";
 
@@ -125,7 +126,7 @@ export async function runScrapers(options: RunOptions): Promise<void> {
       continue;
     }
 
-    // ✨ NEW: Enrich ALL listings with Zillow zestimates (fresh + old, cross-platform)
+    // ✨ NEW: Enrich ALL listings with Zillow + Redfin estimates (fresh + old, cross-platform)
     const enrichmentConcurrency = parseInt(process.env.ZILLOW_ENRICHMENT_CONCURRENCY || "2");
     logger.info(`\n${"─".repeat(60)}`);
     logger.info(`[${key}] Starting Zillow enrichment phase`);
@@ -133,7 +134,15 @@ export async function runScrapers(options: RunOptions): Promise<void> {
     logger.info(`[${key}] Enrichment concurrency: ${enrichmentConcurrency}`);
     logger.info(`${"─".repeat(60)}\n`);
     
-    const enrichedListings = await zillowEnrichmentService.enrichAllListings(allListings, enrichmentConcurrency);
+    // Enrich with Zillow
+    let enrichedListings = await zillowEnrichmentService.enrichAllListings(allListings, enrichmentConcurrency);
+    
+    // Then enrich with Redfin
+    logger.info(`\n${"─".repeat(60)}`);
+    logger.info(`[${key}] Starting Redfin enrichment phase`);
+    logger.info(`[${key}] Enrichment concurrency: ${enrichmentConcurrency}`);
+    logger.info(`${"─".repeat(60)}\n`);
+    enrichedListings = await redfinEnrichmentService.enrichAllListings(enrichedListings, enrichmentConcurrency);
 
     // Score listings first
     const payloads = scoreListings(enrichedListings);
@@ -148,9 +157,14 @@ export async function runScrapers(options: RunOptions): Promise<void> {
           // 1. Upsert listing to main table and get its ID
           const listingId = await upsertSingleListing(payload);
           
-          // 2. If enriched with Zillow zestimate, create Property+Estimate and link
+          // 2. Extract enriched data for this listing
           const enrichedListing = enrichedListings.find(l => l.url === payload.url);
-          if (enrichedListing?.zestimate != null && enrichedListing.address) {
+          if (!enrichedListing || !enrichedListing.address) continue;
+          
+          let propertyLinked = false;
+          
+          // 3. Process Zillow enrichment
+          if (enrichedListing.zestimate != null) {
             const propertyId = await upsertPropertyFromEnrichment(
               enrichedListing.address,
               enrichedListing.zpid,
@@ -159,9 +173,34 @@ export async function runScrapers(options: RunOptions): Promise<void> {
             );
             await upsertEstimateFromZillow(propertyId, enrichedListing.zestimate, listingId, enrichedListing.sourceUrl ?? payload.url);
             
-            // 3. Link listing to property
-            await updateListingPropertyId(listingId, propertyId);
-            propertiesCreated++;
+            // Link listing to property
+            if (!propertyLinked) {
+              await updateListingPropertyId(listingId, propertyId);
+              propertyLinked = true;
+              propertiesCreated++;
+            }
+          }
+          
+          // 4. Process Redfin enrichment
+          if (enrichedListing.redfinEstimate != null) {
+            const propertyId = await upsertPropertyFromEnrichment(
+              enrichedListing.address,
+              undefined,
+              "redfin",
+              enrichedListing.sourceUrl ?? payload.url
+            );
+            await upsertEstimateFromRedfin(
+              propertyId,
+              enrichedListing.redfinEstimate,
+              listingId,
+              enrichedListing.sourceUrl ?? payload.url
+            );
+            
+            // Link listing to property if not already linked
+            if (!propertyLinked) {
+              await updateListingPropertyId(listingId, propertyId);
+              propertyLinked = true;
+            }
           }
         } catch (err) {
           logger.warn(`[${key}] Error processing listing ${payload.url}: ${err}`);
@@ -172,15 +211,16 @@ export async function runScrapers(options: RunOptions): Promise<void> {
       logger.info(`[${key}] Saved ${payloads.length} listings to DB`);
       
       // Log enrichment summary
-      const enrichedCount = enrichedListings.filter(l => l.zestimate != null).length;
+      const zilowEnrichedCount = enrichedListings.filter(l => l.zestimate != null).length;
+      const redfinEnrichedCount = enrichedListings.filter(l => l.redfinEstimate != null).length;
       logger.info(`\n${"─".repeat(60)}`);
       logger.info(`[${key}] Enrichment phase complete:`);
       logger.info(`[${key}]   • Fresh listings processed: ${rawListings.length}`);
       logger.info(`[${key}]   • Old listings re-enriched: ${oldDbListings.length}`);
       logger.info(`[${key}]   • Total processed: ${allListings.length}`);
-      logger.info(`[${key}]   • Successfully enriched with zestimate: ${enrichedCount}`);
+      logger.info(`[${key}]   • Zillow enriched: ${zilowEnrichedCount}`);
+      logger.info(`[${key}]   • Redfin enriched: ${redfinEnrichedCount}`);
       logger.info(`[${key}]   • Property+Estimate records created: ${propertiesCreated}`);
-      logger.info(`[${key}]   • Success rate: ${((enrichedCount / allListings.length) * 100).toFixed(1)}%`);
       logger.info(`${"─".repeat(60)}\n`);
 
       // 4. Also upsert to source-specific tables (mirrors)

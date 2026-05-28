@@ -12,7 +12,7 @@
 
 import { lookupRedfinEstimate } from "./src/scrapers/redfin/redfin.address.enricher";
 
-const testAddress = process.env.TEST_ADDRESS ?? "4433 E 158th St, Cleveland, OH 44128";
+const testAddress = process.env.TEST_ADDRESS ?? "135 Teller St, Lakewood, CO 80226";
 
 async function main() {
   console.log("═══════════════════════════════════════════════════════════════");

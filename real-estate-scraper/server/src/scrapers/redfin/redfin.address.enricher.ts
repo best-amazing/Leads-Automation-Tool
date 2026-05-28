@@ -11,33 +11,45 @@
 // Batch usage:
 //   const results = await enricher.lookupBatch(addresses, { concurrency: 2 });
 //
-// How it works:
+// How it works (three-step, same as RedfinScraper Phase 2):
 //
-//   Step 1 — Address → URL path via autocomplete JSON API
+//   Step 1 — Address → propertyId via autocomplete JSON API
 //     GET /stingray/do/location-autocomplete
 //         ?location=<encoded>&start=0&count=10&v=2&market=<slug>
 //         &al=1&iss=false&ooa=true&mrs=false&region_id=NaN&region_type=NaN
 //         &includeAddressInfo=false
-//     Pick first row where type === "1"; prefer payload.exactMatch.
-//     Confirmed working — returns /OH/Cleveland/4433-E-158th-St-44128/home/70800149
+//     Returns a ranked list of matches.  We pick the first row where type === "1"
+//     (address/property) and extract its url path.
 //
-//   Step 2 — URL path → propertyId via aboveTheFold JSON API
-//     GET /stingray/api/home/details/aboveTheFold?path=<urlPath>&accessLevel=1
-//     Returns 613 without browser-like headers — headers now applied to ALL
-//     stingray endpoints, not just /do/.
-//     Fallback: extract propertyId directly from URL path (/home/<id>).
+//     Note: the autocomplete "id" field is NOT the same integer used by
+//     avmHistoricalData.  We need the "propertyId" from a subsequent GIS
+//     lookup OR we use the /stingray/api/home/details/aboveTheFold endpoint
+//     with the URL path to resolve the final propertyId.
 //
-//   Step 3 — propertyId → Redfin Estimate via avmHistoricalData JSON API
+//     Simplified flow actually used:
+//       a. autocomplete → get listing URL path  (e.g. /OH/Cleveland/4433-E-158th-St-44128/home/70800149)
+//       b. aboveTheFold (render:false) with url path → get propertyId
+//       c. avmHistoricalData (render:false) with propertyId → get estimate
+//       d. belowTheFold     (render:false) fallback if Step c returns nothing
+//
+//   Step 2 — propertyId → Redfin Estimate via avmHistoricalData JSON API
 //     GET /stingray/api/home/details/avmHistoricalData?propertyId=<id>&accessLevel=1
-//     NOTE: Many off-market/low-data properties return a valid 200 response
-//     with historical sale data but NO predictedValue — Redfin simply has no
-//     AVM for them. Parser now checks all known paths including nested ones.
+//     Same endpoint used by RedfinScraper Phase 2 Step A.
 //
-//   Step 4 — belowTheFold fallback
+//   Step 3 — belowTheFold fallback
 //     GET /stingray/api/home/details/belowTheFold?propertyId=<id>&accessLevel=1&pageType=1
-//     Also returns 613 without headers — fixed by global header injection.
+//     Same as RedfinScraper Phase 2 Step B.
 //
-// All stingray endpoints now receive browser-mimicking headers to prevent 613.
+// All three endpoints bypass Redfin's WAF — render:false, plain JSON GETs
+// forwarded by Oxylabs without spinning up a browser.
+//
+// AVM parsing is delegated to redfin.parser (shared with RedfinScraper) to
+// ensure both consumers stay in sync when the API response shape changes.
+// The parser's parseAvmHistoricalData priority order (verified May 2026):
+//   1. payload.propertyTimeSeries[last]   ← actual current API format
+//   2. payload.predictedValue
+//   3. payload.avmValue / currentValue
+//   4. payload.avmHistory[last]           ← older format fallback
 //
 // Debug artefacts (when REDFIN_ENRICHER_DEBUG=true) → logs/
 //   redfin_enricher_autocomplete_<slug>.json
@@ -54,6 +66,13 @@ import * as path  from "path";
 
 import { logger } from "../../utils/logger";
 import { sleep  } from "../../utils/browser";
+import {
+  parseAvmHistoricalData,
+  parseBelowTheFold,
+  buildAvmUrl,
+  buildBelowTheFoldUrl,
+  stripXSSI,
+} from "./redfin.parser";
 
 // ── Env / constants ───────────────────────────────────────────────────────────
 
@@ -75,8 +94,8 @@ export interface RedfinEstimate {
   url:                 string | null;
   /** Redfin AVM estimate (null if not found) */
   redfinEstimate:      number | null;
-  redfinEstimateLow:   number | null;
-  redfinEstimateHigh:  number | null;
+  redfinEstimateLow?:  number | null;
+  redfinEstimateHigh?: number | null;
   /** Listed price if on-market (null for off-market) */
   listPrice:           number | null;
   address:             string;       // normalised address Redfin returned
@@ -90,10 +109,13 @@ export interface LookupOptions {
   concurrency?: number;
 }
 
-// ── Address normaliser ────────────────────────────────────────────────────────
+// ── Address formatter ─────────────────────────────────────────────────────────
 //
-// Strips county segments before sending to autocomplete.
-// Same logic as ZillowAddressEnricher.formatAddressToSlug().
+// Redfin's autocomplete API is tolerant of messy input, but we lightly
+// normalise the address before sending it:
+//   • strip county segments (same logic as ZillowAddressEnricher)
+//   • collapse extra whitespace
+//   • keep commas — the autocomplete endpoint handles them fine
 
 function normaliseAddress(raw: string): string {
   const parts = raw.split(",").map(s => s.trim()).filter(Boolean);
@@ -102,9 +124,10 @@ function normaliseAddress(raw: string): string {
   const zipRe         = /\b\d{5}\b/;
 
   const filtered = parts.filter((part, idx) => {
-    if (idx === 0)                return true;
-    if (stateAbbrevRe.test(part)) return true;
-    if (zipRe.test(part))         return true;
+    if (idx === 0)                return true;  // street — always keep
+    if (stateAbbrevRe.test(part)) return true;  // contains state abbrev
+    if (zipRe.test(part))         return true;  // contains ZIP
+    // Purely alpha segment between city and state → likely county name → drop
     if (/^[A-Za-z\s\-']+$/.test(part) && idx < parts.length - 1) {
       const prevIsCity = idx >= 2 && /^[A-Za-z\s\-']+$/.test(parts[idx - 1]);
       if (prevIsCity) return false;
@@ -115,7 +138,10 @@ function normaliseAddress(raw: string): string {
   return filtered.join(", ");
 }
 
-// ── Market slug ───────────────────────────────────────────────────────────────
+// ── Market name → Redfin market slug ─────────────────────────────────────────
+//
+// Redfin's autocomplete uses the `market` param for result ranking.
+// Wrong value degrades ranking but does NOT cause a 404 or empty result.
 
 const STATE_TO_MARKET: Record<string, string> = {
   OH: "ohio",        PA: "pennsylvania", MI: "michigan",
@@ -135,58 +161,61 @@ function marketFromAddress(normAddress: string): string {
   return (m?.[1] && STATE_TO_MARKET[m[1]]) ? STATE_TO_MARKET[m[1]] : "national";
 }
 
-// ── URL builders ──────────────────────────────────────────────────────────────
+// ── URL / path builders ───────────────────────────────────────────────────────
 
 function buildAutocompleteUrl(query: string): string {
   // CORRECT PATH: stingray/do/location-autocomplete  (NOT stingray/api/)
   // Confirmed from live Redfin browser network traffic, May 2025.
-  // URLSearchParams must NOT be used — it encodes commas as %2C which breaks
-  // Redfin's city/state parsing. Build manually and restore commas.
+  //
+  // Params (all present in real browser requests):
+  //   location          — search string; commas must NOT be percent-encoded
+  //   start=0           — pagination offset
+  //   count=10          — max rows to return
+  //   v=2               — response format version
+  //   market=<slug>     — state/metro slug for result ranking
+  //   al=1              — include address-level (type "1") rows
+  //   iss=false         — disable instant-search suggestions
+  //   ooa=true          — include off-market / out-of-area addresses
+  //   mrs=false         — disable mortgage-rate suggestions
+  //   region_id=NaN     — sent by browser when no region is pre-selected
+  //   region_type=NaN   — same
+  //   includeAddressInfo=false — we resolve address detail via aboveTheFold
+  //
+  // NOTE: URLSearchParams encodes commas as %2C which breaks city/state
+  // parsing — build the query string manually instead.
   const encodedLocation = encodeURIComponent(query)
-    .replace(/%2C/g, ",")
-    .replace(/%20/g, "+");
+    .replace(/%2C/g, ",")   // restore commas
+    .replace(/%20/g, "+");  // spaces as +
 
   const market = marketFromAddress(query);
 
   return (
     `${REDFIN_BASE}/stingray/do/location-autocomplete` +
     `?location=${encodedLocation}` +
-    `&start=0&count=10&v=2` +
+    `&start=0` +
+    `&count=10` +
+    `&v=2` +
     `&market=${market}` +
-    `&al=1&iss=false&ooa=true&mrs=false` +
-    `&region_id=NaN&region_type=NaN` +
+    `&al=1` +
+    `&iss=false` +
+    `&ooa=true` +
+    `&mrs=false` +
+    `&region_id=NaN` +
+    `&region_type=NaN` +
     `&includeAddressInfo=false`
   );
 }
 
 function buildAboveTheFoldUrl(urlPath: string): string {
+  // urlPath is like /OH/Cleveland/4433-E-158th-St-44128/home/70800149
   const params = new URLSearchParams({ path: urlPath, accessLevel: "1" });
   return `${REDFIN_BASE}/stingray/api/home/details/aboveTheFold?${params.toString()}`;
 }
 
-function buildAvmUrl(propertyId: number): string {
-  const params = new URLSearchParams({
-    propertyId:  String(propertyId),
-    accessLevel: "1",
-  });
-  return `${REDFIN_BASE}/stingray/api/home/details/avmHistoricalData?${params.toString()}`;
-}
-
-function buildBelowTheFoldUrl(propertyId: number): string {
-  const params = new URLSearchParams({
-    propertyId:  String(propertyId),
-    accessLevel: "1",
-    pageType:    "1",
-  });
-  return `${REDFIN_BASE}/stingray/api/home/details/belowTheFold?${params.toString()}`;
-}
-
 // ── Oxylabs transport ─────────────────────────────────────────────────────────
 //
-// FIX: Browser-mimicking headers are now applied to ALL stingray endpoints,
-// not just /stingray/do/.  The aboveTheFold and belowTheFold endpoints on
-// /stingray/api/ were returning 613 without them — same WAF check, different
-// path prefix.
+// All Redfin stingray endpoints are plain JSON — no WAF, no browser needed.
+// render:false keeps requests fast and avoids browser spin-up costs.
 
 async function decompressBuffer(buf: Buffer, encoding: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -214,24 +243,38 @@ async function oxylabsFetch(targetUrl: string): Promise<string | null> {
     return null;
   }
 
-  // Apply browser-mimicking headers to ALL Redfin stingray endpoints.
-  // Both /stingray/do/ (autocomplete) and /stingray/api/ (aboveTheFold,
-  // belowTheFold) return 613 without these. The Referer and X-Requested-With
-  // headers are the critical ones Redfin's WAF checks for.
+  // Log only the Oxylabs username and a masked password for debugging.
+  logger.info(
+    `[redfin-enricher] Oxylabs auth user=${OXYLABS_USERNAME} pass=${OXYLABS_PASSWORD ? "***" : "MISSING"}`
+  );
+
+  // Redfin's autocomplete endpoint (stingray/do/) checks for browser-like
+  // headers and returns Oxylabs error 613 (site blocked) when they're absent.
+  // We inject headers that mimic a real Chrome XHR request:
+  //   Referer    — must look like it came from a Redfin search page
+  //   Accept     — JSON XHR accept header
+  //   X-Requested-With — standard XHR marker Redfin checks for on /do/ endpoints
+  //
+  // The other stingray endpoints (/api/gis, /api/home/details/*) don't need
+  // these — they sit behind a different path prefix with no bot check.
+  const isAutocomplete = targetUrl.includes("/stingray/do/");
   const payload: Record<string, any> = {
     source:          "universal",
     url:             targetUrl,
+    // render:false — all stingray endpoints are plain JSON, no browser needed
     geo_location:    "United States",
     user_agent_type: "desktop_chrome",
-    headers: {
-      "Referer":           "https://www.redfin.com/",
-      "Accept":            "application/json, text/plain, */*",
-      "Accept-Language":   "en-US,en;q=0.9",
-      "X-Requested-With":  "XMLHttpRequest",
-      "Sec-Fetch-Site":    "same-origin",
-      "Sec-Fetch-Mode":    "cors",
-      "Sec-Fetch-Dest":    "empty",
-    },
+    ...(isAutocomplete ? {
+      headers: {
+        "Referer":           "https://www.redfin.com/",
+        "Accept":            "application/json, text/plain, */*",
+        "Accept-Language":   "en-US,en;q=0.9",
+        "X-Requested-With":  "XMLHttpRequest",
+        "Sec-Fetch-Site":    "same-origin",
+        "Sec-Fetch-Mode":    "cors",
+        "Sec-Fetch-Dest":    "empty",
+      },
+    } : {}),
   };
 
   const bodyStr = JSON.stringify(payload);
@@ -310,10 +353,14 @@ async function oxylabsFetch(targetUrl: string): Promise<string | null> {
     return null;
   }
   if (innerStatus === 613) {
-    // 613 = Oxylabs "site blocked this request".
-    // Headers should now prevent this — if it still fires, the Oxylabs IP
-    // rotation landed on a flagged exit node.  Caller receives null.
-    logger.warn(`[redfin-enricher] Inner 613 for ${targetUrl} — headers may not have been forwarded`);
+    // 613 = Oxylabs "target blocked this request" — often transient (IP flagged).
+    // Headers fix above should prevent this for autocomplete; if it still fires,
+    // the caller will see null and can retry or fall back.
+    logger.warn(
+      `[redfin-enricher] Inner 613 (Oxylabs blocked by target) for ${targetUrl}\n` +
+      `[redfin-enricher]   This is usually a missing/wrong header. ` +
+      `Check Referer and X-Requested-With are set for /stingray/do/ endpoints.`
+    );
     return null;
   }
   if (innerStatus === 429) {
@@ -326,11 +373,14 @@ async function oxylabsFetch(targetUrl: string): Promise<string | null> {
     return null;
   }
 
-  // Guard: HTML page returned instead of JSON
+  // Guard: if Redfin returned an HTML page instead of JSON (can happen when
+  // the endpoint path is wrong or the request is blocked), bail out before
+  // the caller tries to JSON.parse it and emits a misleading parse error.
   const sniff = content.trimStart();
   if (sniff.startsWith("<") || sniff.startsWith("<!")) {
     logger.warn(
-      `[redfin-enricher] Got HTML instead of JSON (${content.length}ch) for ${targetUrl}`
+      `[redfin-enricher] Got HTML instead of JSON (${content.length}ch) for ${targetUrl} — ` +
+      `inner=${innerStatus}. Check endpoint path and params.`
     );
     return null;
   }
@@ -338,224 +388,85 @@ async function oxylabsFetch(targetUrl: string): Promise<string | null> {
   return content;
 }
 
-// ── Redfin XSSI guard stripper ────────────────────────────────────────────────
-
-function stripXssi(raw: string): string {
-  return raw.startsWith("{}&&") ? raw.slice(4) : raw;
-}
-
 // ── Step 1: autocomplete → listing URL path ───────────────────────────────────
 //
-// Confirmed response shape (live Redfin traffic, May 2025):
-// {}&&{
+// Response shape (after XSSI strip):
+// {
 //   "payload": {
-//     "sections": [{ "name": "Addresses", "rows": [{
-//       "id": "1_70800149", "type": "1",
-//       "name": "4433 E 158th St", "subName": "Cleveland, OH, USA",
-//       "url": "/OH/Cleveland/4433-E-158th-St-44128/home/70800149",
-//       "urlV2": "/OH/Cleveland/4433-E-158th-St-44128/home/70800149"
-//     }]}],
-//     "exactMatch": { "type": "1", "urlV2": "/OH/Cleveland/...", ... }
+//     "sections": [
+//       {
+//         "rows": [
+//           {
+//             "id": "...",
+//             "type": "1",      // 1 = address / property
+//             "url": "/OH/Cleveland/4433-E-158th-St-44128/home/70800149",
+//             "name": "4433 E 158th St, Cleveland, OH 44128",
+//             ...
+//           }
+//         ]
+//       }
+//     ]
 //   }
 // }
 //
-// Priority: exactMatch (type "1") → first sections row (type "1")
-// Display name built from name + subName (", USA" stripped).
+// We pick the first row where type === "1" (address result) and return its url.
 
-function rowToResult(row: any): { urlPath: string; name: string } {
-  const urlPath = (row.urlV2 ?? row.url) as string;
-  const subName = (row.subName as string ?? "").replace(/,\s*USA$/i, "").trim();
-  const name    = [row.name, subName].filter(Boolean).join(", ");
-  return { urlPath, name };
-}
-
-function parseAutocomplete(raw: string): { urlPath: string | null; name: string | null } {
+function parseAutocomplete(raw: string): {
+  urlPath:  string | null;
+  name:     string | null;
+} {
   let json: any;
-  try { json = JSON.parse(stripXssi(raw)); } catch {
+  try { json = JSON.parse(stripXSSI(raw)); } catch {
     logger.warn("[redfin-enricher] Could not parse autocomplete response");
     return { urlPath: null, name: null };
   }
 
-  const payload = json?.payload ?? {};
-
-  // Priority 1: exactMatch
-  const exact = payload?.exactMatch;
-  if (exact && String(exact?.type) === "1" && (exact?.urlV2 ?? exact?.url)) {
-    const result = rowToResult(exact);
-    logger.debug(`[redfin-enricher] autocomplete exactMatch → ${result.urlPath}`);
-    return result;
-  }
-
-  // Priority 2: first type "1" row in sections
-  for (const section of (payload?.sections ?? [])) {
+  const sections: any[] = json?.payload?.sections ?? [];
+  for (const section of sections) {
     for (const row of (section?.rows ?? [])) {
-      if (String(row?.type) === "1" && (row?.urlV2 ?? row?.url)) {
-        const result = rowToResult(row);
-        logger.debug(`[redfin-enricher] autocomplete section row → ${result.urlPath}`);
-        return result;
+      // type "1" = property/address match; "2" = city; "3" = zip; etc.
+      if (String(row?.type) === "1" && row?.url) {
+        return { urlPath: row.url as string, name: row.name ?? null };
       }
     }
   }
 
-  logger.debug("[redfin-enricher] No address-type (type=1) row in autocomplete response");
+  logger.debug("[redfin-enricher] No address-type row in autocomplete response");
   return { urlPath: null, name: null };
 }
 
 // ── Step 2: aboveTheFold → propertyId ────────────────────────────────────────
+//
+// We only need the propertyId from this payload — everything else is ignored.
+// Known paths (Redfin has been consistent here since 2022):
+//
+//   payload.propertyId
+//   payload.addressInfo.propertyId
+//   payload.mainHouseInfo.propertyId
 
 function parseAboveTheFold(raw: string): number | null {
   let json: any;
-  try { json = JSON.parse(stripXssi(raw)); } catch {
+  try { json = JSON.parse(stripXSSI(raw)); } catch {
     logger.warn("[redfin-enricher] Could not parse aboveTheFold response");
     return null;
   }
 
   const payload = json?.payload ?? json;
+
   const id =
-    payload?.propertyId                ??
-    payload?.addressInfo?.propertyId   ??
-    payload?.mainHouseInfo?.propertyId ??
+    payload?.propertyId                   ??
+    payload?.addressInfo?.propertyId      ??
+    payload?.mainHouseInfo?.propertyId    ??
     null;
 
   if (id == null) {
     logger.debug(
-      `[redfin-enricher] propertyId not found in aboveTheFold — keys: ` +
+      `[redfin-enricher] propertyId not found — aboveTheFold keys: ` +
       Object.keys(payload ?? {}).join(", ")
     );
   }
 
   return id != null ? Number(id) : null;
-}
-
-// ── Step 3: avmHistoricalData → Redfin Estimate ───────────────────────────────
-//
-// The avmHistoricalData endpoint returns a valid 200 for all properties, but
-// many off-market / low-data-area properties have NO predictedValue at all.
-// The payload in that case only contains: avmUpdateDate, saleHistory,
-// yearBuilt, propertyTimeSeries, postalCodeTimeSeries, cityTimeSeries,
-// countyTimeSeries — no AVM estimate exists on Redfin's side.
-//
-// Known paths where the estimate CAN appear:
-//   payload.predictedValue
-//   payload.avmDetails.predictedValue
-//   payload.payload.predictedValue       (double-wrapped)
-//   payload.estimatedValue
-//   payload.homeInfo.predictedValue      (newer layout)
-//   payload.avm.predictedValue
-
-interface AvmBlock {
-  estimate:  number | null;
-  low:       number | null;
-  high:      number | null;
-  listPrice: number | null;
-}
-
-function parseAvmHistoricalData(raw: string, label: string): AvmBlock {
-  const empty: AvmBlock = { estimate: null, low: null, high: null, listPrice: null };
-
-  let json: any;
-  try { json = JSON.parse(stripXssi(raw)); } catch {
-    logger.warn(`[redfin-enricher] Could not parse avmHistoricalData for ${label}`);
-    return empty;
-  }
-
-  // Handle double-wrapped payload (seen in some markets)
-  const payload = json?.payload?.payload ?? json?.payload ?? json;
-  const avm     = payload?.avmDetails ?? payload?.avm ?? {};
-
-  const estimate = resolveAmount(
-    payload?.predictedValue     ??
-    avm?.predictedValue         ??
-    payload?.estimatedValue     ??
-    payload?.homeInfo?.predictedValue ??
-    null
-  );
-
-  const low = resolveAmount(
-    payload?.predictedValueLow  ??
-    avm?.predictedValueLow      ??
-    null
-  );
-
-  const high = resolveAmount(
-    payload?.predictedValueHigh ??
-    avm?.predictedValueHigh     ??
-    null
-  );
-
-  const listPrice = resolveAmount(payload?.listPrice ?? payload?.price ?? null);
-
-  if (estimate == null) {
-    // Log all top-level keys so we can see if a new path appears in the future
-    logger.debug(
-      `[redfin-enricher] avmHistoricalData: no estimate for ${label} — ` +
-      `payload keys: ${Object.keys(payload ?? {}).join(", ")}`
-    );
-  }
-
-  return { estimate, low, high, listPrice };
-}
-
-// ── Step 4: belowTheFold → Redfin Estimate (fallback) ────────────────────────
-//
-// Known paths:
-//   payload.avm.predictedValue
-//   payload.avm.estimatedValue
-//   payload.avmData.predictedValue
-//   payload.publicRecordsInfo.estimatedValue
-//   payload.listingInfo.listPrice  (on-market only)
-
-function parseBelowTheFold(raw: string, label: string): AvmBlock {
-  const empty: AvmBlock = { estimate: null, low: null, high: null, listPrice: null };
-
-  let json: any;
-  try { json = JSON.parse(stripXssi(raw)); } catch {
-    logger.warn(`[redfin-enricher] Could not parse belowTheFold for ${label}`);
-    return empty;
-  }
-
-  const payload = json?.payload?.payload ?? json?.payload ?? json;
-  const avm     = payload?.avm ?? payload?.avmData ?? {};
-  const pubRec  = payload?.publicRecordsInfo ?? {};
-
-  const estimate = resolveAmount(
-    avm?.predictedValue        ??
-    avm?.estimatedValue        ??
-    pubRec?.estimatedValue     ??
-    payload?.predictedValue    ??
-    null
-  );
-
-  const low      = resolveAmount(avm?.predictedValueLow  ?? null);
-  const high     = resolveAmount(avm?.predictedValueHigh ?? null);
-  const listPrice = resolveAmount(
-    payload?.listingInfo?.listPrice ??
-    payload?.listPrice              ??
-    payload?.price                  ??
-    null
-  );
-
-  if (estimate == null) {
-    logger.debug(
-      `[redfin-enricher] belowTheFold: no estimate for ${label} — ` +
-      `payload keys: ${Object.keys(payload ?? {}).join(", ")}`
-    );
-  }
-
-  return { estimate, low, high, listPrice };
-}
-
-// ── Shared amount resolver ────────────────────────────────────────────────────
-
-function resolveAmount(val: any): number | null {
-  if (val == null)             return null;
-  if (typeof val === "number") return val > 0 ? val : null;
-  if (typeof val === "string") {
-    const n = parseFloat(val.replace(/[^0-9.]/g, ""));
-    return isNaN(n) || n <= 0 ? null : n;
-  }
-  if (typeof val === "object" && val.amount != null) return resolveAmount(val.amount);
-  return null;
 }
 
 // ── Debug helpers ─────────────────────────────────────────────────────────────
@@ -577,6 +488,8 @@ function slugify(s: string): string {
 
 export class RedfinAddressEnricher {
 
+  // ── Single address lookup ─────────────────────────────────────────────────
+
   async lookup(rawAddress: string): Promise<RedfinEstimate> {
     logger.info(`\n[redfin-enricher] ═══════════════════════════════════════════════`);
     logger.info(`[redfin-enricher] 📍 Processing address: "${rawAddress}"`);
@@ -585,35 +498,36 @@ export class RedfinAddressEnricher {
     logger.info(`[redfin-enricher]   ✓ Normalised: "${normAddress}"`);
 
     const base: Omit<RedfinEstimate, "found" | "error"> = {
-      propertyId:         null,
-      url:                null,
-      redfinEstimate:     null,
-      redfinEstimateLow:  null,
-      redfinEstimateHigh: null,
-      listPrice:          null,
-      address:            rawAddress,
-      rawInput:           rawAddress,
+      propertyId:     null,
+      url:            null,
+      redfinEstimate: null,
+      listPrice:      null,
+      address:        rawAddress,
+      rawInput:       rawAddress,
     };
 
-    // ── Step 1: autocomplete → URL path ───────────────────────────────────
+    // ── Step 1: autocomplete → listing URL path ────────────────────────────
 
     const autocompleteUrl = buildAutocompleteUrl(normAddress);
     logger.info(`[redfin-enricher]   Step 1 → ${autocompleteUrl}`);
 
-    let urlPath: string | null      = null;
-    let matchedName: string | null  = null;
+    let urlPath: string | null = null;
+    let matchedName: string | null = null;
 
     try {
       const raw = await oxylabsFetch(autocompleteUrl);
       if (!raw) {
         logger.warn(
-          `[redfin-enricher] No autocomplete response for "${rawAddress}"\n` +
-          `[redfin-enricher]   URL: ${autocompleteUrl}`
+          `[redfin-enricher] Autocomplete returned no usable JSON for "${rawAddress}"\n` +
+          `[redfin-enricher]   URL was: ${autocompleteUrl}\n` +
+          `[redfin-enricher]   Try: curl -s "${autocompleteUrl}" | head -c 300`
         );
         return { ...base, found: false, error: "no_autocomplete_response" };
       }
       debugSave(`redfin_enricher_autocomplete_${slugify(normAddress)}.json`, raw);
-      ({ urlPath, name: matchedName } = parseAutocomplete(raw));
+      const parsed = parseAutocomplete(raw);
+      urlPath      = parsed.urlPath;
+      matchedName  = parsed.name;
     } catch (err: any) {
       if (err?.message === "OXYLABS_AUTH_FAILED") throw err;
       logger.warn(`[redfin-enricher] Autocomplete error: ${err}`);
@@ -642,19 +556,20 @@ export class RedfinAddressEnricher {
         debugSave(`redfin_enricher_aboveTheFold_${slugify(urlPath)}.json`, raw);
         propertyId = parseAboveTheFold(raw);
       } else {
-        logger.warn(`[redfin-enricher] No aboveTheFold response — falling back to URL extraction`);
+        logger.warn(`[redfin-enricher] No aboveTheFold response for "${rawAddress}"`);
       }
     } catch (err: any) {
       if (err?.message === "OXYLABS_AUTH_FAILED") throw err;
       logger.warn(`[redfin-enricher] aboveTheFold error: ${err}`);
     }
 
-    // Fallback: extract propertyId from URL path /home/<id>
     if (propertyId == null) {
+      // Try extracting from the URL path itself as last resort
+      // URL pattern: /home/<propertyId>  e.g. /home/70800149
       const pidMatch = urlPath.match(/\/home\/(\d+)/);
       if (pidMatch) {
         propertyId = Number(pidMatch[1]);
-        logger.info(`[redfin-enricher]   ✓ propertyId from URL fallback: ${propertyId}`);
+        logger.info(`[redfin-enricher]   ✓ propertyId from URL: ${propertyId}`);
       } else {
         logger.warn(`[redfin-enricher] ✗ Could not resolve propertyId for "${rawAddress}"`);
         return { ...base, url: fullUrl, found: false, error: "no_property_id" };
@@ -666,17 +581,24 @@ export class RedfinAddressEnricher {
     await sleep(BETWEEN_STEP_MS);
 
     // ── Step 3: avmHistoricalData → Redfin Estimate ────────────────────────
+    //
+    // Delegates to redfin.parser.parseAvmHistoricalData — shared with
+    // RedfinScraper Phase 2 Step A.  Priority order (May 2026):
+    //   1. payload.propertyTimeSeries[last]
+    //   2. payload.predictedValue / avmValue / currentValue
+    //   3. payload.avmHistory[last] (older format)
 
     const avmUrl = buildAvmUrl(propertyId);
     logger.info(`[redfin-enricher]   Step 3 → ${avmUrl}`);
 
-    let avm: AvmBlock = { estimate: null, low: null, high: null, listPrice: null };
+    let estimate: number | undefined;
+    let listPrice: number | null = null;
 
     try {
       const raw = await oxylabsFetch(avmUrl);
       if (raw) {
         debugSave(`redfin_enricher_avm_${propertyId}.json`, raw);
-        avm = parseAvmHistoricalData(raw, rawAddress);
+        ({ redfinEstimate: estimate } = parseAvmHistoricalData(raw, rawAddress));
       } else {
         logger.warn(`[redfin-enricher] No avmHistoricalData response for "${rawAddress}"`);
       }
@@ -685,15 +607,21 @@ export class RedfinAddressEnricher {
       logger.warn(`[redfin-enricher] avmHistoricalData error: ${err}`);
     }
 
-    if (avm.estimate != null) {
+    if (estimate != null) {
       logger.info(
-        `[redfin-enricher]   ✓ Redfin Estimate (avmHistoricalData): $${avm.estimate.toLocaleString()}`
+        `[redfin-enricher]   ✓ Redfin Estimate (avmHistoricalData): $${estimate.toLocaleString()}`
       );
     } else {
       logger.debug(`[redfin-enricher]   avmHistoricalData: no estimate — trying belowTheFold`);
       await sleep(BETWEEN_STEP_MS);
 
       // ── Step 4: belowTheFold fallback ──────────────────────────────────
+      //
+      // Delegates to redfin.parser.parseBelowTheFold — shared with
+      // RedfinScraper Phase 2 Step B.  Priority order:
+      //   1. payload.listingInfo.redfinEstimate.value
+      //   2. payload.mediaBrowserInfo.virtualTourInfo.avmInfo.predictedValue
+      //   3. payload.publicRecordsInfo.basicInfo.propertyLastSoldPrice
 
       const btfUrl = buildBelowTheFoldUrl(propertyId);
       logger.info(`[redfin-enricher]   Step 4 → ${btfUrl}`);
@@ -702,7 +630,7 @@ export class RedfinAddressEnricher {
         const raw = await oxylabsFetch(btfUrl);
         if (raw) {
           debugSave(`redfin_enricher_btf_${propertyId}.json`, raw);
-          avm = parseBelowTheFold(raw, rawAddress);
+          ({ redfinEstimate: estimate } = parseBelowTheFold(raw, rawAddress));
         } else {
           logger.warn(`[redfin-enricher] No belowTheFold response for "${rawAddress}"`);
         }
@@ -711,23 +639,17 @@ export class RedfinAddressEnricher {
         logger.warn(`[redfin-enricher] belowTheFold error: ${err}`);
       }
 
-      if (avm.estimate != null) {
+      if (estimate != null) {
         logger.info(
-          `[redfin-enricher]   ✓ Redfin Estimate (belowTheFold): $${avm.estimate.toLocaleString()}`
+          `[redfin-enricher]   ✓ Redfin Estimate (belowTheFold): $${estimate.toLocaleString()}`
         );
       } else {
-        // Property exists on Redfin but has no AVM — common for off-market /
-        // low-transaction-volume areas. Return found:false with propertyId and
-        // url populated so callers can still use the Redfin URL.
-        logger.warn(
-          `[redfin-enricher] ✗ No Redfin Estimate for "${rawAddress}" — ` +
-          `property exists (id=${propertyId}) but Redfin has no AVM data`
-        );
+        logger.warn(`[redfin-enricher] ✗ No Redfin Estimate found for "${rawAddress}"`);
         return {
           ...base,
           propertyId,
           url:       fullUrl,
-          listPrice: avm.listPrice,
+          listPrice,
           address:   matchedName ?? rawAddress,
           found:     false,
           error:     "estimate_not_found",
@@ -739,27 +661,28 @@ export class RedfinAddressEnricher {
 
     logger.info(`[redfin-enricher] ✓ Redfin match found!`);
     logger.info(`[redfin-enricher]   propertyId: ${propertyId}`);
-    logger.info(`[redfin-enricher]   estimate:   $${avm.estimate!.toLocaleString()}`);
-    logger.info(
-      `[redfin-enricher]   range:      ` +
-      `${avm.low  != null ? "$" + avm.low.toLocaleString()  : "?"} – ` +
-      `${avm.high != null ? "$" + avm.high.toLocaleString() : "?"}`
-    );
+    logger.info(`[redfin-enricher]   estimate:   $${estimate!.toLocaleString()}`);
     logger.info(`[redfin-enricher]   address:    ${matchedName ?? rawAddress}`);
     logger.info(`[redfin-enricher] ═══════════════════════════════════════════════\n`);
 
     return {
       propertyId,
-      url:                fullUrl,
-      redfinEstimate:     avm.estimate,
-      redfinEstimateLow:  avm.low,
-      redfinEstimateHigh: avm.high,
-      listPrice:          avm.listPrice,
-      address:            matchedName ?? rawAddress,
-      rawInput:           rawAddress,
-      found:              true,
+      url:            fullUrl,
+      redfinEstimate: estimate!,
+      redfinEstimateLow: null,
+      redfinEstimateHigh: null,
+      listPrice,
+      address:        matchedName ?? rawAddress,
+      rawInput:       rawAddress,
+      found:          true,
     };
   }
+
+  // ── Batch lookup ──────────────────────────────────────────────────────────
+  //
+  // Runs addresses in chunks of `concurrency` (default 1).
+  // Within each chunk requests are parallel; chunks are sequential with a
+  // polite delay between them.
 
   async lookupBatch(
     addresses: string[],
@@ -793,6 +716,10 @@ export class RedfinAddressEnricher {
 }
 
 // ── Convenience function ──────────────────────────────────────────────────────
+//
+// For one-off calls without instantiating the class:
+//   import { lookupRedfinEstimate } from "./redfin.address-enricher";
+//   const est = await lookupRedfinEstimate("4433 E 158th St, Cleveland, OH 44128");
 
 export async function lookupRedfinEstimate(address: string): Promise<RedfinEstimate> {
   return new RedfinAddressEnricher().lookup(address);
