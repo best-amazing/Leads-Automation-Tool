@@ -932,6 +932,33 @@ export async function upsertEstimateFromRedfin(
   });
 }
 
+export async function upsertEstimateFromPropwire(
+  propertyId: string,
+  propwireEstimate: number,
+  sourceListingId?: string,
+  sourceUrl?: string,
+): Promise<void> {
+  await prisma.estimate.upsert({
+    where: {
+      propertyId_source: {
+        propertyId,
+        source: "propwire",
+      },
+    },
+    create: {
+      propertyId,
+      source: "propwire",
+      value: propwireEstimate,
+      sourceListingId,
+    },
+    update: {
+      value: propwireEstimate,
+      sourceListingId,
+      fetchedAt: new Date(),
+    },
+  });
+}
+
 /**
  * Upsert a single listing and return its ID
  * Used during enrichment to link Property+Estimate records to listings

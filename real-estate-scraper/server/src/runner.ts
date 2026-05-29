@@ -1,8 +1,9 @@
 // src/runner.ts
 import { RawListing, ListingUpsertPayload, DealScore } from "./types/listing";
-import { upsertMany, upsertZillowListings, upsertRedfinListings, upsertRealtorListings, upsertPropwireListings, getSummaryStats, upsertPropertyFromEnrichment, upsertEstimateFromZillow, upsertEstimateFromRedfin, upsertSingleListing, updateListingPropertyId, getOldListingsWithoutPropertyLink } from "./db/repository";
+import { upsertMany, upsertZillowListings, upsertRedfinListings, upsertRealtorListings, upsertPropwireListings, getSummaryStats, upsertPropertyFromEnrichment, upsertEstimateFromZillow, upsertEstimateFromRedfin, upsertEstimateFromPropwire, upsertSingleListing, updateListingPropertyId, getOldListingsWithoutPropertyLink } from "./db/repository";
 import { zillowEnrichmentService } from "./services/zillow-enrichment.service";
 import { redfinEnrichmentService } from "./services/redfin-enrichment.service";
+import { propwireEnrichmentService } from "./services/propwire-enrichment.service";
 import { logger } from "./utils/logger";
 import { setRunning, setProgress, getStatus } from "./scrape/status";
 
@@ -144,6 +145,14 @@ export async function runScrapers(options: RunOptions): Promise<void> {
     logger.info(`${"─".repeat(60)}\n`);
     enrichedListings = await redfinEnrichmentService.enrichAllListings(enrichedListings, enrichmentConcurrency);
 
+    // Then enrich with Propwire
+    const propwireConcurrency = parseInt(process.env.PROPWIRE_ENRICHMENT_CONCURRENCY || "1");
+    logger.info(`\n${"─".repeat(60)}`);
+    logger.info(`[${key}] Starting Propwire enrichment phase`);
+    logger.info(`[${key}] Enrichment concurrency: ${propwireConcurrency}`);
+    logger.info(`${"─".repeat(60)}\n`);
+    enrichedListings = await propwireEnrichmentService.enrichAllListings(enrichedListings, propwireConcurrency);
+
     // Score listings first
     const payloads = scoreListings(enrichedListings);
 
@@ -202,6 +211,27 @@ export async function runScrapers(options: RunOptions): Promise<void> {
               propertyLinked = true;
             }
           }
+
+          // 5. Process Propwire enrichment
+          if (enrichedListing.propwireEstimate != null) {
+            const propertyId = await upsertPropertyFromEnrichment(
+              enrichedListing.address,
+              undefined,
+              "propwire",
+              enrichedListing.sourceUrl ?? payload.url
+            );
+            await upsertEstimateFromPropwire(
+              propertyId,
+              enrichedListing.propwireEstimate,
+              listingId,
+              enrichedListing.sourceUrl ?? payload.url
+            );
+
+            if (!propertyLinked) {
+              await updateListingPropertyId(listingId, propertyId);
+              propertyLinked = true;
+            }
+          }
         } catch (err) {
           logger.warn(`[${key}] Error processing listing ${payload.url}: ${err}`);
         }
@@ -213,6 +243,7 @@ export async function runScrapers(options: RunOptions): Promise<void> {
       // Log enrichment summary
       const zilowEnrichedCount = enrichedListings.filter(l => l.zestimate != null).length;
       const redfinEnrichedCount = enrichedListings.filter(l => l.redfinEstimate != null).length;
+      const propwireEnrichedCount = enrichedListings.filter(l => l.propwireEstimate != null).length;
       logger.info(`\n${"─".repeat(60)}`);
       logger.info(`[${key}] Enrichment phase complete:`);
       logger.info(`[${key}]   • Fresh listings processed: ${rawListings.length}`);
@@ -220,6 +251,7 @@ export async function runScrapers(options: RunOptions): Promise<void> {
       logger.info(`[${key}]   • Total processed: ${allListings.length}`);
       logger.info(`[${key}]   • Zillow enriched: ${zilowEnrichedCount}`);
       logger.info(`[${key}]   • Redfin enriched: ${redfinEnrichedCount}`);
+      logger.info(`[${key}]   • Propwire enriched: ${propwireEnrichedCount}`);
       logger.info(`[${key}]   • Property+Estimate records created: ${propertiesCreated}`);
       logger.info(`${"─".repeat(60)}\n`);
 
