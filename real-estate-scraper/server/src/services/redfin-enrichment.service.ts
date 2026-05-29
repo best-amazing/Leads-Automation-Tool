@@ -90,7 +90,7 @@ export class RedfinEnrichmentService {
           );
           return {
             ...listing,
-            sourceUrl: estimate.url ?? undefined,
+            redfinSourceUrl: estimate.url ?? undefined,
           } as EnrichedListingRedfin;
         }
 
@@ -103,7 +103,7 @@ export class RedfinEnrichmentService {
           redfinEstimate: estimate.redfinEstimate ?? undefined,
           redfinEstimateLow: estimate.redfinEstimateLow ?? undefined,
           redfinEstimateHigh: estimate.redfinEstimateHigh ?? undefined,
-          sourceUrl: estimate.url ?? undefined,
+          redfinSourceUrl: estimate.url ?? undefined,
         } as EnrichedListingRedfin;
       });
 

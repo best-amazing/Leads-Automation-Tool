@@ -23,6 +23,11 @@ export interface RawListing {
   source: string;                    // e.g. "loopnet", "realtor", "craigslist_milwaukee"
   sourceUrl?: string;                // URL of the matched estimate page, e.g. Zillow/Redfin/Propwire
 
+  // Source-specific estimate URLs (set by enrichment services)
+  zillowSourceUrl?: string;          // Zillow property page URL
+  redfinSourceUrl?: string;          // Redfin property page URL
+  propwireSourceUrl?: string;        // Propwire property page URL
+
   title?: string;
   price?: number;
   address?: string;                  // Will be mapped to rawAddress in DB

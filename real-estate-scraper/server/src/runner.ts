@@ -178,9 +178,9 @@ export async function runScrapers(options: RunOptions): Promise<void> {
               enrichedListing.address,
               enrichedListing.zpid,
               "zillow",
-              enrichedListing.sourceUrl ?? payload.url
+              enrichedListing.zillowSourceUrl ?? payload.url
             );
-            await upsertEstimateFromZillow(propertyId, enrichedListing.zestimate, listingId, enrichedListing.sourceUrl ?? payload.url);
+            await upsertEstimateFromZillow(propertyId, enrichedListing.zestimate, listingId, enrichedListing.zillowSourceUrl ?? payload.url);
             
             // Link listing to property
             if (!propertyLinked) {
@@ -196,13 +196,13 @@ export async function runScrapers(options: RunOptions): Promise<void> {
               enrichedListing.address,
               undefined,
               "redfin",
-              enrichedListing.sourceUrl ?? payload.url
+              enrichedListing.redfinSourceUrl ?? payload.url
             );
             await upsertEstimateFromRedfin(
               propertyId,
               enrichedListing.redfinEstimate,
               listingId,
-              enrichedListing.sourceUrl ?? payload.url
+              enrichedListing.redfinSourceUrl ?? payload.url
             );
             
             // Link listing to property if not already linked
@@ -218,13 +218,13 @@ export async function runScrapers(options: RunOptions): Promise<void> {
               enrichedListing.address,
               undefined,
               "propwire",
-              enrichedListing.sourceUrl ?? payload.url
+              enrichedListing.propwireSourceUrl ?? payload.url
             );
             await upsertEstimateFromPropwire(
               propertyId,
               enrichedListing.propwireEstimate,
               listingId,
-              enrichedListing.sourceUrl ?? payload.url
+              enrichedListing.propwireSourceUrl ?? payload.url
             );
 
             if (!propertyLinked) {

@@ -90,7 +90,7 @@ export class ZillowEnrichmentService {
           return {
             ...listing,
             zpid: estimate.zpid ?? undefined,
-            sourceUrl: estimate.url,
+            zillowSourceUrl: estimate.url,
           } as EnrichedListing;
         }
 
@@ -104,7 +104,7 @@ export class ZillowEnrichmentService {
           zestimate: estimate.zestimate ?? undefined,
           zestimateLow: estimate.zestimateLow ?? undefined,
           zestimateHigh: estimate.zestimateHigh ?? undefined,
-          sourceUrl: estimate.url,
+          zillowSourceUrl: estimate.url,
         } as EnrichedListing;
       });
 

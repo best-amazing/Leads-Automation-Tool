@@ -74,7 +74,7 @@ export class PropwireEnrichmentService {
           );
           return {
             ...listing,
-            sourceUrl: estimate.url ?? listing.sourceUrl,
+            propwireSourceUrl: estimate.url ?? listing.propwireSourceUrl,
           } as EnrichedListingPropwire;
         }
 
@@ -85,7 +85,7 @@ export class PropwireEnrichmentService {
         return {
           ...listing,
           propwireEstimate: estimate.propwireEstimate,
-          sourceUrl: estimate.url ?? listing.sourceUrl,
+          propwireSourceUrl: estimate.url ?? listing.propwireSourceUrl,
         } as EnrichedListingPropwire;
       });
 
