@@ -52,7 +52,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
           <select
             value={source}
             onChange={(e) => onSourceChange(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            className="w-full px-3 pr-8 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
           >
             {AVAILABLE_SOURCES.map((sourceOption) => (
               <option key={sourceOption.value} value={sourceOption.value}>

@@ -521,7 +521,7 @@ async function fetchPropertyById(
   // payload and runs a city search instead. Use the AC entry's own confirmed
   // address fields (street/city/state/zip) for a tight targeted lookup.
   const requestBody = {
-    size:         5,
+    size:         25,   // ← was 5; ID isn't a filter so cast a wider net
     result_index: 0,
     house:        true,
     locations: [{
