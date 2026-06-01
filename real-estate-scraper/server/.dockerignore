@@ -2,7 +2,5 @@ facebook-session.json
 investorlift-session.json
 node_modules/
 logs/
-.env
-.env.local
 .git
 .gitignore
