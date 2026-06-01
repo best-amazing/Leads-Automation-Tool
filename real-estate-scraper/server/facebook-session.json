@@ -25,7 +25,7 @@
       "value": "1366x900",
       "domain": ".facebook.com",
       "path": "/",
-      "expires": 1780682401,
+      "expires": 1780942296,
       "httpOnly": false,
       "secure": true,
       "sameSite": "Lax"
@@ -72,10 +72,10 @@
     },
     {
       "name": "fr",
-      "value": "0kbitZ8HPZOGeTnoa..BqDMHA..AAA.0.0.BqGcfG.AWe78xG_jSC_h7HWuxS6kUdyXXQ",
+      "value": "0kbitZ8HPZOGeTnoa..BqDMHA..AAA.0.0.BqHcGb.AWf7W54uSJBbKn2IWwKTnWoeydc",
       "domain": ".facebook.com",
       "path": "/",
-      "expires": 1787850438.114082,
+      "expires": 1788111003.773021,
       "httpOnly": true,
       "secure": true,
       "sameSite": "None"
@@ -87,7 +87,7 @@
       "localStorage": [
         {
           "name": "hb_timestamp",
-          "value": "1780074440605"
+          "value": "1780336105217"
         },
         {
           "name": "_oz_bandwidthAndTTFBSamples",
@@ -95,11 +95,11 @@
         },
         {
           "name": "signal_flush_timestamp",
-          "value": "1780074440636"
+          "value": "1780336075770"
         },
         {
           "name": "Session",
-          "value": "bpukdu:1780077727166"
+          "value": "pts28i:1780337616161"
         },
         {
           "name": "_oz_bandwidthEstimate",
@@ -107,7 +107,7 @@
         },
         {
           "name": "banzai:last_storage_flush",
-          "value": "1780074441148.5"
+          "value": "1780332476460.8"
         }
       ]
     }

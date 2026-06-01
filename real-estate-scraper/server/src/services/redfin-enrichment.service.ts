@@ -14,6 +14,17 @@ import { RedfinAddressEnricher, RedfinEstimate } from "../scrapers/redfin/redfin
 import { logger } from "../utils/logger";
 
 /**
+ * Check if an address has a street address component (starts with a digit).
+ * Filters out addresses like "Columbus, OH 43202" or "Columbus, Franklin County, OH, 43224"
+ * that have no street number.
+ */
+function hasStreetAddress(address: string): boolean {
+  if (!address || typeof address !== "string") return false;
+  const trimmed = address.trim();
+  return /^\d+\s/.test(trimmed);
+}
+
+/**
  * Enriched listing with Redfin data
  * Extends RawListing with optional Redfin enrichment fields
  */
@@ -37,9 +48,15 @@ export class RedfinEnrichmentService {
     const getAddress = (listing: RawListing) => listing.address ?? (listing as any).rawAddress;
 
     // Filter listings that need enrichment (have address, no redfinEstimate yet)
-    const needsEnrichment = listings.filter(
-      (l) => getAddress(l) && (l.redfinEstimate == null || (l as any).redfinEstimate === undefined)
-    );
+    // AND must have a street address component (starting with a digit)
+    const needsEnrichment = listings.filter((l) => {
+      const addr = getAddress(l);
+      return (
+        addr &&
+        hasStreetAddress(addr) &&
+        (l.redfinEstimate == null || (l as any).redfinEstimate === undefined)
+      );
+    });
 
     if (needsEnrichment.length === 0) {
       logger.info(`[redfin-enrichment] No listings need Redfin enrichment`);
@@ -52,6 +69,22 @@ export class RedfinEnrichmentService {
     );
 
     const addresses = needsEnrichment.map((l) => getAddress(l)!);
+
+    // Log skipped addresses (no street address)
+    const skipped = listings.filter((l) => {
+      const addr = getAddress(l);
+      return addr && !hasStreetAddress(addr);
+    });
+    if (skipped.length > 0) {
+      logger.warn(
+        `[redfin-enrichment] Skipping ${skipped.length} listing(s) with no street address:`
+      );
+      skipped.forEach((l, idx) => {
+        logger.warn(
+          `  [${idx + 1}/${skipped.length}] "${getAddress(l)}" (no leading street number)`
+        );
+      });
+    }
 
     // Log all addresses being sent to enricher
     logger.info(`[redfin-enrichment] Raw addresses from listings:`);

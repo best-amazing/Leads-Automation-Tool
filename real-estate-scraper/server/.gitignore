@@ -136,4 +136,6 @@ dist
 docker-compose.yaml
 /src/generated/prisma
 
-/src/generated/prisma
+# Session files
+facebook-session.json
+investorlift-session.json

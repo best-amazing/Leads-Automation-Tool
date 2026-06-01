@@ -11,6 +11,17 @@ import { RawListing } from "../types/listing";
 import { PropwireAddressEnricher } from "../scrapers/propwire/propwire.address.enricher";
 import { logger } from "../utils/logger";
 
+/**
+ * Check if an address has a street address component (starts with a digit).
+ * Filters out addresses like "Columbus, OH 43202" or "Columbus, Franklin County, OH, 43224"
+ * that have no street number.
+ */
+function hasStreetAddress(address: string): boolean {
+  if (!address || typeof address !== "string") return false;
+  const trimmed = address.trim();
+  return /^\d+\s/.test(trimmed);
+}
+
 export interface EnrichedListingPropwire extends RawListing {
   propwireEstimate?: number;
 }
@@ -24,9 +35,14 @@ export class PropwireEnrichmentService {
   ): Promise<EnrichedListingPropwire[]> {
     const getAddress = (listing: RawListing) => listing.address ?? (listing as any).rawAddress;
 
-    const needsEnrichment = listings.filter(
-      (l) => getAddress(l) && (l.propwireEstimate == null || (l as any).propwireEstimate === undefined)
-    );
+    const needsEnrichment = listings.filter((l) => {
+      const addr = getAddress(l);
+      return (
+        addr &&
+        hasStreetAddress(addr) &&
+        (l.propwireEstimate == null || (l as any).propwireEstimate === undefined)
+      );
+    });
 
     if (needsEnrichment.length === 0) {
       logger.info(`[propwire-enrichment] No listings need Propwire enrichment`);
@@ -39,6 +55,23 @@ export class PropwireEnrichmentService {
     );
 
     const addresses = needsEnrichment.map((l) => getAddress(l)!);
+
+    // Log skipped addresses (no street address)
+    const skipped = listings.filter((l) => {
+      const addr = getAddress(l);
+      return addr && !hasStreetAddress(addr);
+    });
+    if (skipped.length > 0) {
+      logger.warn(
+        `[propwire-enrichment] Skipping ${skipped.length} listing(s) with no street address:`
+      );
+      skipped.forEach((l, idx) => {
+        logger.warn(
+          `  [${idx + 1}/${skipped.length}] "${getAddress(l)}" (no leading street number)`
+        );
+      });
+    }
+
     logger.info(`[propwire-enrichment] Raw addresses from listings:`);
     addresses.forEach((addr, idx) => {
       logger.info(`  [${idx + 1}/${addresses.length}] "${addr}"`);
