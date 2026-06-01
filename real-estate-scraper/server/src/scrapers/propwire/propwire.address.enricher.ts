@@ -108,36 +108,79 @@ const STATE_NAMES: Record<string, string> = {
   RI: "Rhode Island", CT: "Connecticut", DE: "Delaware", WV: "West Virginia",
 };
 
+function normalizePropwireAddress(raw: string): string {
+  return raw
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/\s*,\s*/g, ", ")
+    .replace(/\s+$/g, "");
+}
+
+function splitStreetAndCity(raw: string): { street: string; city: string } | null {
+  const match = raw.match(/^(.*\d+.*\b)\s+([A-Za-z][A-Za-z\s]+)$/);
+  if (!match) return null;
+  const street = match[1].trim();
+  const city = match[2].trim();
+  if (!street || !city) return null;
+  return { street, city };
+}
+
 function parseAddress(raw: string): ParsedAddress | null {
-  const parts = raw.split(",").map(s => s.trim()).filter(Boolean);
+  const normalizedRaw = normalizePropwireAddress(raw);
+  const parts = normalizedRaw.split(",").map(s => s.trim()).filter(Boolean);
   if (parts.length < 2) return null;
 
-  const street = parts[0];
-  let city  = "";
+  const stateAbbrevRe = /^([A-Za-z]{2})\s*(\d{5})?$/;
+  const zipRe = /^(\d{5})$/;
+
+  let street = "";
+  let city = "";
   let state = "";
   let zip: string | undefined;
 
-  for (let i = 1; i < parts.length; i++) {
-    const part = parts[i];
-    const stateZipMatch = part.match(/^([A-Z]{2})\s*(\d{5})?$/);
-    if (stateZipMatch) {
-      state = stateZipMatch[1];
-      zip   = stateZipMatch[2];
-      if (!city && i > 1) city = parts[i - 1];
-      continue;
+  const lastPart = parts[parts.length - 1];
+  const stateZipMatch = lastPart.match(stateAbbrevRe);
+  if (stateZipMatch) {
+    state = stateZipMatch[1].toUpperCase();
+    zip = stateZipMatch[2];
+  }
+
+  const prefixParts = parts.slice(0, -1);
+  if (prefixParts.length === 1) {
+    const compact = splitStreetAndCity(prefixParts[0]);
+    if (compact) {
+      street = compact.street;
+      city = compact.city;
+    } else {
+      street = prefixParts[0];
     }
-    const zipOnly = part.match(/^(\d{5})$/);
-    if (zipOnly) { zip = zipOnly[1]; continue; }
-    if (!state)  city = part;
+  } else {
+    const filtered = prefixParts.filter((part, idx) => {
+      if (idx === 0) return true;
+      if (stateAbbrevRe.test(part)) return true;
+      if (zipRe.test(part)) return true;
+      if (/^[A-Za-z\s\-']+$/.test(part) && idx < prefixParts.length - 1) {
+        const prevIsCity = idx >= 2 && /^[A-Za-z\s\-']+$/.test(prefixParts[idx - 1]);
+        if (prevIsCity) return false;
+      }
+      return true;
+    });
+
+    street = filtered[0] ?? "";
+    city = filtered.slice(1).join(", ");
   }
 
   if (!state) {
-    const m = raw.match(/\b([A-Z]{2})\b\s*(\d{5})?/);
-    if (m) { state = m[1]; zip = m[2]; }
+    const m = normalizedRaw.match(/\b([A-Za-z]{2})\b\s*(\d{5})?/);
+    if (m) {
+      state = m[1].toUpperCase();
+      zip = zip ?? m[2];
+    }
   }
+
   if (!city) {
-    const m = raw.match(/,\s*([A-Za-z\s]+),\s*[A-Z]{2}/);
-    if (m) city = m[1].trim();
+    const implied = normalizedRaw.match(/^(.*\d+.*?)\s+([A-Za-z][A-Za-z\s]+),\s*[A-Za-z]{2}/);
+    if (implied) city = implied[2].trim();
   }
 
   if (!street || !city || !state) return null;
