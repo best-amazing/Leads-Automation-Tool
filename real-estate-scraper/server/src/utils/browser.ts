@@ -36,14 +36,23 @@ function parseProxy(
 ): { server: string; username?: string; password?: string } | undefined {
   if (!proxyUrl) return undefined;
   try {
-    const parsed   = new URL(proxyUrl);
-    const server   = `${parsed.protocol}//${parsed.host}`;
-    const username = parsed.username ? decodeURIComponent(parsed.username) : undefined;
-    const password = parsed.password ? decodeURIComponent(parsed.password) : undefined;
-    if (username) logger.info(`[browser] Proxy credentials: user=${username} host=${parsed.host}`);
+    const parsed = new URL(proxyUrl);
+    const server = `${parsed.protocol}//${parsed.host}`;
+    const username = parsed.username
+      ? decodeURIComponent(parsed.username)
+      : undefined;
+    const password = parsed.password
+      ? decodeURIComponent(parsed.password)
+      : undefined;
+    if (username)
+      logger.info(
+        `[browser] Proxy credentials: user=${username} host=${parsed.host}`,
+      );
     return { server, username, password };
   } catch {
-    logger.warn(`[browser] Could not parse proxy URL — using as raw server: ${proxyUrl}`);
+    logger.warn(
+      `[browser] Could not parse proxy URL — using as raw server: ${proxyUrl}`,
+    );
     return { server: proxyUrl };
   }
 }
@@ -253,7 +262,10 @@ export interface BrowserHandle {
   close(): Promise<void>;
 }
 
-export async function createBrowser(proxyUrl?: string | null, headless: boolean = true): Promise<BrowserHandle> {
+export async function createBrowser(
+  proxyUrl?: string | null,
+  headless: boolean = true,
+): Promise<BrowserHandle> {
   const effectiveProxy = proxyUrl !== undefined ? proxyUrl : config.proxyUrl;
   const proxy = parseProxy(effectiveProxy);
 
@@ -263,9 +275,10 @@ export async function createBrowser(proxyUrl?: string | null, headless: boolean 
     logger.info("[browser] No proxy — scraping direct");
   }
 
-  const browser = await (chromium as any).launch({
+  const browser = (await (chromium as any).launch({
     headless: headless,
     args: [
+      ...(headless ? ["--headless=new"] : []),
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
@@ -282,16 +295,16 @@ export async function createBrowser(proxyUrl?: string | null, headless: boolean 
       "--ignore-gpu-blocklist",
     ],
     ...(proxy ? { proxy } : {}),
-  }) as Browser;
+  })) as Browser;
 
   const context = await browser.newContext({
-    userAgent:         config.browser.userAgent,
-    viewport:          { width: 1440, height: 900 },
-    locale:            "en-US",
-    timezoneId:        "America/New_York",
-    extraHTTPHeaders:  { ...config.browser.extraHeaders },
+    userAgent: config.browser.userAgent,
+    viewport: { width: 1440, height: 900 },
+    locale: "en-US",
+    timezoneId: "America/New_York",
+    extraHTTPHeaders: { ...config.browser.extraHeaders },
     ignoreHTTPSErrors: true,
-    colorScheme:       "light",
+    colorScheme: "light",
   });
 
   await context.addInitScript(STEALTH_SCRIPT);
@@ -303,8 +316,9 @@ export async function createBrowser(proxyUrl?: string | null, headless: boolean 
     async newPage(): Promise<Page> {
       const page = await context.newPage();
       await page.setExtraHTTPHeaders({
-        "sec-ch-ua":          '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-        "sec-ch-ua-mobile":   "?0",
+        "sec-ch-ua":
+          '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
         "sec-ch-ua-platform": '"Windows"',
       });
       return page;
@@ -313,8 +327,10 @@ export async function createBrowser(proxyUrl?: string | null, headless: boolean 
       try {
         await browser.close();
       } catch (err: any) {
-        if (!err?.message?.includes("has been closed") &&
-            !err?.message?.includes("Target closed")) {
+        if (
+          !err?.message?.includes("has been closed") &&
+          !err?.message?.includes("Target closed")
+        ) {
           throw err;
         }
       }
