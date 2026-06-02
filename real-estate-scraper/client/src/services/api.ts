@@ -7,9 +7,13 @@ import type {
   SourceListingsPayload,
 } from "./types";
 
-const API_BASE_URL = "https://leads-automation-tool-production.up.railway.app/api/v1";
+const API_BASE_URL =
+  "https://leads-automation-tool-production.up.railway.app/api/v1";
 
-async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
+async function fetchJson<T>(
+  input: RequestInfo,
+  init?: RequestInit,
+): Promise<T> {
   const response = await fetch(input, {
     headers: {
       "Content-Type": "application/json",
@@ -19,13 +23,18 @@ async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> 
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`API request failed: ${response.status} ${response.statusText} - ${errorText}`);
+    throw new Error(
+      `API request failed: ${response.status} ${response.statusText} - ${errorText}`,
+    );
   }
 
   return response.json();
 }
 
-function buildUrl(path: string, query?: Record<string, string | number | null | undefined>) {
+function buildUrl(
+  path: string,
+  query?: Record<string, string | number | null | undefined>,
+) {
   const url = new URL(`${API_BASE_URL}${path}`, window.location.origin);
 
   if (query) {
@@ -45,31 +54,41 @@ export async function getAllListings(limit = 1000): Promise<ListingsPayload> {
   return response.data;
 }
 
-export async function getZillowListings(limit = 1000): Promise<SourceListingsPayload> {
+export async function getZillowListings(
+  limit = 1000,
+): Promise<SourceListingsPayload> {
   const url = buildUrl("/listings/zillow", { limit });
   const response = await fetchJson<ApiResponse<SourceListingsPayload>>(url);
   return response.data;
 }
 
-export async function getRedfinListings(limit = 1000): Promise<SourceListingsPayload> {
+export async function getRedfinListings(
+  limit = 1000,
+): Promise<SourceListingsPayload> {
   const url = buildUrl("/listings/redfin", { limit });
   const response = await fetchJson<ApiResponse<SourceListingsPayload>>(url);
   return response.data;
 }
 
-export async function getRealtorListings(limit = 1000): Promise<SourceListingsPayload> {
+export async function getRealtorListings(
+  limit = 1000,
+): Promise<SourceListingsPayload> {
   const url = buildUrl("/listings/realtor", { limit });
   const response = await fetchJson<ApiResponse<SourceListingsPayload>>(url);
   return response.data;
 }
 
-export async function getPropwireListings(limit = 1000): Promise<SourceListingsPayload> {
+export async function getPropwireListings(
+  limit = 1000,
+): Promise<SourceListingsPayload> {
   const url = buildUrl("/listings/propwire", { limit });
   const response = await fetchJson<ApiResponse<SourceListingsPayload>>(url);
   return response.data;
 }
 
-export async function getAllProperties(limit = 1000): Promise<PropertiesPayload> {
+export async function getAllProperties(
+  limit = 1000,
+): Promise<PropertiesPayload> {
   const url = buildUrl("/properties", { limit });
   const response = await fetchJson<ApiResponse<PropertiesPayload>>(url);
   return response.data;
@@ -81,7 +100,9 @@ export async function getFilter(): Promise<SavedFilter | null> {
   return response.data;
 }
 
-export async function updateFilter(filter: FilterCriteria): Promise<SavedFilter> {
+export async function updateFilter(
+  filter: FilterCriteria,
+): Promise<SavedFilter> {
   const url = buildUrl("/filters");
   const response = await fetchJson<ApiResponse<SavedFilter>>(url, {
     method: "PUT",
@@ -120,12 +141,12 @@ export async function getScrapeStatus(): Promise<any> {
 
 /**
  * Export utilities for downloading data as CSV or JSON
-*/
+ */
 
 export function exportToCSV<T extends Record<string, any>>(
   data: T[],
   filename: string,
-  columns?: (keyof T)[]
+  columns?: (keyof T)[],
 ): void {
   if (data.length === 0) {
     console.warn("No data to export");
@@ -146,12 +167,16 @@ export function exportToCSV<T extends Record<string, any>>(
         if (value === null || value === undefined) return "";
         const stringValue = String(value);
         // Escape quotes and wrap in quotes if contains comma or newline
-        if (stringValue.includes(",") || stringValue.includes('"') || stringValue.includes("\n")) {
+        if (
+          stringValue.includes(",") ||
+          stringValue.includes('"') ||
+          stringValue.includes("\n")
+        ) {
           return `"${stringValue.replace(/"/g, '""')}"`;
         }
         return `"${stringValue}"`;
       })
-      .join(",")
+      .join(","),
   );
 
   const csv = [header, ...rows].join("\n");
@@ -163,7 +188,11 @@ export function exportToJSON<T>(data: T[], filename: string): void {
   downloadFile(json, filename, "application/json");
 }
 
-function downloadFile(content: string, filename: string, mimeType: string): void {
+function downloadFile(
+  content: string,
+  filename: string,
+  mimeType: string,
+): void {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -173,4 +202,30 @@ function downloadFile(content: string, filename: string, mimeType: string): void
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
+}
+
+// ── Delete operations ────────────────────────────────────────────────────────
+
+export async function deleteListing(listingId: string): Promise<void> {
+  const url = buildUrl(`/listings/${listingId}`);
+  const response = await fetchJson<any>(url, {
+    method: "DELETE",
+  });
+  return response.data;
+}
+
+export async function deleteEstimate(estimateId: string): Promise<void> {
+  const url = buildUrl(`/estimates/${estimateId}`);
+  const response = await fetchJson<any>(url, {
+    method: "DELETE",
+  });
+  return response.data;
+}
+
+export async function deleteProperty(propertyId: string): Promise<void> {
+  const url = buildUrl(`/properties/${propertyId}`);
+  const response = await fetchJson<any>(url, {
+    method: "DELETE",
+  });
+  return response.data;
 }

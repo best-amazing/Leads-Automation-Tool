@@ -18,7 +18,9 @@ import { redfinEnrichmentService } from "../services/redfin-enrichment.service";
  * Normalize an address for comparison purposes (address-based deduplication)
  * Converts to lowercase, removes extra whitespace and punctuation
  */
-function normalizeAddressForComparison(address: string | null | undefined): string {
+function normalizeAddressForComparison(
+  address: string | null | undefined,
+): string {
   if (!address) return "";
   return address
     .toLowerCase()
@@ -33,25 +35,25 @@ function normalizeAddressForComparison(address: string | null | undefined): stri
  */
 async function findListingByAddressAndSource(
   address: string | null | undefined,
-  source: string
+  source: string,
 ): Promise<Listing | null> {
   if (!address) return null;
-  
+
   const normalized = normalizeAddressForComparison(address);
-  
+
   // Find listings with matching normalized address and source
   const listings = await prisma.listing.findMany({
     where: { source },
     select: { id: true, url: true, rawAddress: true },
   });
-  
+
   // Filter by normalized address match
   for (const listing of listings) {
     if (normalizeAddressForComparison(listing.rawAddress) === normalized) {
       return listing as any;
     }
   }
-  
+
   return null;
 }
 
@@ -60,7 +62,7 @@ async function findListingByAddressAndSource(
 /**
  * Upsert a single listing to the general Listing table.
  * Raw data only — no estimates or property linking.
- * 
+ *
  * Deduplication strategy:
  * 1. First check if URL exists → upsert by URL
  * 2. If URL doesn't exist, check if address+source exists → upsert by address to prevent duplicates
@@ -115,12 +117,15 @@ export async function upsertListing(
     // If URL doesn't exist yet, check if this address+source already exists
     // This prevents creating duplicates when the same property is at a different URL
     if (err.code === "P2025" || err.message?.includes("not found")) {
-      const existing = await findListingByAddressAndSource(payload.address, payload.source);
-      
+      const existing = await findListingByAddressAndSource(
+        payload.address,
+        payload.source,
+      );
+
       if (existing) {
         logger.debug(
           `[db] Listing with address "${payload.address}" from source "${payload.source}" already exists (id=${existing.id}). ` +
-          `Updating URL from "${existing.url}" to "${payload.url}" to reflect new location.`
+            `Updating URL from "${existing.url}" to "${payload.url}" to reflect new location.`,
         );
         // Update the existing listing with the new URL
         return await prisma.listing.update({
@@ -136,7 +141,7 @@ export async function upsertListing(
 /**
  * Upsert many listings (batch version)
  * Uses transaction for better performance.
- * 
+ *
  * Deduplication strategy: Same as upsertListing()
  * - First tries URL-based upsert
  * - Falls back to address+source check to prevent duplicates
@@ -159,9 +164,9 @@ export async function upsertMany(
 
   // Pre-fetch all existing listings by source for address deduplication
   // This is more efficient than looking up individually for each payload
-  const sources = new Set(payloads.map(p => p.source));
+  const sources = new Set(payloads.map((p) => p.source));
   const existingBySourceAndAddress: Map<string, Listing[]> = new Map();
-  
+
   for (const source of sources) {
     const listings = await prisma.listing.findMany({
       where: { source },
@@ -180,12 +185,16 @@ export async function upsertMany(
       }
       processed += batch.length;
     } catch (err) {
-      logger.error(`[db] Batch upsert failed after processing ${processed} listings: ${err}`);
+      logger.error(
+        `[db] Batch upsert failed after processing ${processed} listings: ${err}`,
+      );
       throw err;
     }
   }
 
-  logger.info(`[db] Successfully upserted ${payloads.length} listings (batches=${batches.length}, batchSize=${batchSize})`);
+  logger.info(
+    `[db] Successfully upserted ${payloads.length} listings (batches=${batches.length}, batchSize=${batchSize})`,
+  );
   return { created: 0, updated: 0 };
 }
 
@@ -266,12 +275,14 @@ export async function upsertZillowListings(
               lastSeenAt: new Date(),
             },
           }),
-        ])
-      )
-    )
+        ]),
+      ),
+    ),
   );
 
-  logger.info(`[db] Upserted ${payloads.length} Zillow listings to both ZillowListing and Listing tables (concurrency=${concurrency})`);
+  logger.info(
+    `[db] Upserted ${payloads.length} Zillow listings to both ZillowListing and Listing tables (concurrency=${concurrency})`,
+  );
 }
 
 // ── Redfin Listings ───────────────────────────────────────────────────────────
@@ -352,12 +363,14 @@ export async function upsertRedfinListings(
               lastSeenAt: new Date(),
             },
           }),
-        ])
-      )
-    )
+        ]),
+      ),
+    ),
   );
 
-  logger.info(`[db] Upserted ${payloads.length} Redfin listings to both RedfinListing and Listing tables (concurrency=${concurrency})`);
+  logger.info(
+    `[db] Upserted ${payloads.length} Redfin listings to both RedfinListing and Listing tables (concurrency=${concurrency})`,
+  );
 }
 
 // ── Realtor Listings ──────────────────────────────────────────────────────────
@@ -438,12 +451,14 @@ export async function upsertRealtorListings(
               lastSeenAt: new Date(),
             },
           }),
-        ])
-      )
-    )
+        ]),
+      ),
+    ),
   );
 
-  logger.info(`[db] Upserted ${payloads.length} Realtor listings to both RealtorListing and Listing tables (concurrency=${concurrency})`);
+  logger.info(
+    `[db] Upserted ${payloads.length} Realtor listings to both RealtorListing and Listing tables (concurrency=${concurrency})`,
+  );
 }
 
 // ── Propwire Listings ─────────────────────────────────────────────────────────
@@ -524,12 +539,14 @@ export async function upsertPropwireListings(
               lastSeenAt: new Date(),
             },
           }),
-        ])
-      )
-    )
+        ]),
+      ),
+    ),
   );
 
-  logger.info(`[db] Upserted ${payloads.length} Propwire listings to both PropwireListing and Listing tables (concurrency=${concurrency})`);
+  logger.info(
+    `[db] Upserted ${payloads.length} Propwire listings to both PropwireListing and Listing tables (concurrency=${concurrency})`,
+  );
 }
 
 // ── Read ──────────────────────────────────────────────────────────────────────
@@ -589,7 +606,7 @@ export async function getExistingUrls(source: string): Promise<Set<string>> {
  * Get all properties with related listings and estimates
  * Enriches estimates with source listing URLs
  * @param limit - maximum number of properties to return
-*/
+ */
 
 export async function getAllPropertiesWithListings(limit = 1000) {
   const properties = await prisma.property.findMany({
@@ -812,13 +829,16 @@ export async function getSummaryStats(): Promise<{
 }> {
   const total = await prisma.listing.count();
   const bySrc = await prisma.listing.groupBy({ by: ["source"], _count: true });
-  const byScore = await prisma.listing.groupBy({ by: ["dealScore"], _count: true });
+  const byScore = await prisma.listing.groupBy({
+    by: ["dealScore"],
+    _count: true,
+  });
 
   return {
     total,
     bySource: Object.fromEntries(bySrc.map((r) => [r.source, r._count])),
     byDealScore: Object.fromEntries(
-      byScore.map((r) => [r.dealScore ?? "unscored", r._count])
+      byScore.map((r) => [r.dealScore ?? "unscored", r._count]),
     ),
   };
 }
@@ -962,7 +982,7 @@ export async function upsertEstimateFromPropwire(
 /**
  * Upsert a single listing and return its ID
  * Used during enrichment to link Property+Estimate records to listings
- * 
+ *
  * Deduplication strategy: Same as upsertListing()
  * - First tries URL-based upsert
  * - Falls back to address+source check to prevent duplicates
@@ -1019,12 +1039,15 @@ export async function upsertSingleListing(
   } catch (err: any) {
     // If URL doesn't exist yet, check if this address+source already exists
     if (err.code === "P2025" || err.message?.includes("not found")) {
-      const existing = await findListingByAddressAndSource(payload.address, payload.source);
-      
+      const existing = await findListingByAddressAndSource(
+        payload.address,
+        payload.source,
+      );
+
       if (existing) {
         logger.debug(
           `[db] Listing with address "${payload.address}" from source "${payload.source}" already exists (id=${existing.id}). ` +
-          `Updating URL from "${existing.url}" to "${payload.url}".`
+            `Updating URL from "${existing.url}" to "${payload.url}".`,
         );
         // Update the existing listing with the new URL
         const updated = await prisma.listing.update({
@@ -1054,7 +1077,7 @@ export async function updateListingPropertyId(
 /**
  * Get old listings from database that have not been linked to a Property yet
  * (i.e., have no Zillow enrichment)
- * 
+ *
  * @param platform Source platform
  * @param limit Maximum number of old listings to fetch
  * @returns Array of Listing records
@@ -1062,12 +1085,12 @@ export async function updateListingPropertyId(
 
 export async function getOldListingsWithoutPropertyLink(
   platform: string,
-  limit: number = 50
+  limit: number = 50,
 ): Promise<Listing[]> {
   return prisma.listing.findMany({
     where: {
       source: platform,
-      propertyId: null,  // Not yet linked to a Property
+      propertyId: null, // Not yet linked to a Property
     },
     take: limit,
   });
@@ -1077,7 +1100,7 @@ export async function getOldListingsWithoutPropertyLink(
  * Batch re-enrich old listings from the database with Zillow zestimates.
  * Queries listings by platform, extracts addresses, passes to enricher,
  * and creates Property+Estimate records for any matches.
- * 
+ *
  * @param platform Source platform (e.g., "crexi", "redfin", "loopnet")
  * @param options Configuration (limit, concurrency)
  * @returns Summary statistics of the re-enrichment run
@@ -1087,7 +1110,7 @@ export async function reEnrichOldListingsFromPlatform(
   options?: {
     limit?: number;
     concurrency?: number;
-  }
+  },
 ): Promise<{
   processed: number;
   enriched: number;
@@ -1112,9 +1135,13 @@ export async function reEnrichOldListingsFromPlatform(
       where: { source: platform },
       take: limit,
     });
-    logger.info(`[re-enrich] Found ${dbListings.length} old listings from platform: ${platform}`);
+    logger.info(
+      `[re-enrich] Found ${dbListings.length} old listings from platform: ${platform}`,
+    );
   } catch (err) {
-    logger.error(`[re-enrich] Failed to query listings for platform "${platform}": ${err}`);
+    logger.error(
+      `[re-enrich] Failed to query listings for platform "${platform}": ${err}`,
+    );
     return {
       processed: 0,
       enriched: 0,
@@ -1146,7 +1173,10 @@ export async function reEnrichOldListingsFromPlatform(
   // Call enrichment service
   let enrichedListings: RawListing[] = [];
   try {
-    enrichedListings = await zillowEnrichmentService.enrichAllListings(rawListings, concurrency);
+    enrichedListings = await zillowEnrichmentService.enrichAllListings(
+      rawListings,
+      concurrency,
+    );
   } catch (err) {
     logger.error(`[re-enrich] Enrichment service error: ${err}`);
     return {
@@ -1172,12 +1202,19 @@ export async function reEnrichOldListingsFromPlatform(
           listing.address,
           listing.zpid,
           "zillow",
-          listing.sourceUrl ?? listing.url
+          listing.sourceUrl ?? listing.url,
         );
-        await upsertEstimateFromZillow(propertyId, listing.zestimate, listing.url, listing.sourceUrl ?? listing.url);
+        await upsertEstimateFromZillow(
+          propertyId,
+          listing.zestimate,
+          listing.url,
+          listing.sourceUrl ?? listing.url,
+        );
         enriched++;
       } catch (err) {
-        logger.warn(`[re-enrich] Failed to create property/estimate for ${listing.address}: ${err}`);
+        logger.warn(
+          `[re-enrich] Failed to create property/estimate for ${listing.address}: ${err}`,
+        );
       }
     }
     // If zpid was found but no zestimate, just track it
@@ -1194,11 +1231,15 @@ export async function reEnrichOldListingsFromPlatform(
   logger.info(`\n${"─".repeat(60)}`);
   logger.info(`[re-enrich] Batch re-enrichment complete for: ${platform}`);
   logger.info(`[re-enrich]   • Listings processed: ${rawListings.length}`);
-  logger.info(`[re-enrich]   • Successfully enriched (with zestimate): ${enriched}`);
+  logger.info(
+    `[re-enrich]   • Successfully enriched (with zestimate): ${enriched}`,
+  );
   logger.info(`[re-enrich]   • Found but no zestimate: ${foundNoEstimate}`);
   logger.info(`[re-enrich]   • Not found on Zillow: ${notFound}`);
   logger.info(`[re-enrich]   • Duration: ${duration_ms}ms`);
-  logger.info(`[re-enrich]   • Success rate: ${((enriched / rawListings.length) * 100).toFixed(1)}%`);
+  logger.info(
+    `[re-enrich]   • Success rate: ${((enriched / rawListings.length) * 100).toFixed(1)}%`,
+  );
   logger.info(`${"─".repeat(60)}\n`);
 
   return {
@@ -1209,4 +1250,99 @@ export async function reEnrichOldListingsFromPlatform(
     failed: rawListings.length - enriched - foundNoEstimate - notFound,
     duration_ms,
   };
+}
+
+// ── Delete operations ─────────────────────────────────────────────────────────
+
+/**
+ * Delete a single listing by ID
+ * @param listingId - The ID of the listing to delete
+ * @returns boolean indicating if deletion was successful
+ */
+export async function deleteListing(listingId: string): Promise<boolean> {
+  try {
+    await prisma.listing.delete({
+      where: { id: listingId },
+    });
+    logger.info(`[db] Listing deleted: ${listingId}`);
+    return true;
+  } catch (err: any) {
+    if (err.code === "P2025") {
+      logger.warn(`[db] Listing not found: ${listingId}`);
+      return false;
+    }
+    logger.error(`[db] Failed to delete listing ${listingId}:`, err);
+    throw err;
+  }
+}
+
+/**
+ * Delete a single estimate by ID
+ * @param estimateId - The ID of the estimate to delete
+ * @returns boolean indicating if deletion was successful
+ */
+export async function deleteEstimate(estimateId: string): Promise<boolean> {
+  try {
+    await prisma.estimate.delete({
+      where: { id: estimateId },
+    });
+    logger.info(`[db] Estimate deleted: ${estimateId}`);
+    return true;
+  } catch (err: any) {
+    if (err.code === "P2025") {
+      logger.warn(`[db] Estimate not found: ${estimateId}`);
+      return false;
+    }
+    logger.error(`[db] Failed to delete estimate ${estimateId}:`, err);
+    throw err;
+  }
+}
+
+/**
+ * Delete a property by ID
+ * This cascades to delete all associated listings and estimates
+ * @param propertyId - The ID of the property to delete
+ * @returns Object with counts of deleted items
+ */
+export async function deleteProperty(
+  propertyId: string,
+): Promise<{ property: number; listings: number; estimates: number }> {
+  try {
+    // Use transaction to ensure all deletions succeed together
+    const result = await prisma.$transaction(async (tx) => {
+      // Delete all estimates for this property
+      const estimatesDeleted = await tx.estimate.deleteMany({
+        where: { propertyId },
+      });
+
+      // Delete all listings for this property
+      const listingsDeleted = await tx.listing.deleteMany({
+        where: { propertyId },
+      });
+
+      // Delete the property itself
+      const propertyDeleted = await tx.property.delete({
+        where: { id: propertyId },
+      });
+
+      return {
+        property: propertyDeleted ? 1 : 0,
+        listings: listingsDeleted.count,
+        estimates: estimatesDeleted.count,
+      };
+    });
+
+    logger.info(
+      `[db] Property deleted: ${propertyId} ` +
+        `(listings: ${result.listings}, estimates: ${result.estimates})`,
+    );
+    return result;
+  } catch (err: any) {
+    if (err.code === "P2025") {
+      logger.warn(`[db] Property not found: ${propertyId}`);
+      return { property: 0, listings: 0, estimates: 0 };
+    }
+    logger.error(`[db] Failed to delete property ${propertyId}:`, err);
+    throw err;
+  }
 }

@@ -9,8 +9,11 @@ import {
   getZillowListingsHandler,
   getRedfinListingsHandler,
   getRealtorListingsHandler,
-  getPropwireListingsHandler
-  , getScrapeStatusHandler
+  getPropwireListingsHandler,
+  getScrapeStatusHandler,
+  deleteListingHandler,
+  deleteEstimateHandler,
+  deletePropertyHandler,
 } from "./handlers";
 
 const router = Router();
@@ -218,7 +221,6 @@ router.get("/listings", getAllListingsHandler);
  *         description: Internal server error
  */
 router.post("/filters", updateFilterHandler);
-
 
 /**
  * @swagger
@@ -488,5 +490,23 @@ router.get("/listings/propwire", getPropwireListingsHandler);
  * Scrape status (polled)
  */
 router.get("/scrape/status", getScrapeStatusHandler);
+
+/**
+ * Delete listing by ID
+ * @route DELETE /api/v1/listings/:listingId
+ */
+router.delete("/listings/:listingId", deleteListingHandler);
+
+/**
+ * Delete estimate by ID
+ * @route DELETE /api/v1/estimates/:estimateId
+ */
+router.delete("/estimates/:estimateId", deleteEstimateHandler);
+
+/**
+ * Delete property by ID (cascades to delete listings and estimates)
+ * @route DELETE /api/v1/properties/:propertyId
+ */
+router.delete("/properties/:propertyId", deletePropertyHandler);
 
 export default router;

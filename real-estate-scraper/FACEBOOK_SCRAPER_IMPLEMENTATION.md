@@ -1,10 +1,13 @@
-# Facebook Scraper Implementation - Current (May 2026)
+# Facebook Scraper Implementation - Current (June 2026)
 
 ## Overview
 
 The Facebook Scraper (`FacebookScraper`) is a specialized web scraper that extracts real estate listings from Facebook groups. It extends the `BaseScraper` class but launches its own dedicated Chromium browser instance (bypassing the proxy-managed browser pool). It implements a multi-step process: authentication, session management, group navigation, feed scrolling, content parsing, and deduplication.
 
-**Key File:** `server/src/scrapers/facebook/facebook.scraper.ts`
+**Key Files:**
+
+- `server/src/scrapers/facebook/facebook.scraper.ts` - Scraper logic (450 lines)
+- `server/src/scrapers/facebook/facebook.parser.ts` - HTML parsing & listing extraction (450 lines)
 
 ---
 
@@ -20,25 +23,30 @@ export class FacebookScraper extends BaseScraper {
 ```
 
 The `FacebookScraper` extends `BaseScraper`, but:
-- **Does NOT use inherited browser handle** — launches own Chromium instance
+
+- **Does NOT use inherited browser handle** — launches own Chromium instance via direct `chromium.launch()`
 - **Bypasses proxy layer** — connects directly (Facebook blocks proxies reliably)
-- Inherits pagination control, listing filtering, and error handling
-- Implements dedicated authentication flow
+- **Single-page operation** — only `scrapePage(handle, 1)` returns results; other pages return `[]`
+- Implements dedicated authentication flow with session persistence
+- Inherits filtering logic from `BaseScraper` for price/location validation
 
 ### Configuration
 
 **Environment Variables Required:**
+
 ```env
 FACEBOOK_USERNAME=<your-email@example.com>
 FACEBOOK_PASSWORD=<your-password>
-FACEBOOK_GROUP_URLS=<comma-separated group URLs>
+FACEBOOK_GROUP_URLS=<comma-separated group URLs on ONE LINE>
 ```
 
 **Session Persistence:**
+
 - Session file: `facebook-session.json` (root directory)
-- Stores browser context state (cookies, localStorage)
+- Stores browser context state (cookies, localStorage) via Playwright's `storageState()`
 - Survives across scraper runs (persistent login)
-- Automatically deleted if session expires and re-login needed
+- Automatically deleted and regenerated if session expires
+- Expires when Facebook invalidates the underlying cookies (weeks to months)
 
 ---
 
@@ -54,6 +62,7 @@ constructor(options: ScraperOptions = {}) {
 ```
 
 **Features:**
+
 - Validates `FACEBOOK_USERNAME` and `FACEBOOK_PASSWORD` are set
 - Parses and normalizes group URLs from `FACEBOOK_GROUP_URLS`
 - Handles multiple URL formats:
@@ -64,20 +73,24 @@ constructor(options: ScraperOptions = {}) {
 - Logs number of target groups on initialization
 
 **URL Parsing:**
+
 ```typescript
 function parseFacebookGroupUrls(raw: string): string[] {
   return raw
-    .split(/[\s,]+/)  // split on whitespace or comma
-    .map(u => u.trim().replace(/[`"']/g, ""))
-    .filter(u => u.length > 0)
-    .map(u => {
+    .split(/[\s,]+/) // split on whitespace or comma
+    .map((u) => u.trim().replace(/[`"']/g, ""))
+    .filter((u) => u.length > 0)
+    .map((u) => {
       if (/^https?:\/\//i.test(u)) {
-        return u.replace(/^https?:\/\/web\.facebook\.com/i, "https://www.facebook.com");
+        return u.replace(
+          /^https?:\/\/web\.facebook\.com/i,
+          "https://www.facebook.com",
+        );
       }
       if (u.startsWith("/")) return `https://www.facebook.com${u}`;
       return `https://www.facebook.com/${u}`;
     })
-    .filter((url, index, all) => all.indexOf(url) === index);  // deduplicate
+    .filter((url, index, all) => all.indexOf(url) === index); // deduplicate
 }
 ```
 
@@ -86,17 +99,20 @@ function parseFacebookGroupUrls(raw: string): string[] {
 ## Session Management
 
 ### Session File Location
+
 - **Path:** `facebook-session.json` (root of server directory)
 - **Format:** Playwright browser context storage state (JSON)
 
 ### Session Lifecycle
 
 **First Run:**
+
 ```
 Start → No session file → Login with credentials → Save session to file
 ```
 
 **Subsequent Runs:**
+
 ```
 Start → Load session from file → Verify on homepage
          ↓
@@ -108,9 +124,11 @@ Start → Load session from file → Verify on homepage
 ### Key Methods
 
 #### `sessionExists(): boolean`
+
 Checks if session file exists at `facebook-session.json`
 
 #### `verifySession(page): Promise<boolean>`
+
 - Navigates to Facebook homepage
 - Checks if redirected to login page
 - Returns `true` if logged in, `false` if session expired
@@ -188,6 +206,7 @@ Checks if session file exists at `facebook-session.json`
    - Saves session cookies: `facebook-session.json`
 
 **Error Handling:**
+
 - All errors logged with `[facebook]` prefix
 - HTML snapshots saved to `logs/facebook_*.html` for debugging
 - Returns `false` on any exception (graceful failure)
@@ -232,6 +251,7 @@ Checks if session file exists at `facebook-session.json`
    - Saves HTML snapshot: `group_page_<group_id>.html` if feed found
 
 **Return:**
+
 - `true` if feed loaded successfully
 - `false` if feed didn't render or redirected to login
 
@@ -272,6 +292,7 @@ Checks if session file exists at `facebook-session.json`
    - Wait 1.5 seconds for render stabilization
 
 **Why This Works:**
+
 - Facebook lazy-loads posts as user scrolls
 - Stable post count = all posts loaded
 - Extensive waits avoid "too fast" detection
@@ -304,6 +325,7 @@ Checks if session file exists at `facebook-session.json`
    - Partial button clicks are OK (some is better than none)
 
 **Why Limited to 30:**
+
 - Time efficiency
 - Most important listings appear first
 - Avoids excessive interaction detection
@@ -334,6 +356,7 @@ Checks if session file exists at `facebook-session.json`
 ```
 
 **Parsing:**
+
 - Uses `parseFacebookGroupPosts(html, groupUrl, "facebook")` parser
 - Extracts:
   - Property addresses
@@ -343,6 +366,7 @@ Checks if session file exists at `facebook-session.json`
   - Owner/contact info (if available)
 
 **Debug Output:**
+
 - Saves HTML snapshot: `final_<group_id>.html`
 - Logs number of listings found
 
@@ -353,6 +377,7 @@ Checks if session file exists at `facebook-session.json`
 ### `scrapePage(handle, pageNumber): Promise<RawListing[]>`
 
 **Key Design:**
+
 - Only runs on page 1 (single-page scraper)
 - Returns empty array if `pageNumber !== 1` or no group URLs configured
 - Launches dedicated Chromium browser (ignores proxy pool)
@@ -360,6 +385,7 @@ Checks if session file exists at `facebook-session.json`
 **Flow:**
 
 1. **Launch Browser**
+
    ```typescript
    const browser = await chromium.launch({
      headless: true,
@@ -378,12 +404,14 @@ Checks if session file exists at `facebook-session.json`
      ],
    });
    ```
+
    - `headless: true` — no UI window
    - `--no-sandbox` — allow container execution
    - `--disable-blink-features=AutomationControlled` — hide automation detection
    - `--window-size=1440,900` — realistic window dimensions
 
 2. **Load or Create Session**
+
    ```
    Session file exists?
    ├─ YES: Load cookies from file → Verify session is valid
@@ -391,6 +419,7 @@ Checks if session file exists at `facebook-session.json`
    │       └─ Expired: Delete file → Perform fresh login
    └─ NO: Perform fresh login
    ```
+
    - Context created with viewport: 1366x900
    - User-agent: Chrome 124.0.0.0 on Windows 10
    - Locale: en-US, Timezone: America/New_York
@@ -420,6 +449,7 @@ Checks if session file exists at `facebook-session.json`
    - Browser and context always closed in `finally` block
 
 **Error Handling:**
+
 - Entire flow wrapped in try-catch
 - Errors logged with full message
 - Returns empty array on failure
@@ -448,12 +478,14 @@ Checks if session file exists at `facebook-session.json`
 4. Calculate and log dropped count
 
 **Stable Key Function:**
+
 - Normalizes text (from parser's `stableKey()` function)
 - Removes punctuation, extra whitespace
 - Lowercase comparison
 - Same listings posted to multiple groups = same key
 
 **Why This Matters:**
+
 - Same property often cross-posted to 3-5 groups
 - Deduplication ensures accurate listing counts
 - Improves data quality in database
@@ -488,7 +520,7 @@ Checks if session file exists at `facebook-session.json`
        "div[role='dialog'] div[role='button']:has-text('Not now')",
        "div[role='dialog'] div[role='button']:has-text('Close')",
        "div[role='dialog'] [data-testid='dialog-close-button']",
-     ]
+     ];
      ```
    - For each selector:
      - Get element
@@ -511,6 +543,7 @@ Checks if session file exists at `facebook-session.json`
 **Purpose:** Handle 2FA/checkpoint detection
 
 **Current Implementation:**
+
 - Logs three warning messages:
   1. "2FA / Checkpoint detected in headless mode"
   2. "Automatic 2FA resolution is not available in headless mode"
@@ -519,11 +552,13 @@ Checks if session file exists at `facebook-session.json`
 - Errors silently ignored
 
 **Why No Automation:**
+
 - SMS/email OTP requires external service
 - CAPTCHA solving would require OCR/API
 - Manual intervention is simpler and more reliable
 
 **Manual Workaround:**
+
 1. Delete `facebook-session.json` file
 2. Change launcher to `headless: false`
 3. Run scraper
@@ -539,10 +574,12 @@ Checks if session file exists at `facebook-session.json`
 **Purpose:** Save HTML snapshots for debugging
 
 **Files Created:**
+
 - Location: `logs/facebook_<label>.html`
 - Creates `logs/` directory if not exists
 
 **Debug Points:**
+
 - `homepage_loaded` - Facebook homepage after load
 - `after_login_attempt` - After pressing Enter on login
 - `logged_in` - After successful login
@@ -552,6 +589,7 @@ Checks if session file exists at `facebook-session.json`
 - `final_<group_id>` - Group page after scrolling (post-final HTML)
 
 **Usage:**
+
 - Download HTML file from logs/
 - Open in browser to see exact page state
 - Inspect selectors with DevTools
@@ -565,13 +603,16 @@ Checks if session file exists at `facebook-session.json`
 **Purpose:** Convert group URL to filesystem-safe filename
 
 **Implementation:**
+
 ```typescript
-url.replace(/https?:\/\/[^/]+\/groups\//, "")  // remove domain
-   .replace(/\//g, "")                          // remove slashes
-   .slice(0, 40)                                // first 40 chars
+url
+  .replace(/https?:\/\/[^/]+\/groups\//, "") // remove domain
+  .replace(/\//g, "") // remove slashes
+  .slice(0, 40); // first 40 chars
 ```
 
 **Example:**
+
 - Input: `https://www.facebook.com/groups/1185152819072240/`
 - Output: `1185152819072240` (or shorter if ID is short)
 
@@ -582,14 +623,16 @@ url.replace(/https?:\/\/[^/]+\/groups\//, "")  // remove domain
 ### Log Levels
 
 **ERROR** (critical failures):
+
 - Could not find email/password inputs
 - Login failed
-- Navigation failed  
+- Navigation failed
 - Parsing failed
 - Session verify error
 - Transport/network errors
 
 **WARN** (recoverable issues):
+
 - Session expired
 - Feed didn't render
 - 2FA/Checkpoint detected
@@ -598,6 +641,7 @@ url.replace(/https?:\/\/[^/]+\/groups\//, "")  // remove domain
 - No response from endpoint
 
 **INFO** (progress):
+
 - Login successful
 - Session verified
 - Group navigated
@@ -607,6 +651,7 @@ url.replace(/https?:\/\/[^/]+\/groups\//, "")  // remove domain
 - Running totals
 
 **DEBUG** (detailed):
+
 - Step-by-step method execution
 - Selector matching
 - Button clicking
@@ -615,6 +660,7 @@ url.replace(/https?:\/\/[^/]+\/groups\//, "")  // remove domain
 ### Log Format
 
 All logs prefixed with `[facebook]`:
+
 ```
 [facebook] Logging in…
 [facebook] ✓ Logged in successfully
@@ -628,19 +674,20 @@ All logs prefixed with `[facebook]`:
 
 ### Typical Execution
 
-| Step | Time | Notes |
-|------|------|-------|
-| Load homepage | 2-3s | Include 2.5-4s wait |
-| Dismiss consent | 1-2s | Try multiple selectors |
-| Fill credentials | 2-3s | Char-by-char typing |
-| Navigate & redirect | 3-5s | Include post-login wait |
-| Navigate to group | 3-5s | Load + modal dismiss |
-| Scroll feed | 60-120s | 50 passes × variable delays |
-| Expand posts | 5-10s | 30 buttons × 250ms |
-| Parse & dedupe | 1-2s | HTML parsing |
-| **Per Group Total** | **~75-150s** | **1.5-2.5 min** |
+| Step                | Time         | Notes                       |
+| ------------------- | ------------ | --------------------------- |
+| Load homepage       | 2-3s         | Include 2.5-4s wait         |
+| Dismiss consent     | 1-2s         | Try multiple selectors      |
+| Fill credentials    | 2-3s         | Char-by-char typing         |
+| Navigate & redirect | 3-5s         | Include post-login wait     |
+| Navigate to group   | 3-5s         | Load + modal dismiss        |
+| Scroll feed         | 60-120s      | 50 passes × variable delays |
+| Expand posts        | 5-10s        | 30 buttons × 250ms          |
+| Parse & dedupe      | 1-2s         | HTML parsing                |
+| **Per Group Total** | **~75-150s** | **1.5-2.5 min**             |
 
 ### Total Execution Time
+
 - First run: ~40-80 minutes (includes login)
 - Subsequent runs: ~30-70 minutes (reuses session)
 - Depends on:
@@ -679,6 +726,7 @@ All logs prefixed with `[facebook]`:
 ```
 
 ### Lifetime
+
 - Cookies expire at high timestamp (9999999999 = year 2286)
 - localStorage has no expiration
 - Session remains valid until Facebook invalidates cookies
@@ -689,9 +737,11 @@ All logs prefixed with `[facebook]`:
 ## Known Limitations & Workarounds
 
 ### Limitation 1: 2FA Detection
+
 **Problem:** 2FA detected → can't auto-complete in headless mode
 
-**Workaround:** 
+**Workaround:**
+
 - Delete `facebook-session.json`
 - Change launcher to `headless: false`
 - Run scraper
@@ -701,17 +751,21 @@ All logs prefixed with `[facebook]`:
 - Next run uses saved session
 
 ### Limitation 2: Rate Limiting
+
 **Problem:** Too many group requests → temporary IP ban
 
 **Workaround:**
+
 - 5-9 second delays between groups (already implemented)
 - Random delays in scrolling (already implemented)
 - User-agent and browser match real browser (already implemented)
 
 ### Limitation 3: Dynamic Content
+
 **Problem:** Some listings rendered after page load via JavaScript
 
 **Workaround:**
+
 - Scroll extensively (50 passes) — triggers lazy loading
 - Click "See more" buttons — reveals expanded text
 - Wait for stable post counts — indicates loading complete
@@ -721,17 +775,20 @@ All logs prefixed with `[facebook]`:
 ## Debugging Tips
 
 ### 1. Check Debug HTML Files
+
 ```bash
 ls -lh server/logs/facebook_*.html
 ```
 
 ### 2. Force Fresh Login
+
 ```bash
 rm facebook-session.json
 npm run scrape:facebook
 ```
 
 ### 3. Monitor Logs
+
 Check console output for `[facebook]` prefixed logs showing progress
 
 ---
@@ -739,6 +796,7 @@ Check console output for `[facebook]` prefixed logs showing progress
 ## Configuration Examples
 
 ### Minimal Setup
+
 ```env
 FACEBOOK_USERNAME=your-email@gmail.com
 FACEBOOK_PASSWORD=your-password
@@ -746,6 +804,7 @@ FACEBOOK_GROUP_URLS=https://www.facebook.com/groups/1185152819072240/
 ```
 
 ### Production Setup
+
 ```env
 FACEBOOK_USERNAME=business-account@company.com
 FACEBOOK_PASSWORD=complex-password
