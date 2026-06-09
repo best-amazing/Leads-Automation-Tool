@@ -35,7 +35,7 @@
       "value": "1366x900",
       "domain": ".facebook.com",
       "path": "/",
-      "expires": 1781628826,
+      "expires": 1781630320,
       "httpOnly": false,
       "secure": true,
       "sameSite": "Lax"
@@ -62,10 +62,30 @@
     },
     {
       "name": "fr",
-      "value": "1RXolsIDKQ9evTl9N.AWdnnWT8uGmwPqfC1YR1bPFV-kydirUXEvwTuMggUCc2jNmklGo.BqJvyG..AAA.0.0.BqKEEB.AWcTqhzaZvcOpgFBb-OHbBgYiOo",
+      "value": "1RXolsIDKQ9evTl9N.AWcYrYLpkB2fkYvWlej_pJ7Nfk0-QtuxYsQ1RThLmurvu8pZazI.BqJvyG..AAA.0.0.BqKEhA.AWeTbK-v9gQOX19vjVpER-qoDyA",
       "domain": ".facebook.com",
       "path": "/",
-      "expires": 1788798977.607148,
+      "expires": 1788800833.867599,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "csrftoken",
+      "value": "dd5y99XDmqSUAFV5NcmARe",
+      "domain": ".instagram.com",
+      "path": "/",
+      "expires": 1815584835.840705,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "mid",
+      "value": "aihIQgALAAErimliogSJapf2slFn",
+      "domain": ".instagram.com",
+      "path": "/",
+      "expires": 1815584835.840818,
       "httpOnly": true,
       "secure": true,
       "sameSite": "None"
@@ -76,40 +96,12 @@
       "origin": "https://web.facebook.com",
       "localStorage": [
         {
-          "name": "armadillo_msgr_data_loss_stats",
-          "value": "{}"
-        },
-        {
-          "name": "mw_encrypted_backups_restore_upsell_first_impression_time_key",
-          "value": "1781020147238"
-        },
-        {
-          "name": "Session",
-          "value": "niv84n:1781024123727"
-        },
-        {
-          "name": "_oz_bandwidthEstimate",
-          "value": "10000000"
-        },
-        {
-          "name": "banzai:last_storage_flush",
-          "value": "1781020148795"
-        },
-        {
-          "name": "screen_time_period_logging_facebook",
-          "value": "{\"actorId\":\"61590657779105\",\"currentIntervalLastTick\":1781024022,\"currentIntervalStart\":1781023623,\"initRemoteAgg\":{\"timestamp\":1781023886,\"today_s\":1769},\"intervals\":[],\"lastCallbackAttempt\":1781023886,\"localStorageId\":\"64405486\",\"syncedL24HS\":-1,\"syncedTodayS\":1769,\"lastSyncTimeStamp\":1781023886}"
-        },
-        {
-          "name": "last_headload_time",
-          "value": "1781022979688"
+          "name": "falco_queue_immediately^$^$f3cf908c949b999f9",
+          "value": "{\"items\":[{\"name\":\"perf\",\"policy\":{\"r\":1,\"s\":1},\"time\":1781025623125.95,\"extra\":\"{\\\"marker_id\\\":431626709,\\\"action_id\\\":706,\\\"instance_id\\\":0,\\\"sample_rate\\\":1,\\\"method\\\":\\\"random_sampling\\\",\\\"duration_ns\\\":\\\"103536199951\\\",\\\"points\\\":[{\\\"name\\\":\\\"join_button_shown\\\",\\\"timeSinceStart\\\":\\\"0\\\"}],\\\"metadata\\\":{\\\"application_analytics\\\":{\\\"time_since_qpl_module_init\\\":104101},\\\"memory_stats\\\":{\\\"total_mem\\\":17179869184},\\\"network_stats\\\":{\\\"downlink_megabits\\\":10,\\\"network_subtype\\\":\\\"4g\\\",\\\"rtt_ms\\\":0},\\\"sitedata_info\\\":{\\\"client_push_phase\\\":\\\"C3\\\",\\\"client_revision\\\":1041118026,\\\"server_revision\\\":1041118026},\\\"locale_info\\\":{\\\"locale\\\":\\\"en_GB\\\",\\\"isRTL\\\":0}},\\\"marker_type\\\":2,\\\"flags\\\":1,\\\"annotations\\\":{\\\"group_id\\\":\\\"1796310160614747\\\",\\\"notif_type\\\":\\\"null\\\",\\\"ref\\\":\\\"null\\\"},\\\"tracked_for_loss\\\":true,\\\"config_type\\\":\\\"prod\\\"}\",\"tags\":[1,128],\"sessionId\":\":u72ux6:jq2d2d\",\"deviceId\":\"fd.ARuyOQ0zCtE_5XbVXQMeFfNPJE3pO8r-KXuKp_LeRktu1WYR4YIw01W25MbqQwKQMX2wxTdCxWcjdZqTiE4w_jpY\",\"appVersion\":\"1041.118.026.0 (1041118026)\"},{\"name\":\"web_time_spent_navigation\",\"policy\":{\"r\":1},\"time\":1781025623128.05,\"extra\":\"{\\\"cause\\\":\\\"unload\\\",\\\"custom_data_json\\\":\\\"{\\\\\\\"source_pa\\\\\\\":\\\\\\\"{\\\\\\\\\\\\\\\"0\\\\\\\\\\\\\\\":{\\\\\\\\\\\\\\\"bookmark_id\\\\\\\\\\\\\\\":\\\\\\\\\\\\\\\"2361831622\\\\\\\\\\\\\\\",\\\\\\\\\\\\\\\"bookmark_type_name\\\\\\\\\\\\\\\":\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\",\\\\\\\\\\\\\\\"session\\\\\\\\\\\\\\\":\\\\\\\\\\\\\\\"zaiuwi:u72ux6:jq2d2d\\\\\\\\\\\\\\\",\\\\\\\\\\\\\\\"subsession\\\\\\\\\\\\\\\":1,\\\\\\\\\\\\\\\"tap_point\\\\\\\\\\\\\\\":\\\\\\\\\\\\\\\"via_cold_start\\\\\\\\\\\\\\\",\\\\\\\\\\\\\\\"timestamp\\\\\\\\\\\\\\\":1781025520102,\\\\\\\\\\\\\\\"trace_policy\\\\\\\\\\\\\\\":\\\\\\\\\\\\\\\"comet.group.about\\\\\\\\\\\\\\\"}}\\\\\\\",\\\\\\\"source_pav2\\\\\\\":\\\\\\\"CometGroupAboutRoot.react,comet.group.about,via_cold_start,1781025520102,251213,2361831622,,\\\\\\\",\\\\\\\"source_uri\\\\\\\":\\\\\\\"/groups/realestateinvestingmastermind\\\\\\\",\\\\\\\"source_container_id\\\\\\\":\\\\\\\"1796310160614747\\\\\\\",\\\\\\\"source_imp_id\\\\\\\":\\\\\\\"0Jwc4ONnnKcIAsEeQ\\\\\\\",\\\\\\\"source_visitation_id\\\\\\\":\\\\\\\"comet.group.about:jq2d2d:1:1781025520.102\\\\\\\",\\\\\\\"source_parent_container_id\\\\\\\":\\\\\\\"1796310160614747\\\\\\\"}\\\",\\\"sid_raw\\\":\\\"74csfa:u72ux6:jq2d2d\\\",\\\"source_path\\\":\\\"comet.group.about\\\"}\",\"tags\":[1,128],\"sessionId\":\"74csfa:u72ux6:jq2d2d\",\"deviceId\":\"fd.ARuyOQ0zCtE_5XbVXQMeFfNPJE3pO8r-KXuKp_LeRktu1WYR4YIw01W25MbqQwKQMX2wxTdCxWcjdZqTiE4w_jpY\",\"appVersion\":\"1041.118.026.0 (1041118026)\"}],\"ts\":1781025624198.6}"
         },
         {
           "name": "RSTData",
           "value": "{}"
-        },
-        {
-          "name": "bdz_playback_state",
-          "value": "{\"session_key\":\"mpsj0bnp\",\"buffer_length\":60}"
         },
         {
           "name": "hb_timestamp",
@@ -120,12 +112,24 @@
           "value": "{\"b\":[],\"t\":[]}"
         },
         {
-          "name": "ares_last_signal_flush",
-          "value": "1780156149253"
-        },
-        {
           "name": "signal_flush_timestamp",
           "value": "1781023748417"
+        },
+        {
+          "name": "falco_queue_critical^$^$fadbe7ad6b78bb27a",
+          "value": "{\"items\":[{\"name\":\"ods_web_batch\",\"policy\":{\"r\":1,\"s\":1},\"time\":1781025623126.85,\"extra\":\"{\\\"batch\\\":{\\\"7173\\\":{\\\"entities.ff_js_web.perf.2220391788200892.1041.C3\\\":{\\\"event.logged\\\":{\\\"n\\\":1,\\\"d\\\":null},\\\"event.captured\\\":{\\\"n\\\":1,\\\"d\\\":null}}}}}\",\"tags\":[1,128],\"sessionId\":\":u72ux6:jq2d2d\",\"deviceId\":\"fd.ARuyOQ0zCtE_5XbVXQMeFfNPJE3pO8r-KXuKp_LeRktu1WYR4YIw01W25MbqQwKQMX2wxTdCxWcjdZqTiE4w_jpY\",\"appVersion\":\"1041.118.026.0 (1041118026)\"}],\"ts\":1781025624197.2}"
+        },
+        {
+          "name": "Session",
+          "value": "74csfa:1781025654562"
+        },
+        {
+          "name": "_oz_bandwidthEstimate",
+          "value": "10000000"
+        },
+        {
+          "name": "banzai:last_storage_flush",
+          "value": "1781020148795"
         }
       ]
     }

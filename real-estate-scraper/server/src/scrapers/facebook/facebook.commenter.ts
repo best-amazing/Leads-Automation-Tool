@@ -655,10 +655,12 @@ export class FacebookCommenter {
     try {
       // ── Session check ────────────────────────────────────────────────────
       logger.info("[fb-commenter] Verifying session…");
+
       await page.goto("https://www.facebook.com/", {
         waitUntil: "domcontentloaded",
         timeout: 30_000,
       });
+
       await sleep(randInt(2000, 4000));
 
       if (
@@ -669,6 +671,7 @@ export class FacebookCommenter {
           "Session has expired. Delete facebook-session.json and re-run the login script.",
         );
       }
+      
       logger.info("[fb-commenter] Session valid ✓");
 
       // ── Warm-up browse before posting ────────────────────────────────────

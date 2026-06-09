@@ -43,6 +43,7 @@ export const SCRAPER_REGISTRY: Record<string, ScraperFactory> = {
 
   // CreativeListing (creative-finance marketplace, uses proxy)
   creativelisting: () => new CreativeListingScraper({ proxyUrl: config.proxyUrl }),
+  
   // Accept hyphenated variant from frontend: "creative-listing"
   "creative-listing": () => new CreativeListingScraper({ proxyUrl: config.proxyUrl }),
 
