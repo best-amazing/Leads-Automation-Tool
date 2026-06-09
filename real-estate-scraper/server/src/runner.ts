@@ -119,35 +119,7 @@ export async function runScrapers(options: RunOptions): Promise<void> {
       // Continue to check for old listings anyway
     }
 
-    // If this is the Facebook scraper, optionally run the commenter immediately
-    // after scraping. Controlled by `FACEBOOK_COMMENT_AFTER_SCRAPE` env var
-    // (default: enabled). The commenter is dynamically imported to avoid
-    // pulling Playwright-heavy code for other scrapers.
-    if (
-      key === "facebook" &&
-      rawListings.length > 0 &&
-      process.env.FACEBOOK_COMMENT_AFTER_SCRAPE !== "false"
-    ) {
-      try {
-        logger.info(
-          "[facebook] Auto-commenter enabled — starting commenter for scraped listings…",
-        );
-        const { commentOnListings } =
-          await import("./scrapers/facebook/facebook.commenter");
-        const headless = process.env.FACEBOOK_COMMENTER_HEADLESS !== "false";
-        const results = await commentOnListings(rawListings, "auto", {
-          headless,
-        });
-        const posted = results.filter((r) => r.success).length;
-        const skipped = results.filter((r) => r.skipped).length;
-        const failed = results.filter((r) => !r.success && !r.skipped).length;
-        logger.info(
-          `[facebook] Auto-commenter finished — posted ${posted}, failed ${failed}, skipped ${skipped}`,
-        );
-      } catch (err: any) {
-        logger.warn(`[facebook] Auto-commenter failed: ${err}`);
-      }
-    }
+    // (auto-commenter moved later so it can run on fresh + DB listings)
 
     // ✨ NEW: Also fetch old listings from database that haven't been enriched yet
     let oldDbListings: RawListing[] = [];
@@ -186,6 +158,37 @@ export async function runScrapers(options: RunOptions): Promise<void> {
 
     // Combine fresh + old listings for unified enrichment
     const allListings = [...rawListings, ...oldDbListings];
+
+    // If this is the Facebook scraper, optionally run the commenter now on
+    // the combined listings (fresh + old). Controlled by
+    // `FACEBOOK_COMMENT_AFTER_SCRAPE` env var (default: enabled). The
+    // commenter is dynamically imported to avoid pulling Playwright-heavy
+    // code for other scrapers when not needed.
+    if (
+      key === "facebook" &&
+      allListings.length > 0 &&
+      process.env.FACEBOOK_COMMENT_AFTER_SCRAPE !== "false"
+    ) {
+      try {
+        logger.info(
+          "[facebook] Auto-commenter enabled — starting commenter for scraped+DB listings…",
+        );
+        const { commentOnListings } =
+          await import("./scrapers/facebook/facebook.commenter");
+        const headless = process.env.FACEBOOK_COMMENTER_HEADLESS !== "false";
+        const results = await commentOnListings(allListings, "auto", {
+          headless,
+        });
+        const posted = results.filter((r) => r.success).length;
+        const skipped = results.filter((r) => r.skipped).length;
+        const failed = results.filter((r) => !r.success && !r.skipped).length;
+        logger.info(
+          `[facebook] Auto-commenter finished — posted ${posted}, failed ${failed}, skipped ${skipped}`,
+        );
+      } catch (err: any) {
+        logger.warn(`[facebook] Auto-commenter failed: ${err}`);
+      }
+    }
 
     if (allListings.length === 0) {
       logger.warn(`[${key}] No listings to process (fresh or old) — skipping`);
