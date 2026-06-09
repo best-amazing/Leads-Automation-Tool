@@ -758,3 +758,41 @@ export async function commentOnListings(
     commentText,
   );
 }
+
+// ── Hardcoded run ─────────────────────────────────────────────────────────────
+//
+// Directly comment on a specific post without needing a scraper pipeline.
+// Run with:  npx ts-node src/scrapers/facebook/facebook.commenter.ts
+
+if (require.main === module) {
+  const TARGET_LISTING: RawListing = {
+    url: "https://web.facebook.com/groups/clevelandrei/permalink/872083405335892/",
+    address: "Cleveland REI Group Post",
+    price: undefined,
+    bedrooms: undefined,
+    bathrooms: undefined,
+    //sqft: undefined,
+    source: "facebook",
+  };
+
+  (async () => {
+    logger.info("[fb-commenter] Running in standalone mode…");
+    logger.info(`[fb-commenter] Target URL: ${TARGET_LISTING.url}`);
+
+    const results = await commentOnListings(
+      [TARGET_LISTING],
+      "auto",
+      { headless: false }, // set to false to watch the browser
+    );
+
+    const r = results[0];
+    if (r.success) {
+      logger.info(`[fb-commenter] ✓ Success — posted: "${r.comment}"`);
+    } else if (r.skipped) {
+      logger.warn(`[fb-commenter] ⚠ Skipped — reason: ${r.error}`);
+    } else {
+      logger.error(`[fb-commenter] ✗ Failed — ${r.error}`);
+      process.exit(1);
+    }
+  })();
+}
