@@ -538,9 +538,11 @@ async function postComment(
 
 export class FacebookCommenter {
   private headless: boolean;
+  private dailyLimit: number;
 
-  constructor(options?: { headless?: boolean }) {
+  constructor(options?: { headless?: boolean; dailyLimit?: number }) {
     this.headless = options?.headless ?? true;
+    this.dailyLimit = options?.dailyLimit ?? DAILY_COMMENT_LIMIT;
   }
 
   async commentOnListings(
@@ -586,12 +588,12 @@ export class FacebookCommenter {
       [eligible[i], eligible[j]] = [eligible[j], eligible[i]];
     }
 
-    const toComment = eligible.slice(0, DAILY_COMMENT_LIMIT);
+    const toComment = eligible.slice(0, this.dailyLimit);
     const skippedByLimit = eligible.length - toComment.length;
 
     if (skippedByLimit > 0) {
       logger.warn(
-        `[fb-commenter] Daily limit of ${DAILY_COMMENT_LIMIT} reached — skipping ${skippedByLimit} listing(s)`,
+        `[fb-commenter] Daily limit of ${this.dailyLimit} reached — skipping ${skippedByLimit} listing(s)`,
       );
       for (const l of eligible.slice(DAILY_COMMENT_LIMIT)) {
         results.push({
@@ -610,7 +612,7 @@ export class FacebookCommenter {
     }
 
     logger.info(
-      `[fb-commenter] Commenting on ${toComment.length} listing(s) (limit: ${DAILY_COMMENT_LIMIT})`,
+      `[fb-commenter] Commenting on ${toComment.length} listing(s) (limit: ${this.dailyLimit})`,
     );
 
     if (!this.headless) {
@@ -671,7 +673,7 @@ export class FacebookCommenter {
           "Session has expired. Delete facebook-session.json and re-run the login script.",
         );
       }
-      
+
       logger.info("[fb-commenter] Session valid ✓");
 
       // ── Warm-up browse before posting ────────────────────────────────────
@@ -687,6 +689,7 @@ export class FacebookCommenter {
         logger.info(
           `[fb-commenter] ${label} Commenting on: ${listing.address ?? listing.url}`,
         );
+
         logger.debug(`[fb-commenter] ${label} URL:     ${listing.url}`);
         logger.debug(`[fb-commenter] ${label} Comment: ${comment}`);
 
@@ -754,7 +757,7 @@ export class FacebookCommenter {
 export async function commentOnListings(
   listings: RawListing[],
   commentText: CommentText | "auto" = "auto",
-  options?: { headless?: boolean },
+  options?: { headless?: boolean; dailyLimit?: number },
 ): Promise<CommentResult[]> {
   return new FacebookCommenter(options).commentOnListings(
     listings,

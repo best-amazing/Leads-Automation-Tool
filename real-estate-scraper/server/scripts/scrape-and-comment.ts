@@ -1,19 +1,28 @@
 #!/usr/bin/env ts-node
-
 /**
  * Scrape and Comment Pipeline
  *
- * This script demonstrates Pattern 1 (Post-Processing Pipeline):
- * 1. Run FacebookScraper to collect listings
- * 2. Filter listings by criteria (price, location, type)
- * 3. Post comments on filtered listings
- *
  * Usage:
  *   npm run scrape:facebook:with-comments
- *   npm run scrape:facebook:with-comments -- --min-price 50000 --max-price 300000
+ *   npm run scrape:facebook:with-comments -- --dry-run
+ *   npm run scrape:facebook:with-comments -- --skip-scrape
+ *   npm run scrape:facebook:with-comments -- --min-price 50000 --max-price 500000
+ *   npm run scrape:facebook:with-comments -- --headless false
  */
 
+// ── MUST be the very first lines — load .env before any other imports ─────────
+import * as dotenv from "dotenv";
+import * as path from "path";
+
+// Resolve .env relative to the project root (one level up from /scripts)
+dotenv.config({ path: path.resolve(__dirname, "../.env") });
+// Also try the current working directory as fallback
+dotenv.config();
+
+// ── All other imports after dotenv ────────────────────────────────────────────
+import * as fs from "fs";
 import * as yargs from "yargs";
+
 import { FacebookScraper } from "../src/scrapers/facebook/facebook.scraper";
 import {
   FacebookCommenter,
@@ -22,221 +31,298 @@ import {
 import { logger } from "../src/utils/logger";
 import { RawListing } from "../src/types/listing";
 
-// ── Command-line arguments ────────────────────────────────────────────────────
+// ── Args ──────────────────────────────────────────────────────────────────────
 
 const argv = yargs
   .option("min-price", {
     type: "number",
-    default: 50000,
-    description: "Minimum listing price to comment on",
+    default: 0,
+    description: "Min price filter (0 = no minimum)",
   })
   .option("max-price", {
     type: "number",
-    default: 500000,
-    description: "Maximum listing price to comment on",
-  })
-  .option("comment-template", {
-    type: "string",
-    default: "dynamic",
-    choices: ["dynamic", "static"],
-    description:
-      "Comment style: dynamic (per-listing) or static (same for all)",
-  })
-  .option("static-text", {
-    type: "string",
-    description: "Static comment text (used if --comment-template=static)",
+    default: 0,
+    description: "Max price filter (0 = no maximum)",
   })
   .option("dry-run", {
     type: "boolean",
     default: false,
-    description: "Show what would happen without posting comments",
+    description: "Preview comments without posting",
   })
   .option("skip-scrape", {
     type: "boolean",
     default: false,
+    description: "Skip scraping, load from logs/facebook.json",
+  })
+  .option("headless", {
+    type: "boolean",
+    default: undefined,
     description:
-      "Skip scraping, use cached listings from logs/listings.json instead",
+      "Run browser headless (default from env FACEBOOK_COMMENTER_HEADLESS)",
+  })
+  .option("comment-limit", {
+    type: "number",
+    default: 0,
+    description: "Override daily comment limit (0 = use env default)",
   })
   .parseSync();
 
-// ── Comment generators ────────────────────────────────────────────────────────
+// ── Derived config ────────────────────────────────────────────────────────────
 
-/**
- * Dynamic comments personalized per listing
- */
-function generateDynamicComment(listing: RawListing): string {
-  const beds = listing.bedrooms ? `${listing.bedrooms}bed` : "bed";
-  const baths = listing.bathrooms ? `${listing.bathrooms}bath` : "bath";
-  const price = listing.price
-    ? `$${listing.price.toLocaleString()}`
-    : "listed price";
-  const address = listing.address || listing.location || "this property";
+const MIN_PRICE = (argv["min-price"] as number) || 0;
+const MAX_PRICE = (argv["max-price"] as number) || 0;
+const IS_DRY_RUN = argv["dry-run"] as boolean;
+const SKIP_SCRAPE = argv["skip-scrape"] as boolean;
+const COMMENT_LIMIT = (argv["comment-limit"] as number) || 0;
 
-  const templates = [
-    `Hi! Interested in your ${beds}/${baths} at ${price}. ` +
-      `Is this available for a quick closing?`,
+// Headless: CLI flag > env var > default true
+const headlessArg = argv["headless"] as boolean | undefined;
+const HEADLESS =
+  headlessArg !== undefined
+    ? headlessArg
+    : process.env.FACEBOOK_COMMENTER_HEADLESS === "false"
+      ? false
+      : true;
 
-    `Great opportunity! ${address} looks promising. ` +
-      `Would love to discuss wholesale or investment terms.`,
+// ── Comment pool ──────────────────────────────────────────────────────────────
+//
+// Short, natural-sounding messages. No "wholesale", "investor", price mentions
+// — FB's spam filter flags those patterns aggressively.
 
-    `Saw your listing in ${listing.location}. ` +
-      `Are you open to investor offers or seller financing on this ${beds}?`,
+const COMMENT_TEMPLATES: Array<(l: RawListing) => string> = [
+  () => "Hi! Is this still available?",
+  () => "Is this property still on the market?",
+  () => "Hey, still available? Would love more details!",
+  () => "Hi there! Do you have more photos of the inside?",
+  () => "Is this still for sale? Interested!",
+  () => "Could you DM me more details on this one?",
+  () => "Still available? Can we schedule a showing?",
+  () => "Interested! What's the best way to reach you?",
+  () => "Hi! Any interior photos available?",
+  () => "Love this listing — is it still available?",
+  () => "Do you have more info on this property?",
+  () => "Still on the market? Please DM me!",
+  () => "Hi, is this available? I'd love to take a look",
+  () => "Any updates on this listing?",
+  () => "Interested in this one! Is it still listed?",
+  () => "Hi! Can you share more details? Still available?",
+  () => "Would love to schedule a viewing if still available!",
+  () => "Hi, is this still for sale? Please DM me details",
+  () => "Looks great! Is it still available for viewing?",
+  () => "Still on the market? I'm very interested!",
+];
 
-    `Hello! The property at ${price} caught my eye. ` +
-      `Any motivated seller situations we can discuss?`,
+function autoComment(listing: RawListing): string {
+  // Deterministic but varied — same listing always gets same comment
+  const seed = (listing.url ?? "")
+    .split("")
+    .reduce((a, c) => a + c.charCodeAt(0), 0);
+  return COMMENT_TEMPLATES[seed % COMMENT_TEMPLATES.length](listing);
+}
 
-    `Interested in your ${beds}/${baths} investment property. ` +
-      `Can we schedule a time to discuss your needs?`,
+// ── Price filter ──────────────────────────────────────────────────────────────
+
+function passesPrice(listing: RawListing): boolean {
+  // If no price filters set, accept everything
+  if (!MIN_PRICE && !MAX_PRICE) return true;
+
+  // If listing has no price, accept it — Facebook posts often omit price
+  if (listing.price == null) return true;
+
+  if (MIN_PRICE && listing.price < MIN_PRICE) return false;
+  if (MAX_PRICE && listing.price > MAX_PRICE) return false;
+  return true;
+}
+
+// ── Load listings from cache ───────────────────────────────────────────────────
+
+function loadCachedListings(): RawListing[] {
+  const candidates = [
+    path.resolve(__dirname, "../logs/facebook.json"),
+    path.resolve(process.cwd(), "logs/facebook.json"),
   ];
 
-  // Deterministic: same listing always gets same comment
-  const idx =
-    (listing.url?.split("").reduce((a, b) => a + b.charCodeAt(0), 0) ?? 0) %
-    templates.length;
-  return templates[idx];
-}
-
-/**
- * Static comment for all listings
- */
-function generateStaticComment(): string {
-  return (
-    "Hi! Interested in this property. Can you provide more details about " +
-    "the condition, recent renovations, and financing terms? Thanks!"
-  );
-}
-
-// ── Main workflow ────────────────────────────────────────────────────────────
-
-async function main() {
-  const minPrice = argv["min-price"] as number;
-  const maxPrice = argv["max-price"] as number;
-  const isDryRun = argv["dry-run"] as boolean;
-  const skipScrape = argv["skip-scrape"] as boolean;
-  const commentTemplate = argv["comment-template"] as string;
-  const staticText = argv["static-text"] as string | undefined;
-
-  logger.info(
-    "═══════════════════════════════════════════════════════════════",
-  );
-  logger.info("Scrape and Comment Pipeline");
-  logger.info(
-    "═══════════════════════════════════════════════════════════════",
-  );
-  logger.info(
-    `Price range: $${minPrice.toLocaleString()} - $${maxPrice.toLocaleString()}`,
-  );
-  logger.info(`Comment style: ${commentTemplate}`);
-  logger.info(`Dry run: ${isDryRun}`);
-
-  // ── Step 1: Scrape or load listings ───────────────────────────────────
-
-  let allListings: RawListing[] = [];
-
-  if (skipScrape) {
-    logger.info("\n[1/3] Loading cached listings…");
+  for (const filePath of candidates) {
+    if (!fs.existsSync(filePath)) continue;
     try {
-      const fs = require("fs");
-      const path = require("path");
-      const filePath = path.join(__dirname, "../logs/listings.json");
-      if (fs.existsSync(filePath)) {
-        const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
-        allListings = Array.isArray(data) ? data : data.listings || [];
-        logger.info(`✓ Loaded ${allListings.length} listings from cache`);
-      } else {
-        logger.warn(`Cache file not found at ${filePath} — running scraper`);
-      }
-    } catch (err) {
-      logger.warn(`Could not load cache — running scraper: ${err}`);
+      const data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+      const listings: RawListing[] = Array.isArray(data)
+        ? data
+        : (data.listings ?? data.results ?? []);
+      logger.info(`✓ Loaded ${listings.length} listings from ${filePath}`);
+      return listings;
+    } catch (err: any) {
+      logger.warn(`Could not parse ${filePath}: ${err.message}`);
     }
   }
 
-  if (allListings.length === 0) {
-    logger.info("\n[1/3] Running FacebookScraper…");
-    const scraper = new FacebookScraper();
-    allListings = await scraper.run();
-    logger.info(`✓ Scraped ${allListings.length} total listings`);
+  logger.warn("No cached facebook.json found");
+  return [];
+}
+
+// ── Verify env is loaded ──────────────────────────────────────────────────────
+
+function checkEnv(): void {
+  const missing: string[] = [];
+  if (!process.env.FACEBOOK_USERNAME) missing.push("FACEBOOK_USERNAME");
+  if (!process.env.FACEBOOK_PASSWORD) missing.push("FACEBOOK_PASSWORD");
+  if (!process.env.FACEBOOK_GROUP_URLS) missing.push("FACEBOOK_GROUP_URLS");
+
+  if (missing.length > 0) {
+    logger.error(
+      `Missing required env vars: ${missing.join(", ")}\n` +
+        `Make sure .env is in the project root and contains these variables.\n` +
+        `Looked for .env at: ${path.resolve(__dirname, "../.env")}`,
+    );
+    process.exit(1);
   }
 
-  // ── Step 2: Filter listings ──────────────────────────────────────────
+  logger.info(`[env] FACEBOOK_USERNAME  = ${process.env.FACEBOOK_USERNAME}`);
+  logger.info(
+    `[env] FACEBOOK_GROUP_URLS = ${(process.env.FACEBOOK_GROUP_URLS ?? "").slice(0, 60)}…`,
+  );
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+async function main(): Promise<void> {
+  logger.info(
+    "═══════════════════════════════════════════════════════════════",
+  );
+  logger.info("Facebook Scrape and Comment Pipeline");
+  logger.info(
+    "═══════════════════════════════════════════════════════════════",
+  );
+
+  const priceStr =
+    MIN_PRICE || MAX_PRICE
+      ? `$${MIN_PRICE.toLocaleString()} – $${MAX_PRICE ? MAX_PRICE.toLocaleString() : "∞"}`
+      : "no price filter";
+
+  logger.info(`Price filter:  ${priceStr}`);
+  logger.info(`Dry run:       ${IS_DRY_RUN}`);
+  logger.info(`Skip scrape:   ${SKIP_SCRAPE}`);
+  logger.info(`Headless:      ${HEADLESS}`);
+  if (COMMENT_LIMIT) logger.info(`Comment limit: ${COMMENT_LIMIT}`);
+
+  // Override env vars if CLI flags set
+  if (COMMENT_LIMIT) {
+    process.env.FACEBOOK_COMMENT_LIMIT = String(COMMENT_LIMIT);
+  }
+
+  // Verify env loaded correctly
+  checkEnv();
+
+  // ── Step 1: Scrape ────────────────────────────────────────────────────────
+
+  let allListings: RawListing[] = [];
+
+  if (SKIP_SCRAPE) {
+    logger.info("\n[1/3] Loading cached listings…");
+    allListings = loadCachedListings();
+
+    if (allListings.length === 0) {
+      logger.warn("Cache empty — falling back to live scrape");
+      SKIP_SCRAPE && (allListings = []); // trigger scrape below
+    }
+  }
+
+  if (!SKIP_SCRAPE || allListings.length === 0) {
+    logger.info("\n[1/3] Running FacebookScraper…");
+    try {
+      const scraper = new FacebookScraper();
+      allListings = await scraper.run();
+      logger.info(`✓ Scraped ${allListings.length} total listings`);
+    } catch (err: any) {
+      logger.error(`FacebookScraper failed: ${err.message}`);
+      logger.info("Falling back to cached listings if available…");
+      allListings = loadCachedListings();
+      if (allListings.length === 0) {
+        logger.error("No listings available — aborting");
+        process.exit(1);
+      }
+    }
+  }
+
+  // ── Step 2: Filter ────────────────────────────────────────────────────────
 
   logger.info("\n[2/3] Filtering listings…");
 
+  // All listings with facebook.com URLs
   const fbListings = allListings.filter(
     (l) => l.url && l.url.includes("facebook.com"),
   );
-  logger.info(`  • With Facebook URLs: ${fbListings.length}`);
-
-  const filteredByPrice = fbListings.filter(
-    (l) => l.price && l.price >= minPrice && l.price <= maxPrice,
+  logger.info(
+    `  • With Facebook URLs:    ${fbListings.length} / ${allListings.length}`,
   );
-  logger.info(`  • Price ${minPrice}-${maxPrice}: ${filteredByPrice.length}`);
 
-  const filteredByType = filteredByPrice.filter(
-    (l) => l.propertyType && l.propertyType !== "unknown",
-  );
-  logger.info(`  • Known property type: ${filteredByType.length}`);
+  // Apply price filter (if set)
+  const priceFiltered = fbListings.filter(passesPrice);
+  logger.info(`  • After price filter:    ${priceFiltered.length}`);
 
-  const candidateListings = filteredByType;
-  logger.info(`✓ ${candidateListings.length} listings eligible for commenting`);
+  // Remove listings we likely already commented on this session
+  // (no persistent memory, but same-URL dedup helps within a run)
+  const seen = new Set<string>();
+  const deduped = priceFiltered.filter((l) => {
+    if (!l.url || seen.has(l.url)) return false;
+    seen.add(l.url);
+    return true;
+  });
+  logger.info(`  • After dedup:           ${deduped.length}`);
 
-  if (candidateListings.length === 0) {
+  const candidates = deduped;
+
+  if (candidates.length === 0) {
     logger.warn(
-      "No eligible listings found — try adjusting price range or criteria",
-    );
-    logger.info(
-      "All Facebook listings had: " +
-        `${fbListings.length} URLs, ` +
-        `${filteredByPrice.length} in price range`,
+      "No eligible listings found.\n" +
+        `Total scraped: ${allListings.length} | With FB URL: ${fbListings.length}\n` +
+        "Tips:\n" +
+        "  • Remove --min-price / --max-price to comment on all listings\n" +
+        "  • Run npm run scrape:facebook first and then use --skip-scrape",
     );
     process.exit(0);
   }
 
-  // ── Step 3: Show preview and comment ────────────────────────────────
+  logger.info(`✓ ${candidates.length} listing(s) eligible for commenting`);
 
-  logger.info("\n[3/3] Commenting workflow…");
+  // ── Step 3: Preview and comment ───────────────────────────────────────────
+
+  logger.info("\n[3/3] Commenting…");
   logger.info(
     "───────────────────────────────────────────────────────────────",
   );
 
-  // Show preview
-  const commentFn: CommentText =
-    commentTemplate === "static"
-      ? staticText || generateStaticComment()
-      : generateDynamicComment;
-
-  logger.info("\nComment preview (first 3 listings):");
-  for (let i = 0; i < Math.min(3, candidateListings.length); i++) {
-    const listing = candidateListings[i];
-    const comment =
-      typeof commentFn === "function" ? commentFn(listing) : commentFn;
-
-    logger.info(`\n  [${i + 1}] ${listing.address || listing.title}`);
-    logger.info(`      URL: ${listing.url}`);
-    logger.info(`      Comment: "${comment.substring(0, 80)}…"`);
+  logger.info(`\nComment preview (first ${Math.min(5, candidates.length)}):`);
+  for (let i = 0; i < Math.min(5, candidates.length); i++) {
+    const l = candidates[i];
+    const comment = autoComment(l);
+    logger.info(`  [${i + 1}] ${l.address ?? l.title ?? l.url}`);
+    logger.info(`      URL:     ${l.url}`);
+    logger.info(`      Comment: "${comment}"`);
+    if (l.price) logger.info(`      Price:   $${l.price.toLocaleString()}`);
   }
 
-  if (isDryRun) {
-    logger.info("\n✓ Dry-run mode — no comments actually posted");
+  if (IS_DRY_RUN) {
+    logger.info("\n✓ Dry-run mode — no comments posted.");
     logger.info(
-      "\nTo post real comments, run:\n" +
-        `  npm run scrape:facebook:with-comments -- --min-price ${minPrice} --max-price ${maxPrice}`,
+      "Remove --dry-run to post for real:\n" +
+        "  npm run scrape:facebook:with-comments",
     );
     process.exit(0);
   }
 
-  // Actually post comments
+  // ── Post comments ─────────────────────────────────────────────────────────
+
   logger.info(
-    `\n🚀 Posting comments on ${candidateListings.length} listings…\n`,
+    `\n🚀 Posting comments on up to ${candidates.length} listing(s)…\n`,
   );
 
-  const commenter = new FacebookCommenter();
-  const results = await commenter.commentOnListings(
-    candidateListings,
-    commentFn,
-  );
+  const commenter = new FacebookCommenter({ headless: HEADLESS });
+  const commentFn: CommentText = autoComment;
 
-  // ── Summary ───────────────────────────────────────────────────────────
+  const results = await commenter.commentOnListings(candidates, commentFn);
+
+  // ── Summary ───────────────────────────────────────────────────────────────
 
   const succeeded = results.filter((r) => r.success).length;
   const failed = results.filter((r) => !r.success && !r.skipped).length;
@@ -249,28 +335,27 @@ async function main() {
   logger.info(
     "═══════════════════════════════════════════════════════════════",
   );
-  logger.info(`Scraped:     ${allListings.length}`);
-  logger.info(`Filtered:    ${candidateListings.length}`);
-  logger.info(`✓ Succeeded: ${succeeded}`);
-  logger.info(`✗ Failed:    ${failed}`);
-  logger.info(`⊘ Skipped:   ${skipped}`);
+  logger.info(`Scraped total:   ${allListings.length}`);
+  logger.info(`FB candidates:   ${candidates.length}`);
+  logger.info(`✓ Succeeded:     ${succeeded}`);
+  logger.info(`✗ Failed:        ${failed}`);
+  logger.info(`⊘ Skipped:       ${skipped}`);
 
-  // Show failures
   if (failed > 0) {
     logger.warn("\nFailed listings:");
     results
       .filter((r) => !r.success && !r.skipped)
-      .forEach((result) => {
-        logger.warn(`  • ${result.listing.address || result.listing.title}`);
-        logger.warn(`    Error: ${result.error}`);
+      .forEach((r) => {
+        logger.warn(`  • ${r.listing.address ?? r.listing.url}`);
+        logger.warn(`    Error: ${r.error}`);
       });
   }
 
   logger.info(
-    "\n═══════════════════════════════════════════════════════════════\n",
+    "═══════════════════════════════════════════════════════════════\n",
   );
 
-  process.exit(succeeded === candidateListings.length ? 0 : 1);
+  process.exit(failed > 0 ? 1 : 0);
 }
 
 main().catch((err) => {

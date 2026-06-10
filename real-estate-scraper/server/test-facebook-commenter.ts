@@ -38,6 +38,7 @@ import { logger } from "../server/src/utils/logger";
  * Load real listings from facebook.json (scraped data).
  * Falls back to mock listings if facebook.json doesn't exist.
  */
+
 function loadRealListings(): RawListing[] {
   try {
     const facebookJsonPath = "logs/facebook.json";
@@ -131,17 +132,19 @@ function generateMockListings(): RawListing[] {
 
 /**
  * Static comment for all listings
- */
+*/
+
 function staticComment(): string {
   return (
-    "Hi! Interested in this property. Can you provide more details about " +
-    "the condition, recent repairs, and financing options? Thanks!"
+    "We are real end buyers. Please send these details and all your other deals you may have. We will underwrite them and send you our offers.\n" +
+    "admin@amazingpropertiesusa.com"
   );
 }
 
 /**
  * Dynamic comments generated per listing
- */
+*/
+
 function dynamicComment(listing: RawListing): string {
   const bed = listing.bedrooms || "?";
   const price = listing.price ? `$${listing.price.toLocaleString()}` : "N/A";
@@ -240,8 +243,12 @@ async function main() {
     "───────────────────────────────────────────────────────────────",
   );
 
-  const commentFn =
-    isDynamic || !staticText ? dynamicComment : () => staticText;
+  // Default to static comment (buyers outreach) if neither --dynamic nor --static is provided
+  const commentFn = isDynamic
+    ? dynamicComment
+    : staticText
+      ? () => staticText
+      : staticComment;
 
   for (let i = 0; i < Math.min(3, fbListings.length); i++) {
     const listing = fbListings[i];
@@ -274,13 +281,16 @@ async function main() {
   logger.info("To post comments, run:\n");
   if (isDynamic) {
     logger.info("   npm run test:facebook-commenter -- --dynamic");
-  } else {
+  } else if (staticText) {
     logger.info(
-      `   npm run test:facebook-commenter -- --static "Your comment text"`,
+      `   npm run test:facebook-commenter -- --static "Your custom comment"`,
     );
+  } else {
+    logger.info("   npm run test:facebook-commenter");
+    logger.info("   (uses default buyers comment)");
   }
   logger.info("\nOr pipe confirmation:");
-  logger.info("   echo yes | npm run test:facebook-commenter -- --dynamic\n");
+  logger.info("   echo yes | npm run test:facebook-commenter\n");
 
   // ── Actually post comments ────────────────────────────────────────────────
 

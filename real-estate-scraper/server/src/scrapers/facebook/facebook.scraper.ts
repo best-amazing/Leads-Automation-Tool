@@ -15,13 +15,16 @@ const SESSION_FILE = "facebook-session.json";
 // Also handles newline-separated URLs in case .env is misconfigured.
 function parseFacebookGroupUrls(raw: string): string[] {
   return raw
-    .split(/[\s,]+/)                           // split on whitespace OR comma
+    .split(/[\s,]+/) // split on whitespace OR comma
     .map((u) => u.trim().replace(/[`"']/g, ""))
     .filter((u) => u.length > 0)
     .map((u) => {
       if (/^https?:\/\//i.test(u)) {
         // Normalise web.* → www.* (session cookies are bound to www.facebook.com)
-        return u.replace(/^https?:\/\/web\.facebook\.com/i, "https://www.facebook.com");
+        return u.replace(
+          /^https?:\/\/web\.facebook\.com/i,
+          "https://www.facebook.com",
+        );
       }
       if (u.startsWith("/")) return `https://www.facebook.com${u}`;
       return `https://www.facebook.com/${u}`;
@@ -30,12 +33,12 @@ function parseFacebookGroupUrls(raw: string): string[] {
 }
 
 const DEFAULT_GROUP_URLS: string[] = parseFacebookGroupUrls(
-  process.env.FACEBOOK_GROUP_URLS ?? ""
+  process.env.FACEBOOK_GROUP_URLS ?? "",
 );
 
 // 20 passes × 900px = 18,000px — enough to load 25–40 posts on most groups
 const SCROLL_PASSES = 50;
-const SCROLL_STEP   = 1200;
+const SCROLL_STEP = 1200;
 
 // Only close/dismiss selectors — NEVER "Log In" (that navigates away)
 const MODAL_CLOSE_SELECTORS = [
@@ -54,18 +57,20 @@ export class FacebookScraper extends BaseScraper {
     super(options);
 
     if (!process.env.FACEBOOK_USERNAME || !process.env.FACEBOOK_PASSWORD) {
-      logger.error("[facebook] FACEBOOK_USERNAME and FACEBOOK_PASSWORD must be set in .env");
+      logger.error(
+        "[facebook] FACEBOOK_USERNAME and FACEBOOK_PASSWORD must be set in .env",
+      );
     }
 
     if (DEFAULT_GROUP_URLS.length === 0) {
       logger.warn(
         "[facebook] No group URLs found. Check FACEBOOK_GROUP_URLS in .env — " +
-        "all URLs must be on ONE LINE, comma-separated."
+          "all URLs must be on ONE LINE, comma-separated.",
       );
     } else {
       logger.info(
         `[facebook] ${DEFAULT_GROUP_URLS.length} target group(s):\n` +
-          DEFAULT_GROUP_URLS.map((u) => `  • ${u}`).join("\n")
+          DEFAULT_GROUP_URLS.map((u) => `  • ${u}`).join("\n"),
       );
     }
   }
@@ -93,8 +98,8 @@ export class FacebookScraper extends BaseScraper {
 
       await page.waitForSelector(
         '#email, input[name="email"], input[type="email"], input[autocomplete="username"], ' +
-        'button[title="Accept All"], [aria-label="Allow all cookies"], [data-cookiebanner="accept_button"]',
-        { timeout: 30_000 }
+          'button[title="Accept All"], [aria-label="Allow all cookies"], [data-cookiebanner="accept_button"]',
+        { timeout: 30_000 },
       );
 
       for (const selector of [
@@ -119,7 +124,7 @@ export class FacebookScraper extends BaseScraper {
 
       await page.waitForSelector(
         '#email, input[name="email"], input[type="email"], input[autocomplete="username"]',
-        { timeout: 20_000 }
+        { timeout: 20_000 },
       );
       await sleep(500 + Math.random() * 400);
 
@@ -152,10 +157,13 @@ export class FacebookScraper extends BaseScraper {
       await sleep(800 + Math.random() * 500);
 
       await passField.press("Enter");
-      await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 30_000 });
+      await page.waitForNavigation({
+        waitUntil: "domcontentloaded",
+        timeout: 30_000,
+      });
       await sleep(3500 + Math.random() * 2000);
 
-      const url  = page.url();
+      const url = page.url();
       const html = await page.content();
       this.saveDebug(html, "after_login_attempt");
       logger.info(`[facebook] Post-login URL: ${url}`);
@@ -167,20 +175,27 @@ export class FacebookScraper extends BaseScraper {
         html.toLowerCase().includes("two-factor") ||
         html.toLowerCase().includes("approval code")
       ) {
-        logger.warn("[facebook] ⚠️  Checkpoint / 2FA — pausing for manual completion");
+        logger.warn(
+          "[facebook] ⚠️  Checkpoint / 2FA — pausing for manual completion",
+        );
         this.saveDebug(html, "checkpoint");
         await this.handleTwoFactorOrCheckpoint(page);
 
         const urlAfter = page.url();
         if (urlAfter.includes("login") || urlAfter.includes("checkpoint")) {
-          logger.error("[facebook] Still not logged in after manual intervention");
+          logger.error(
+            "[facebook] Still not logged in after manual intervention",
+          );
           return false;
         }
         await page.context().storageState({ path: SESSION_FILE });
         return true;
       }
 
-      if (url.includes("login") || html.toLowerCase().includes("wrong password")) {
+      if (
+        url.includes("login") ||
+        html.toLowerCase().includes("wrong password")
+      ) {
         logger.error("[facebook] Login failed — check credentials");
         this.saveDebug(html, "login_failed");
         return false;
@@ -201,8 +216,12 @@ export class FacebookScraper extends BaseScraper {
 
   private async handleTwoFactorOrCheckpoint(page: Page): Promise<void> {
     logger.warn("[facebook] ⚠️  2FA / Checkpoint detected in headless mode");
-    logger.warn("[facebook] Automatic 2FA resolution is not available in headless mode.");
-    logger.warn("[facebook] Please provide a pre-authenticated session file or run with headless=false for manual intervention.");
+    logger.warn(
+      "[facebook] Automatic 2FA resolution is not available in headless mode.",
+    );
+    logger.warn(
+      "[facebook] Please provide a pre-authenticated session file or run with headless=false for manual intervention.",
+    );
     try {
       await page.context().storageState({ path: SESSION_FILE });
     } catch {}
@@ -213,7 +232,9 @@ export class FacebookScraper extends BaseScraper {
   private async dismissModals(page: Page): Promise<void> {
     let hasDialog: boolean;
     try {
-      hasDialog = !!(await page.$("div[role='dialog'], div[aria-modal='true']"));
+      hasDialog = !!(await page.$(
+        "div[role='dialog'], div[aria-modal='true']",
+      ));
     } catch {
       return;
     }
@@ -227,7 +248,9 @@ export class FacebookScraper extends BaseScraper {
     } catch {}
 
     try {
-      const stillOpen = await page.$("div[role='dialog'], div[aria-modal='true']");
+      const stillOpen = await page.$(
+        "div[role='dialog'], div[aria-modal='true']",
+      );
       if (!stillOpen) return;
     } catch {
       return;
@@ -256,7 +279,7 @@ export class FacebookScraper extends BaseScraper {
         timeout: 30_000,
       });
       await sleep(3000);
-      const url  = page.url();
+      const url = page.url();
       const html = await page.content();
       if (url.includes("login") || html.includes('id="email"')) {
         logger.warn("[facebook] Session expired");
@@ -272,17 +295,25 @@ export class FacebookScraper extends BaseScraper {
 
   // ── Navigate to group ──────────────────────────────────────────────────────
 
-  private async navigateToGroup(page: Page, groupUrl: string): Promise<boolean> {
+  private async navigateToGroup(
+    page: Page,
+    groupUrl: string,
+  ): Promise<boolean> {
     try {
       logger.info(`[facebook] Navigating to: ${groupUrl}`);
-      await page.goto(groupUrl, { waitUntil: "domcontentloaded", timeout: 90_000 });
+      await page.goto(groupUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: 90_000,
+      });
       await sleep(3000);
 
       await this.dismissModals(page);
       await sleep(1500);
 
       if (page.url().includes("login")) {
-        logger.warn("[facebook] Redirected to login — session not valid for this URL");
+        logger.warn(
+          "[facebook] Redirected to login — session not valid for this URL",
+        );
         return false;
       }
 
@@ -312,7 +343,10 @@ export class FacebookScraper extends BaseScraper {
       }
 
       await sleep(2000);
-      this.saveDebug(await page.content(), `group_page_${this.slugify(groupUrl)}`);
+      this.saveDebug(
+        await page.content(),
+        `group_page_${this.slugify(groupUrl)}`,
+      );
       logger.info(`[facebook] ✓ Group feed loaded`);
       return true;
     } catch (err: any) {
@@ -327,7 +361,7 @@ export class FacebookScraper extends BaseScraper {
     logger.info(`[facebook] Scrolling feed (up to ${SCROLL_PASSES} passes)…`);
 
     let lastPostCount = 0;
-    let stableCount   = 0;
+    let stableCount = 0;
 
     for (let i = 0; i < SCROLL_PASSES; i++) {
       await this.dismissModals(page);
@@ -340,22 +374,29 @@ export class FacebookScraper extends BaseScraper {
       }
 
       // Longer pause every 5th pass to let FB's lazy loader fire
-      const delay = (i % 5 === 4) ? 4000 : 1800 + Math.random() * 800;
+      const delay = i % 5 === 4 ? 4000 : 1800 + Math.random() * 800;
       await sleep(delay);
 
       let currentPostCount = 0;
       try {
-        currentPostCount = await page.evaluate(
-          () => document.querySelectorAll("a[href*='/posts/'], a[href*='/permalink/']").length
-        ) as number;
+        currentPostCount = (await page.evaluate(
+          () =>
+            document.querySelectorAll(
+              "a[href*='/posts/'], a[href*='/permalink/']",
+            ).length,
+        )) as number;
       } catch {}
 
-      logger.info(`[facebook] Scroll ${i + 1}/${SCROLL_PASSES} — posts visible: ${currentPostCount}`);
+      logger.info(
+        `[facebook] Scroll ${i + 1}/${SCROLL_PASSES} — posts visible: ${currentPostCount}`,
+      );
 
       if (currentPostCount === lastPostCount) {
         stableCount++;
         if (stableCount >= 3) {
-          logger.info("[facebook] Post count stable for 3 passes — feed fully loaded");
+          logger.info(
+            "[facebook] Post count stable for 3 passes — feed fully loaded",
+          );
           break;
         }
       } else {
@@ -377,9 +418,11 @@ export class FacebookScraper extends BaseScraper {
     try {
       const buttons = await page.$$(
         '[data-ad-rendering-role="story_message"] [role="button"]:has-text("See more"), ' +
-        '[aria-label="See more"]'
+          '[aria-label="See more"]',
       );
-      logger.info(`[facebook] Expanding ${Math.min(buttons.length, 30)} "See more" buttons`);
+      logger.info(
+        `[facebook] Expanding ${Math.min(buttons.length, 30)} "See more" buttons`,
+      );
       for (const btn of buttons.slice(0, 30)) {
         try {
           await this.dismissModals(page);
@@ -392,7 +435,10 @@ export class FacebookScraper extends BaseScraper {
 
   // ── Scrape one group ───────────────────────────────────────────────────────
 
-  private async scrapeGroup(page: Page, groupUrl: string): Promise<RawListing[]> {
+  private async scrapeGroup(
+    page: Page,
+    groupUrl: string,
+  ): Promise<RawListing[]> {
     const navOk = await this.navigateToGroup(page, groupUrl);
     if (!navOk) return [];
 
@@ -405,7 +451,9 @@ export class FacebookScraper extends BaseScraper {
     try {
       html = await page.content();
     } catch (err: any) {
-      logger.error(`[facebook] Could not capture HTML after scroll: ${err.message}`);
+      logger.error(
+        `[facebook] Could not capture HTML after scroll: ${err.message}`,
+      );
       return [];
     }
 
@@ -431,7 +479,7 @@ export class FacebookScraper extends BaseScraper {
       const key = stableKey(listing.description ?? listing.title ?? "");
       if (seen.has(key)) {
         logger.info(
-          `[facebook] Dropping cross-group duplicate: "${listing.title?.slice(0, 70)}"`
+          `[facebook] Dropping cross-group duplicate: "${listing.title?.slice(0, 70)}"`,
         );
         continue;
       }
@@ -441,7 +489,9 @@ export class FacebookScraper extends BaseScraper {
 
     const dropped = listings.length - deduped.length;
     if (dropped > 0) {
-      logger.info(`[facebook] Cross-group dedup removed ${dropped} duplicate(s)`);
+      logger.info(
+        `[facebook] Cross-group dedup removed ${dropped} duplicate(s)`,
+      );
     }
     return deduped;
   }
@@ -450,7 +500,7 @@ export class FacebookScraper extends BaseScraper {
 
   protected async scrapePage(
     handle: BrowserHandle,
-    pageNumber: number
+    pageNumber: number,
   ): Promise<RawListing[]> {
     if (pageNumber !== 1 || DEFAULT_GROUP_URLS.length === 0) return [];
 
@@ -474,8 +524,8 @@ export class FacebookScraper extends BaseScraper {
     });
 
     const contextOptions: Record<string, any> = {
-      viewport:   { width: 1366, height: 900 },
-      locale:     "en-US",
+      viewport: { width: 1366, height: 900 },
+      locale: "en-US",
       timezoneId: "America/New_York",
       userAgent:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
@@ -488,7 +538,7 @@ export class FacebookScraper extends BaseScraper {
     }
 
     const context = await browser.newContext(contextOptions);
-    const page    = await context.newPage();
+    const page = await context.newPage();
 
     try {
       // Ensure we are logged in before iterating groups
@@ -496,7 +546,9 @@ export class FacebookScraper extends BaseScraper {
         const sessionOk = await this.verifySession(page);
         if (!sessionOk) {
           logger.warn("[facebook] Saved session expired — re-logging in");
-          try { fs.unlinkSync(SESSION_FILE); } catch {}
+          try {
+            fs.unlinkSync(SESSION_FILE);
+          } catch {}
           const ok = await this.login(page);
           if (!ok) return [];
         }
@@ -510,13 +562,15 @@ export class FacebookScraper extends BaseScraper {
       // Iterate every group in the same browser session
       for (let i = 0; i < DEFAULT_GROUP_URLS.length; i++) {
         const groupUrl = DEFAULT_GROUP_URLS[i];
-        logger.info(`[facebook] ── Group ${i + 1}/${DEFAULT_GROUP_URLS.length}: ${groupUrl}`);
+        logger.info(
+          `[facebook] ── Group ${i + 1}/${DEFAULT_GROUP_URLS.length}: ${groupUrl}`,
+        );
 
         try {
           const listings = await this.scrapeGroup(page, groupUrl);
           allListings.push(...listings);
           logger.info(
-            `[facebook] Running total after group ${i + 1}: ${allListings.length} listings`
+            `[facebook] Running total after group ${i + 1}: ${allListings.length} listings`,
           );
         } catch (err: any) {
           logger.error(`[facebook] Error scraping ${groupUrl}: ${err.message}`);
@@ -526,7 +580,9 @@ export class FacebookScraper extends BaseScraper {
         // Brief pause between groups to reduce rate-limit risk
         if (i < DEFAULT_GROUP_URLS.length - 1) {
           const pause = 5000 + Math.random() * 4000;
-          logger.info(`[facebook] Pausing ${Math.round(pause / 1000)}s before next group…`);
+          logger.info(
+            `[facebook] Pausing ${Math.round(pause / 1000)}s before next group…`,
+          );
           await sleep(pause);
         }
       }
@@ -541,7 +597,7 @@ export class FacebookScraper extends BaseScraper {
 
       logger.info(
         `[facebook] Total: ${dedupedListings.length} unique listings across all groups ` +
-        `(${allListings.length} before dedup)`
+          `(${allListings.length} before dedup)`,
       );
       return dedupedListings;
     } catch (err: any) {
@@ -558,7 +614,10 @@ export class FacebookScraper extends BaseScraper {
   }
 
   private slugify(url: string): string {
-    return url.replace(/https?:\/\/[^/]+\/groups\//, "").replace(/\//g, "").slice(0, 40);
+    return url
+      .replace(/https?:\/\/[^/]+\/groups\//, "")
+      .replace(/\//g, "")
+      .slice(0, 40);
   }
 
   private saveDebug(html: string, label: string) {
