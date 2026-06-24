@@ -71,7 +71,7 @@ function isValidStreetAddress(address: string | undefined): boolean {
  *     if parsing breaks.
  */
 // Original object-per-row path, preserved as fallback
-function mapObjectItems(items: any[], source: string): RawListing[] {
+export function mapObjectItems(items: any[], source: string): RawListing[] {
   if (items.length === 0) {
     logger.warn("[il-parser] No items found in API response (empty array)");
     return [];

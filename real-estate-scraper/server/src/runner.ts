@@ -176,8 +176,10 @@ export async function runScrapers(options: RunOptions): Promise<void> {
         const { commentOnListings } =
           await import("./scrapers/facebook/facebook.commenter");
         const headless = process.env.FACEBOOK_COMMENTER_HEADLESS !== "false";
-        const results = await commentOnListings(allListings, "auto", {
+        const commentText = "We are real end buyers. Please send these details and all your other deals you may have to admin@amazingpropertiesusa.com. We will underwrite them and send you our offers.";
+        const results = await commentOnListings(allListings, commentText, {
           headless,
+          dailyLimit: 1,
         });
         const posted = results.filter((r) => r.success).length;
         const skipped = results.filter((r) => r.skipped).length;

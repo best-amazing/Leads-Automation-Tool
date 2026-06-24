@@ -37,32 +37,9 @@ export interface CommentResult {
 }
 
 // ── Comment template pool ─────────────────────────────────────────────────────
-//
-// Templates are selected randomly per listing. Each one sounds like a genuine
-// buyer/investor inquiry — no repeated phrasing patterns across a session.
-// Avoid: "wholesale", "investor", price mentions — FB flags these as spam.
 
 const COMMENT_TEMPLATES: Array<(l: RawListing) => string> = [
-  (l) => `Hi! Is this still available?`,
-  (l) => `Is this property still on the market?`,
-  (l) => `Hey, still available? Would love more details!`,
-  (l) => `Hi there! Do you have more photos of the inside?`,
-  (l) => `Is this still for sale? Interested!`,
-  (l) => `Could you DM me more details on this one?`,
-  (l) => `Still available? Can we schedule a showing?`,
-  (l) => `Interested! What's the best way to reach you?`,
-  (l) => `Hi! Any interior photos available?`,
-  (l) => `Love this listing — is it still available?`,
-  (l) => `Do you have more info on this property?`,
-  (l) => `Still on the market? Please DM me!`,
-  (l) => `Hi, is this available? I'd love to take a look`,
-  (l) => `Any updates on this listing?`,
-  (l) => `Interested in this one! Is it still listed?`,
-  (l) => `Hi! Can you share more details? Still available?`,
-  (l) => `Would love to schedule a viewing if still available!`,
-  (l) => `Is the price negotiable? Still interested if so`,
-  (l) => `Hi, is this still for sale? Please DM me details`,
-  (l) => `Looks great! Is it still available for viewing?`,
+  (l) => `We are real end buyers. Please send these details and all your other deals you may have to admin@amazingpropertiesusa.com. We will underwrite them and send you our offers.`,
 ];
 
 /**
@@ -98,7 +75,8 @@ function randFloat(min: number, max: number): number {
  * - Occasional "typo + backspace" corrections
  * - Bursts of fast typing followed by short pauses
  * - Slower speed on punctuation and spaces
- */
+*/
+
 async function humanType(
   page: Page,
   composer: any,

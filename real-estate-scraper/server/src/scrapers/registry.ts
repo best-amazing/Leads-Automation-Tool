@@ -20,6 +20,7 @@ import { CreativeListingScraper } from "./creative-listing/creative-listing.scra
 import { RealtorScraper } from "./realtor/realtor.scraper";
 import { RedfinScraper } from "./redfin/redfin.scraper";
 import { PropwireScraper } from "./propwire/propwire.scraper";
+import { AduResearchScraper } from "./property-purchase-research/adu-research.scraper";
 import { config } from "../config";
 
 /** Each entry returns a ready-to-run BaseScraper instance */
@@ -73,7 +74,10 @@ export const SCRAPER_REGISTRY: Record<string, ScraperFactory> = {
   redfin: () => new RedfinScraper(),
 
   // ── Propwire ─────────────────────────────────────────────────────────────
-  propwire: () => new PropwireScraper()
+  propwire: () => new PropwireScraper(),
+
+  // ── ADU Property Purchase Research ─────────────────────────────────────
+  "adu-research": () => new AduResearchScraper(),
 };
 
 // ── Source group aliases ──────────────────────────────────────────────────────
