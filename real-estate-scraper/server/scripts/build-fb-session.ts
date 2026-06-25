@@ -37,7 +37,7 @@ const cookies: Cookie[] = [
   cookie(
     "c_user",
     "61590657779105",
-    "2027-06-23T14:46:44.333Z"
+    "2027-06-25T12:43:37.550Z"
   ),
 
   cookie(
@@ -50,13 +50,13 @@ const cookies: Cookie[] = [
   cookie(
     "dpr",
     "1.25",
-    "2026-06-30T14:47:04.000Z"
+    "2026-07-02T13:11:06.000Z"
   ),
 
   cookie(
     "fr",
-    "1UOEKI5HamoAEPfTr.AWcdeXAK_RLVAkqyDeAHVzfx9qlVEYaCGfiYGtuWIQXXwiY1CO4.BqOpxT..AAA.0.0.BqOpxi.AWe2L2UdrT7Cw6c6Z3qa-CLffIM",
-    "2026-09-21T14:46:58.692Z",
+    "1L1gb6NW4g6UIQxT0.AWfIputg9OONfMsTL5IlJstX6GlWorqR7Dc_iSBk3h1z4shTFLE.BqPSJ3..AAA.0.0.BqPSjV.AWe1KRgE3HUePaeGwcgc6lj3-p8",
+    "2026-09-23T13:10:48.256Z",
     true
   ),
 
@@ -68,16 +68,23 @@ const cookies: Cookie[] = [
 
   cookie(
     "presence",
-    "C%7B%22t3%22%3A%5B%5D%2C%22utc3%22%3A1782226026333%2C%22v%22%3A1%7D",
+    "C%7B%22t3%22%3A%5B%5D%2C%22utc3%22%3A1782393066695%2C%22v%22%3A1%7D",
     null
   ),
 
   cookie(
     "ps_l",
     "1",
-    "2027-07-24T18:16:33.809Z",
+    "2027-07-29T20:16:45.287Z",
     true,
     "Lax"
+  ),
+
+  cookie(
+    "ps_n",
+    "1",
+    "2027-07-29T20:16:45.287Z",
+    true
   ),
 
   cookie(
@@ -90,15 +97,15 @@ const cookies: Cookie[] = [
   cookie(
     "wd",
     "976x776",
-    "2026-06-30T14:47:04.000Z",
+    "2026-07-02T13:11:06.000Z",
     false,
     "Lax"
   ),
 
   cookie(
     "xs",
-    "15%3Am5d1VvKcUOcQkQ%3A2%3A1782225997%3A-1%3A-1%3A%3AAcw6zfb3Eosg9hh5LaTEmIP6zKNcsSk7DF4e-oxb5A",
-    "2027-06-23T14:46:44.333Z",
+    "15%3Am5d1VvKcUOcQkQ%3A2%3A1782225997%3A-1%3A-1%3A%3AAcylGgkaHn0n_bSizd2zj4JWqMguaONRPaAXT2VUCg8",
+    "2027-06-25T12:43:37.550Z",
     true
   ),
 ];
