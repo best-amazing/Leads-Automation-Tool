@@ -507,7 +507,7 @@ export class FacebookScraper extends BaseScraper {
     logger.info("[facebook] Launching dedicated no-proxy browser for Facebook");
 
     const browser = await chromium.launch({
-      headless: true,
+      headless: process.env.FACEBOOK_HEADLESS !== "false",
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
