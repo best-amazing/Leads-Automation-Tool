@@ -26,7 +26,6 @@ import {
   AduResearchListing,
   parseAduApiResponse,
 } from "./adu-research.parser";
-import { writeAduResults } from "./adu-csv-writer";
 
 // ── Constants (reuse from InvestorLift) ────────────────────────────────────
 
@@ -90,7 +89,7 @@ function extractListingId(url: string | undefined): string | undefined {
  *   1. Located in one of TARGET_STATES
  *   2. Contains at least one ADU_KEYWORD in title/description/address
  */
-function passesAduFilter(listing: AduResearchListing): boolean {
+export function passesAduFilter(listing: AduResearchListing): boolean {
   const haystack = [listing.title, listing.description, listing.address]
     .join(" ")
     .toLowerCase();
@@ -489,24 +488,6 @@ export class AduResearchScraper extends BaseScraper {
     return pageNumber <= 1;
   }
 
-  // ── Override run() to write CSV/JSON at the end ────────────────────────
-
-  async run(): Promise<RawListing[]> {
-    const results = await super.run();
-
-    // Write ADU-specific output
-    if (results.length > 0) {
-      const aduResults = results as AduResearchListing[];
-      const { csvPath, jsonPath } = writeAduResults(aduResults);
-      logger.info(`[adu-research] ✓ Results written:`);
-      logger.info(`[adu-research]   CSV:  ${csvPath}`);
-      logger.info(`[adu-research]   JSON: ${jsonPath}`);
-    } else {
-      logger.warn("[adu-research] No ADU matches found — no output files written");
-    }
-
-    return results;
-  }
 
   // ── Debug helpers ──────────────────────────────────────────────────────
 

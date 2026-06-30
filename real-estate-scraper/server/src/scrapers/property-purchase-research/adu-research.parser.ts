@@ -48,7 +48,8 @@ let hasLoggedKeys = false;
 /**
  * Map raw API items to AduResearchListing[], capturing all fields
  * needed for the ADU research spreadsheet.
- */
+*/
+
 export function mapAduItems(
   items: any[],
   source: string,

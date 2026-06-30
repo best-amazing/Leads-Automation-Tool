@@ -10,8 +10,12 @@
 
 import "dotenv/config";
 import { AduResearchScraper } from "./adu-research.scraper";
+import { ZillowAduScraper } from "./zillow-adu.scraper";
+import { RealtorAduScraper } from "./realtor-adu.scraper";
 import { logger } from "../../utils/logger";
 import { ADU_KEYWORDS, TARGET_STATES } from "./adu-keywords";
+import { writeAduResults } from "./adu-csv-writer";
+import { AduResearchListing } from "./adu-research.parser";
 
 async function main(): Promise<void> {
   logger.info("═".repeat(60));
@@ -21,18 +25,33 @@ async function main(): Promise<void> {
   logger.info(`Keywords: ${ADU_KEYWORDS.length} patterns loaded`);
   logger.info("─".repeat(60));
 
-  const scraper = new AduResearchScraper({
+  const investorLift = new AduResearchScraper({
     maxPages:    1,        // InvestorLift is single-page
-    maxListings: 10_000,   // No artificial limit — keyword filter does the work
+    maxListings: 10_000,
+  });
+
+  const zillow = new ZillowAduScraper({
+    maxListings: 10_000,
+  });
+
+  const realtor = new RealtorAduScraper({
+    maxListings: 10_000,
   });
 
   try {
-    const results = await scraper.run();
+    const [ilResults, zillowResults, realtorResults] = await Promise.all([
+      investorLift.run(),
+      zillow.run(),
+      realtor.run()
+    ]);
+
+    const allResults = [...ilResults, ...zillowResults, ...realtorResults] as AduResearchListing[];
 
     logger.info("═".repeat(60));
-    logger.info(`ADU Research Complete — ${results.length} matches found`);
-    if (results.length > 0) {
-      logger.info(`Output: logs/adu-research.csv + logs/adu-research.json`);
+    logger.info(`ADU Research Complete — ${allResults.length} matches found`);
+    if (allResults.length > 0) {
+      const { csvPath, jsonPath } = writeAduResults(allResults);
+      logger.info(`Output: ${csvPath} + ${jsonPath}`);
     }
     logger.info("═".repeat(60));
 

@@ -1053,7 +1053,7 @@ async function attachEstimates(
 // ── Scraper ───────────────────────────────────────────────────────────────────
 
 export class RealtorScraper extends BaseScraper {
-  readonly sourceName = "realtor";
+  readonly sourceName: string = "realtor";
   private allListings: RawListing[] = [];
 
   constructor(options: ScraperOptions = {}) {

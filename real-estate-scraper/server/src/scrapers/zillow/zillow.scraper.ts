@@ -332,7 +332,7 @@ function saveFile(filename: string, content: string): void {
 // ── Scraper ───────────────────────────────────────────────────────────────────
 
 export class ZillowScraper extends BaseScraper {
-  readonly sourceName = "zillow";
+  readonly sourceName: string = "zillow";
 
   // visited is inherited from BaseScraper and shared across all markets
   // so we automatically deduplicate the same zpid appearing in multiple markets.

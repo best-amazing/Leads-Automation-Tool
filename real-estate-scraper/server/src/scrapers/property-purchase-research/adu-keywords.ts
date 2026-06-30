@@ -9,7 +9,8 @@
  * multi-generational layout, or multiple structures on one lot.
  *
  * Matched case-insensitively against title + description + address.
- */
+*/
+
 export const ADU_KEYWORDS = [
   "main residence",
   "main house",
