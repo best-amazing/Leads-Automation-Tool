@@ -380,10 +380,7 @@ export class FacebookScraper extends BaseScraper {
       let currentPostCount = 0;
       try {
         currentPostCount = (await page.evaluate(
-          () =>
-            document.querySelectorAll(
-              "a[href*='/posts/'], a[href*='/permalink/']",
-            ).length,
+          () => document.querySelectorAll("[role='article']").length,
         )) as number;
       } catch {}
 
@@ -445,6 +442,18 @@ export class FacebookScraper extends BaseScraper {
     await this.scrollFeed(page);
     await this.expandPosts(page);
     await this.dismissModals(page);
+    
+    logger.info(`[facebook] Waiting for loading skeletons to resolve...`);
+    try {
+      let retries = 5;
+      while (retries > 0) {
+        const loading = await page.$$("[aria-label='Loading...'], [data-visualcompletion='loading-state']");
+        if (loading.length === 0) break;
+        await sleep(1500);
+        retries--;
+      }
+    } catch {}
+    
     await sleep(1000);
 
     let html: string;

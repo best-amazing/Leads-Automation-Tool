@@ -226,6 +226,10 @@ export function parseFacebookGroupPosts(
 
   // ── Strategy 1: role=article (Facebook's own semantic markup — most reliable)
   let posts = $("[role='article']");
+  
+  // Filter out comments (which are articles nested inside another article)
+  posts = posts.filter((_, el) => $(el).parents("[role='article']").length === 0);
+  
   logger.info(`[fb-parser] role=article count: ${posts.length}`);
 
   // ── Strategy 2: data-pagelet feed children
