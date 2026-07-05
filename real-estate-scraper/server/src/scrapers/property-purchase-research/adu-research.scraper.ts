@@ -17,6 +17,9 @@ import { chromium, Browser } from "playwright";
 import * as fs from "fs";
 import * as path from "path";
 
+// How many listings to log detailed diagnostics for (avoids log spam)
+const DIAGNOSTIC_LOG_LIMIT = 10;
+
 import { BaseScraper, ScraperOptions } from "../base.scraper";
 import { BrowserHandle, sleep } from "../../utils/browser";
 import { RawListing } from "../../types/listing";
@@ -39,6 +42,9 @@ const ADDRESS_REQUEST_DELAY  = 800;
 
 const SESSION_FILE = path.join(__dirname, "../../..", "investorlift-session.json");
 const DEBUG_DIR    = path.resolve("logs");
+
+// How many raw XHR payloads to save for inspection (avoids disk spam if there are many requests)
+const MAX_RAW_SAVES = 3;
 
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
@@ -82,32 +88,92 @@ function extractListingId(url: string | undefined): string | undefined {
   return m?.[1];
 }
 
-// ── ADU Filter ──────────────────────────────────────────────────────────────
+// ── ADU Filters (split into location + keyword stages) ─────────────────────
+
+// Counter for diagnostic logging (reset per run)
+let _locationDiagCount = 0;
+let _keywordDiagCount  = 0;
+
+/** Reset diagnostic counters — call at the start of each run */
+export function resetDiagCounters(): void {
+  _locationDiagCount = 0;
+  _keywordDiagCount  = 0;
+}
 
 /**
- * Check if a listing matches the ADU research criteria:
- *   1. Located in one of TARGET_STATES
- *   2. Contains at least one ADU_KEYWORD in title/description/address
+ * Stage 1: Check if a listing is located in one of TARGET_STATES.
+ * Logs diagnostic details for the first N listings.
  */
-export function passesAduFilter(listing: AduResearchListing): boolean {
-  const haystack = [listing.title, listing.description, listing.address]
+export function passesLocationFilter(listing: AduResearchListing): boolean {
+  const addressUpper = (listing.address ?? "").toUpperCase();
+  const stateUpper   = (listing.state   ?? "").toUpperCase();
+
+  const matchedState = TARGET_STATES.find((s) =>
+    addressUpper.includes(`, ${s}`) || stateUpper === s
+  );
+
+  const passed = !!matchedState;
+
+  // Diagnostic logging for first N listings
+  if (_locationDiagCount < DIAGNOSTIC_LOG_LIMIT) {
+    _locationDiagCount++;
+    logger.info(
+      `[adu-filter] LOCATION [${_locationDiagCount}] ` +
+      `${passed ? "✓ PASS" : "✗ FAIL"} | ` +
+      `state field="${listing.state ?? "(empty)"}" | ` +
+      `address="${(listing.address ?? "(empty)").slice(0, 80)}" | ` +
+      `matched="${matchedState ?? "none"}"`
+    );
+  }
+
+  return passed;
+}
+
+/**
+ * Stage 2: Check if a listing contains at least one ADU_KEYWORD
+ * in title/description/address.
+ * Logs diagnostic details for the first N listings.
+ */
+export function passesKeywordFilter(listing: AduResearchListing): boolean {
+  const titlePart       = listing.title       ?? "";
+  const descriptionPart = listing.description ?? "";
+  const addressPart     = listing.address     ?? "";
+
+  const haystack = [titlePart, descriptionPart, addressPart]
     .join(" ")
     .toLowerCase();
 
-  // Check state — match ", OH", ", IN", etc. at end of address
-  const inTargetState = TARGET_STATES.some((s) =>
-    listing.address?.toUpperCase().includes(`, ${s}`) ||
-    listing.state?.toUpperCase() === s
-  );
-
-  if (!inTargetState) return false;
-
-  // Check keywords
-  const hasKeyword = ADU_KEYWORDS.some((kw) =>
+  const matchedKeyword = ADU_KEYWORDS.find((kw) =>
     haystack.includes(kw.toLowerCase()),
   );
 
-  return hasKeyword;
+  const passed = !!matchedKeyword;
+
+  // Diagnostic logging for first N listings
+  if (_keywordDiagCount < DIAGNOSTIC_LOG_LIMIT) {
+    _keywordDiagCount++;
+    logger.info(
+      `[adu-filter] KEYWORD [${_keywordDiagCount}] ` +
+      `${passed ? "✓ PASS" : "✗ FAIL"} | ` +
+      `title="${titlePart.slice(0, 60)}" | ` +
+      `desc length=${descriptionPart.length} | ` +
+      `desc preview="${descriptionPart.slice(0, 100)}" | ` +
+      `address="${addressPart.slice(0, 60)}" | ` +
+      `matchedKw="${matchedKeyword ?? "none"}" | ` +
+      `haystack (300 chars)="${haystack.slice(0, 300)}"`
+    );
+  }
+
+  return passed;
+}
+
+/**
+ * Combined filter: location + keyword (backward compatible).
+ * Use passesLocationFilter + passesKeywordFilter separately when
+ * you need to inspect the intermediate set.
+ */
+export function passesAduFilter(listing: AduResearchListing): boolean {
+  return passesLocationFilter(listing) && passesKeywordFilter(listing);
 }
 
 // ── Scraper ──────────────────────────────────────────────────────────────────
@@ -135,7 +201,8 @@ export class AduResearchScraper extends BaseScraper {
    * instead of price/location filtering.
    */
   protected passesFilter(listing: RawListing): boolean {
-    return passesAduFilter(listing as AduResearchListing);
+    // Return only location-filtered listings, the runner will do keyword filtering
+    return passesLocationFilter(listing as AduResearchListing);
   }
 
   /**
@@ -204,10 +271,10 @@ export class AduResearchScraper extends BaseScraper {
       const valid = await this.isSessionValid();
       if (valid) {
         logger.info("[adu-research] Session is valid");
-        return;
+      } else {
+        logger.warn("[adu-research] Session validation failed or timed out — keeping file to try anyway");
       }
-      logger.warn("[adu-research] Session invalid — deleting stale session file");
-      fs.unlinkSync(SESSION_FILE);
+      return;
     } else {
       logger.info("[adu-research] No session file found");
     }
@@ -343,6 +410,20 @@ export class AduResearchScraper extends BaseScraper {
 
   // ── Main scrape ────────────────────────────────────────────────────────
 
+  async run(): Promise<RawListing[]> {
+    logger.info(`[${this.sourceName}] Starting ADU scrape`);
+    this.results = [];
+    const handle = {} as any; // mock handle since we use Playwright
+    try {
+      this.results = await this.scrapePage(handle, 1);
+      this.results = await this.enrichAfterFilter(this.results);
+    } catch (err: any) {
+      if (err.name === "SessionExpiredError") throw err;
+      logger.error(`[${this.sourceName}] Scrape failed: ${err}`);
+    }
+    return this.results;
+  }
+
   protected async scrapePage(
     _handle: BrowserHandle,
     pageNumber: number,
@@ -367,7 +448,9 @@ export class AduResearchScraper extends BaseScraper {
 
       const seenUrls:       Set<string>              = new Set();
       const apiListings:    AduResearchListing[]     = [];
+      const rawStateCounts: Map<string, number>      = new Map();
       const pendingParses:  Promise<void>[]          = [];
+      let   rawSaveCount                             = 0;
 
       // Intercept all /api/customer/api/properties XHR responses
       // — use ADU parser to capture description + extended fields
@@ -378,6 +461,28 @@ export class AduResearchScraper extends BaseScraper {
         const p = response
           .json()
           .then((json) => {
+            // ── Save raw XHR payload for inspection ──────────────────────────
+            // Open logs/il_adu_raw_response_<n>.json to see EVERY field
+            // the InvestorLift API returns — look for description/overview/
+            // remarks/body/details that the parser may currently be missing.
+            if (rawSaveCount < MAX_RAW_SAVES) {
+              const saveIndex = ++rawSaveCount;
+              try {
+                fs.mkdirSync(DEBUG_DIR, { recursive: true });
+                const filename = path.join(
+                  DEBUG_DIR,
+                  `il_adu_raw_response_${saveIndex}.json`,
+                );
+                fs.writeFileSync(filename, JSON.stringify(json, null, 2), "utf-8");
+                logger.info(
+                  `[adu-research] Raw XHR saved → logs/il_adu_raw_response_${saveIndex}.json`,
+                );
+              } catch (saveErr) {
+                logger.warn(`[adu-research] Could not save raw XHR: ${saveErr}`);
+              }
+            }
+            // ─────────────────────────────────────────────────────────────────
+
             const parsed = parseAduApiResponse(json, this.sourceName);
             if (parsed.length > 0) {
               logger.info(
@@ -387,7 +492,27 @@ export class AduResearchScraper extends BaseScraper {
             for (const listing of parsed) {
               if (!listing.url || seenUrls.has(listing.url)) continue;
               seenUrls.add(listing.url);
-              apiListings.push(listing);
+              
+              if (passesLocationFilter(listing)) {
+                // Determine which target state it matched
+                const addressUpper = (listing.address ?? "").toUpperCase();
+                const stateUpper   = (listing.state   ?? "").toUpperCase();
+                const matchedState = TARGET_STATES.find((s) =>
+                  addressUpper.includes(`, ${s}`) || stateUpper === s
+                ) ?? "UNKNOWN";
+
+                const stateCount = rawStateCounts.get(matchedState) || 0;
+                
+                // Track RAW listings per state, stop at maxListings
+                if (stateCount < this.options.maxListings) {
+                  rawStateCounts.set(matchedState, stateCount + 1);
+                  
+                  // Filter by keyword inline
+                  if (passesKeywordFilter(listing)) {
+                    apiListings.push(listing);
+                  }
+                }
+              }
             }
           })
           .catch((err) => {
@@ -399,10 +524,14 @@ export class AduResearchScraper extends BaseScraper {
 
       try {
         logger.info("[adu-research] Loading marketplace…");
-        await page.goto(MARKETPLACE_URL, {
-          waitUntil: "domcontentloaded",
-          timeout: 30_000,
-        });
+        try {
+          await page.goto(MARKETPLACE_URL, {
+            waitUntil: "domcontentloaded",
+            timeout: 30_000,
+          });
+        } catch (gotoErr) {
+          logger.warn(`[adu-research] page.goto failed or timed out: ${gotoErr} — continuing anyway`);
+        }
 
         // Guard: session expiry / bot detection
         const landedUrl = page.url();
@@ -461,17 +590,12 @@ export class AduResearchScraper extends BaseScraper {
 
         // Log results
         if (apiListings.length > 0) {
-          logger.info(`[adu-research] ${apiListings.length} total listings collected via XHR`);
-
-          // Pre-filter stats for debugging
-          const withDescription = apiListings.filter(
-            (l) => l.description && l.description.length > 10,
-          ).length;
-          logger.info(
-            `[adu-research] ${withDescription}/${apiListings.length} listings have description text`,
-          );
+          logger.info(`[adu-research] ${apiListings.length} total passing ADU listings collected via XHR`);
+          for (const [state, count] of rawStateCounts.entries()) {
+            logger.info(`[adu-research] Raw listings scanned for ${state}: ${count}/${this.options.maxListings}`);
+          }
         } else {
-          logger.warn("[adu-research] No XHR data captured — check session");
+          logger.warn("[adu-research] No matching listings collected");
         }
 
         return apiListings;

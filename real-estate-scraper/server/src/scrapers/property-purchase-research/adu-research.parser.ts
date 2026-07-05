@@ -43,6 +43,9 @@ function normalizePrice(val: unknown): number | undefined {
 
 let hasLoggedKeys = false;
 
+// How many items to log full diagnostics for
+const PARSER_DIAG_LIMIT = 3;
+
 // ── Object-per-row mapper (extended) ──────────────────────────────────────
 
 /**
@@ -74,6 +77,45 @@ export function mapAduItems(
         typeof v === "string" && v.length > 120 ? v.slice(0, 120) + "…" : v;
     }
     logger.info(`[adu-parser] First item sample: ${JSON.stringify(sample)}`);
+  }
+
+  // ── Diagnostic: log description-candidate fields for first N items ────
+  // This helps identify which fields actually contain description text
+  const descCandidateKeys = [
+    "description", "remarks", "notes", "comment", "comments",
+    "overview", "body", "details", "summary", "narrative",
+    "public_remarks", "agent_remarks", "listing_remarks",
+    "property_description", "marketing_remarks",
+  ];
+
+  for (let diagIdx = 0; diagIdx < Math.min(items.length, PARSER_DIAG_LIMIT); diagIdx++) {
+    const item = items[diagIdx];
+    logger.info(`[adu-parser] ── ITEM [${diagIdx + 1}] DESCRIPTION FIELD DIAGNOSTICS ──`);
+    logger.info(`[adu-parser]   id=${item.id} | title="${(item.title ?? "").slice(0, 80)}"`);
+
+    for (const candKey of descCandidateKeys) {
+      const val = item[candKey];
+      if (val !== undefined && val !== null && val !== "") {
+        const preview = typeof val === "string" ? val.slice(0, 150) : JSON.stringify(val).slice(0, 150);
+        logger.info(`[adu-parser]   ✓ FOUND "${candKey}" (${typeof val}, ${String(val).length} chars): "${preview}"`);
+      } else {
+        logger.debug(`[adu-parser]   ✗ "${candKey}" = ${JSON.stringify(val)}`);
+      }
+    }
+
+    // Also check for any string field > 50 chars that might be a description
+    for (const [k, v] of Object.entries(item)) {
+      if (
+        typeof v === "string" &&
+        v.length > 50 &&
+        !descCandidateKeys.includes(k) &&
+        !["title", "url", "image", "photo", "img"].some(skip => k.toLowerCase().includes(skip))
+      ) {
+        logger.info(
+          `[adu-parser]   ⚠ POSSIBLE DESC FIELD "${k}" (${v.length} chars): "${v.slice(0, 150)}"`,
+        );
+      }
+    }
   }
 
   logger.debug(`[adu-parser] Mapping ${items.length} raw items`);

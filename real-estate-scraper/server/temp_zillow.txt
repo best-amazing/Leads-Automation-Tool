@@ -1,14 +1,14 @@
-// src/scrapers/zillow/zillow.scraper.ts
+﻿// src/scrapers/zillow/zillow.scraper.ts
 //
-// Off-market refactor — what changed:
+// Off-market refactor â€” what changed:
 //
 //   1. Multi-market loop: scraper now iterates config.sources.zillow.markets[]
-//      (one entry per state × listing-type combination) exactly like Redfin/
+//      (one entry per state Ã— listing-type combination) exactly like Redfin/
 //      Propwire do. The old single-string baseUrl is gone.
 //
 //   2. buildPageUrl() sets filterState flags to target ONLY off-market types:
-//        fore=true / pf=false  → bank-owned REO / foreclosure
-//        pf=true   / fore=false → pre-foreclosure
+//        fore=true / pf=false  â†’ bank-owned REO / foreclosure
+//        pf=true   / fore=false â†’ pre-foreclosure
 //      All on-market types (fsba, fsbo, nc, cmsn, auc) are disabled.
 //
 //   3. passesFilterOffMarket() replaces the inherited passesFilter():
@@ -25,7 +25,7 @@
 //
 //   6. Per-market debug files: zillow_html_p1_ohio_pre_foreclosure.html etc.
 //      so logs stay organised when running multiple markets.
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 import * as https from "https";
 import * as http  from "http";
@@ -40,7 +40,7 @@ import { sleep, jitter }               from "../../utils/browser";
 import { parseZillowResults, MAX_DAYS_OLD } from "./zillow.parser";
 import { config }                      from "../../config";
 
-// ── Constants ─────────────────────────────────────────────────────────────────
+// â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const OXYLABS_ENDPOINT   = "realtime.oxylabs.io";
 const OXYLABS_PATH       = "/v1/queries";
@@ -53,7 +53,7 @@ const BETWEEN_MARKET_MS  = 5_000;   // extra pause between markets
 const DEBUG_PAGES        = 3;       // save raw HTML/JSON for first N pages per market
 const MAX_DETAIL_SAVES   = 3;       // how many detail-page __NEXT_DATA__ files to save
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export type OffMarketType = "pre_foreclosure" | "foreclosure";
 
@@ -63,18 +63,18 @@ interface MarketConfig {
   listingType: OffMarketType;
 }
 
-// ── URL builder ───────────────────────────────────────────────────────────────
+// â”€â”€ URL builder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //
 // Zillow filterState flag reference:
-//   fsba  — for sale by agent    → false  (exclude all on-market)
-//   fsbo  — for sale by owner    → false
-//   nc    — new construction     → false
-//   cmsn  — coming soon          → false
-//   auc   — auctions             → false  (separate workflow if needed)
-//   fore  — bank-owned / REO     → true   when listingType === "foreclosure"
-//   pf    — pre-foreclosure      → true   when listingType === "pre_foreclosure"
+//   fsba  â€” for sale by agent    â†’ false  (exclude all on-market)
+//   fsbo  â€” for sale by owner    â†’ false
+//   nc    â€” new construction     â†’ false
+//   cmsn  â€” coming soon          â†’ false
+//   auc   â€” auctions             â†’ false  (separate workflow if needed)
+//   fore  â€” bank-owned / REO     â†’ true   when listingType === "foreclosure"
+//   pf    â€” pre-foreclosure      â†’ true   when listingType === "pre_foreclosure"
 //
-// Zillow's UI only allows one of fore/pf active at a time — we honour that by
+// Zillow's UI only allows one of fore/pf active at a time â€” we honour that by
 // having separate market entries per type rather than combining them.
 
 function buildPageUrl(
@@ -107,7 +107,7 @@ function buildPageUrl(
   return `${basePath}?searchQueryState=${encodeURIComponent(JSON.stringify(state))}`;
 }
 
-// ── Off-market listing filter ─────────────────────────────────────────────────
+// â”€â”€ Off-market listing filter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //
 // Key differences vs the inherited passesFilter():
 //
@@ -115,7 +115,7 @@ function buildPageUrl(
 //      This ensures all stored listings have an estimate value for enrichment.
 //
 //   2. Price is OPTIONAL.  Pre-foreclosures on Zillow often have no list price
-//      — only a loan balance or nothing.  We fall back to zestimate for the
+//      â€” only a loan balance or nothing.  We fall back to zestimate for the
 //      range check rather than rejecting the listing outright.
 //
 //   3. We still require url + address for deduplication and downstream use.
@@ -137,13 +137,13 @@ function passesFilterOffMarket(listing: RawListing): boolean {
   return true;
 }
 
-// ── Slug helper ───────────────────────────────────────────────────────────────
+// â”€â”€ Slug helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function marketSlug(market: MarketConfig): string {
   return market.name.toLowerCase().replace(/[^a-z0-9]+/g, "_");
 }
 
-// ── Oxylabs HTTP client ───────────────────────────────────────────────────────
+// â”€â”€ Oxylabs HTTP client â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface OxylabsPayload {
   source:          string;
@@ -167,7 +167,7 @@ export function oxylabsFetch(targetUrl: string, sessionId?: string): Promise<str
   return new Promise((resolve) => {
     if (!OXYLABS_USERNAME || !OXYLABS_PASSWORD) {
       logger.error(
-        "[zillow] Oxylabs credentials missing — add to .env:\n" +
+        "[zillow] Oxylabs credentials missing â€” add to .env:\n" +
         "[zillow]   OXYLABS_USERNAME=your_api_user\n" +
         "[zillow]   OXYLABS_PASSWORD=your_api_password"
       );
@@ -213,8 +213,8 @@ export function oxylabsFetch(targetUrl: string, sessionId?: string): Promise<str
           const raw    = Buffer.concat(chunks).toString("utf-8");
           const status = res.statusCode ?? 0;
 
-          if (status === 401) { logger.error("[zillow] Oxylabs 401 — bad credentials"); resolve(null); return; }
-          if (status === 429) { logger.warn("[zillow] Oxylabs 429 — rate limited");      resolve(null); return; }
+          if (status === 401) { logger.error("[zillow] Oxylabs 401 â€” bad credentials"); resolve(null); return; }
+          if (status === 429) { logger.warn("[zillow] Oxylabs 429 â€” rate limited");      resolve(null); return; }
           if (status !== 200) {
             logger.warn(`[zillow] Oxylabs HTTP ${status}`);
             logger.debug(`[zillow] Body snippet: ${raw.slice(0, 300)}`);
@@ -236,11 +236,11 @@ export function oxylabsFetch(targetUrl: string, sessionId?: string): Promise<str
             resolve(null); return;
           }
           if (!content || content.length < 5_000) {
-            logger.warn(`[zillow] Short content (${content.length} chars) — possible block`);
+            logger.warn(`[zillow] Short content (${content.length} chars) â€” possible block`);
             resolve(null); return;
           }
 
-          logger.debug(`[zillow] Oxylabs OK — ${content.length} chars, inner ${innerStatus}`);
+          logger.debug(`[zillow] Oxylabs OK â€” ${content.length} chars, inner ${innerStatus}`);
           resolve(content);
         });
 
@@ -266,7 +266,7 @@ export function oxylabsFetch(targetUrl: string, sessionId?: string): Promise<str
   });
 }
 
-// ── __NEXT_DATA__ extractor ───────────────────────────────────────────────────
+// â”€â”€ __NEXT_DATA__ extractor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function extractNextData(html: string): any | null {
   const match = html.match(/<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i);
@@ -277,7 +277,7 @@ export function extractNextData(html: string): any | null {
   }
 }
 
-// ── Block detection ───────────────────────────────────────────────────────────
+// â”€â”€ Block detection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const BLOCK_TITLES = [
   "access to this page has been denied",
@@ -312,7 +312,7 @@ function detectBlock(html: string): { blocked: boolean; reason: string } {
   return { blocked: false, reason: "" };
 }
 
-// ── File helpers ──────────────────────────────────────────────────────────────
+// â”€â”€ File helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function ensureLogDir(): string {
   const dir = path.resolve("logs");
@@ -324,13 +324,13 @@ function saveFile(filename: string, content: string): void {
   try {
     const file = path.join(ensureLogDir(), filename);
     fs.writeFileSync(file, content, "utf-8");
-    logger.info(`[zillow] Saved → logs/${filename}`);
+    logger.info(`[zillow] Saved â†’ logs/${filename}`);
   } catch (err) {
     logger.warn(`[zillow] Could not save ${filename}: ${err}`);
   }
 }
 
-// ── Scraper ───────────────────────────────────────────────────────────────────
+// â”€â”€ Scraper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export class ZillowScraper extends BaseScraper {
   readonly sourceName: string = "zillow";
@@ -344,7 +344,7 @@ export class ZillowScraper extends BaseScraper {
     super(options);
   }
 
-  // ── run() — iterates every market in config.sources.zillow.markets ────────
+  // â”€â”€ run() â€” iterates every market in config.sources.zillow.markets â”€â”€â”€â”€â”€â”€â”€â”€
 
   override async run(): Promise<RawListing[]> {
     logger.info(`[${this.sourceName}] Starting off-market scrape (Oxylabs)`);
@@ -360,11 +360,11 @@ export class ZillowScraper extends BaseScraper {
 
     for (const market of markets) {
       if (this.results.length >= this.options.maxListings) {
-        logger.info(`[${this.sourceName}] maxListings (${this.options.maxListings}) reached — stopping`);
+        logger.info(`[${this.sourceName}] maxListings (${this.options.maxListings}) reached â€” stopping`);
         break;
       }
 
-      logger.info(`[${this.sourceName}] ── Market: ${market.name} (${market.listingType}) ──`);
+      logger.info(`[${this.sourceName}] â”€â”€ Market: ${market.name} (${market.listingType}) â”€â”€`);
 
       let stopPaging = false;
 
@@ -372,7 +372,7 @@ export class ZillowScraper extends BaseScraper {
         if (stopPaging)                                    break;
         if (this.results.length >= this.options.maxListings) break;
 
-        logger.info(`[${this.sourceName}] ${market.name} — page ${page}/${zillowCfg.maxPagesPerMarket}`);
+        logger.info(`[${this.sourceName}] ${market.name} â€” page ${page}/${zillowCfg.maxPagesPerMarket}`);
 
         let pageListings: RawListing[] = [];
         try {
@@ -402,7 +402,7 @@ export class ZillowScraper extends BaseScraper {
           if (!passesFilterOffMarket(listing)) {
             rejected.push({ listing, reason: "filtered" });
             logger.debug(
-              `[${this.sourceName}] ✗ Filtered: ${listing.address} ` +
+              `[${this.sourceName}] âœ— Filtered: ${listing.address} ` +
               `@ ${listing.price ?? "no price"} (zestimate: ${(listing as any).zestimate ?? "none"})`
             );
             continue;
@@ -411,7 +411,7 @@ export class ZillowScraper extends BaseScraper {
           this.visited.add(listing.url);
           this.results.push(listing);
           logger.info(
-            `[${this.sourceName}] ✓ [${this.results.length}/${this.options.maxListings}] ` +
+            `[${this.sourceName}] âœ“ [${this.results.length}/${this.options.maxListings}] ` +
             `[] ${listing.address ?? listing.title} ` +
             `@ ${listing.price != null ? "$" + listing.price.toLocaleString() : "no price"} ` +
             ((listing as any).zestimate ? `| Zestimate $${(listing as any).zestimate.toLocaleString()}` : "| no Zestimate")
@@ -419,7 +419,7 @@ export class ZillowScraper extends BaseScraper {
         }
 
         if (pageListings.length === 0) {
-          logger.info(`[${this.sourceName}] ${market.name} — no listings on page ${page}, stopping`);
+          logger.info(`[${this.sourceName}] ${market.name} â€” no listings on page ${page}, stopping`);
           break;
         }
 
@@ -427,7 +427,7 @@ export class ZillowScraper extends BaseScraper {
       }
 
       logger.info(
-        `[${this.sourceName}] ${market.name} done — ` +
+        `[${this.sourceName}] ${market.name} done â€” ` +
         `${this.results.length} total accepted so far`
       );
 
@@ -438,7 +438,7 @@ export class ZillowScraper extends BaseScraper {
     }
 
     logger.info(
-      `[${this.sourceName}] Finished all markets — ` +
+      `[${this.sourceName}] Finished all markets â€” ` +
       `${this.results.length} accepted, ${rejected.length} rejected`
     );
 
@@ -460,7 +460,7 @@ export class ZillowScraper extends BaseScraper {
     return this.results;
   }
 
-  // ── scrapeMarketPage ──────────────────────────────────────────────────────
+  // â”€â”€ scrapeMarketPage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   private async scrapeMarketPage(
     market:     MarketConfig,
@@ -470,11 +470,11 @@ export class ZillowScraper extends BaseScraper {
     const pageUrl = buildPageUrl(market.baseUrl, market.listingType, pageNumber);
     const slug    = marketSlug(market);
 
-    logger.info(`[zillow] ${market.name} page ${pageNumber} → ${pageUrl}`);
+    logger.info(`[zillow] ${market.name} page ${pageNumber} â†’ ${pageUrl}`);
 
     const html = await oxylabsFetch(pageUrl, this.sessionId);
     if (!html) {
-      logger.warn(`[zillow] No HTML for ${market.name} page ${pageNumber} — stopping market`);
+      logger.warn(`[zillow] No HTML for ${market.name} page ${pageNumber} â€” stopping market`);
       return { listings: [], stop: true };
     }
 
@@ -512,7 +512,7 @@ export class ZillowScraper extends BaseScraper {
     logger.info(
       `[zillow] ${market.name} page ${pageNumber}: ` +
       `${listings.length} listing(s) within ${MAX_DAYS_OLD} days` +
-      (allStale ? " — all stale" : "")
+      (allStale ? " â€” all stale" : "")
     );
 
     const withZestimate = listings.filter(l => (l as any).zestimate != null).length;
@@ -550,7 +550,7 @@ export class ZillowScraper extends BaseScraper {
       const json = extractNextData(html);
       if (!json) return "";
 
-      // ── Save raw __NEXT_DATA__ for inspection ──────────────────────────────
+      // â”€â”€ Save raw __NEXT_DATA__ for inspection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       // Open logs/zillow_detail_nextdata_<n>.json and search for your listing's
       // description text. The correct JSON path will tell you what to update
       // in the extraction below. Look inside props.pageProps at:
@@ -564,7 +564,7 @@ export class ZillowScraper extends BaseScraper {
           fs.mkdirSync(dir, { recursive: true });
           const filename = path.join(dir, `zillow_detail_nextdata_${saveN}.json`);
           fs.writeFileSync(filename, JSON.stringify(json, null, 2), "utf-8");
-          logger.info(`[zillow] Detail __NEXT_DATA__ saved → logs/zillow_detail_nextdata_${saveN}.json`);
+          logger.info(`[zillow] Detail __NEXT_DATA__ saved â†’ logs/zillow_detail_nextdata_${saveN}.json`);
 
           // Also log the immediate keys of pageProps so you can see what
           // top-level buckets are available without opening the file.
@@ -595,7 +595,7 @@ export class ZillowScraper extends BaseScraper {
           logger.warn(`[zillow] Could not save detail __NEXT_DATA__: ${saveErr}`);
         }
       }
-      // ───────────────────────────────────────────────────────────────────────
+      // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
       // Zillow embeds the description in several known locations inside __NEXT_DATA__
       const props = json?.props?.pageProps;

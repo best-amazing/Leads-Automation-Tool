@@ -36,6 +36,7 @@
     "test:facebook-commenter:buyers:dry-run": "node --max-old-space-size=512 -r ./polyfill-file.js -r ts-node/register scripts/test-facebook-commenter.ts --dry-run",
     "test:facebook-commenter:dry-run": "node --max-old-space-size=512 -r ./polyfill-file.js -r ts-node/register scripts/test-facebook-commenter.ts --dry-run --dynamic",
     "scrape:facebook:with-comments": "node --max-old-space-size=512 -r ./polyfill-file.js -r ts-node/register scripts/scrape-and-comment.ts",
+    "session:investorlift": "node -r ts-node/register scripts/export-investorlift-session.ts",
     "scrape:adu-research": "node --max-old-space-size=512 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/run-adu-research.ts"
   },
   "dependencies": {

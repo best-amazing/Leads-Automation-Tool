@@ -87,8 +87,10 @@ const ALIASES: Record<string, string[]> = {
   craigslist: Object.keys(SCRAPER_REGISTRY).filter((k) =>
     k.startsWith("craigslist_"),
   ),
-  // "all" runs every registered scraper
-  all: Object.keys(SCRAPER_REGISTRY),
+  // "all" runs every registered scraper except excluded ones
+  all: Object.keys(SCRAPER_REGISTRY).filter((k) => 
+    !["zillow", "realtor", "redfin", "offmarket", "propwire"].includes(k)
+  ),
 };
 
 /** Expand a source name or alias into concrete registry keys */

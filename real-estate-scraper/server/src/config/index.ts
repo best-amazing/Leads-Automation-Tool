@@ -137,6 +137,36 @@ export const config = {
           baseUrl:     "https://www.zillow.com/wi/",
           listingType: "foreclosure" as const,
         },
+        {
+          name:        "Indiana - Pre-Foreclosure",
+          baseUrl:     "https://www.zillow.com/in/",
+          listingType: "pre_foreclosure" as const,
+        },
+        {
+          name:        "Indiana - Foreclosure (REO)",
+          baseUrl:     "https://www.zillow.com/in/",
+          listingType: "foreclosure" as const,
+        },
+        {
+          name:        "Iowa - Pre-Foreclosure",
+          baseUrl:     "https://www.zillow.com/ia/",
+          listingType: "pre_foreclosure" as const,
+        },
+        {
+          name:        "Iowa - Foreclosure (REO)",
+          baseUrl:     "https://www.zillow.com/ia/",
+          listingType: "foreclosure" as const,
+        },
+        {
+          name:        "Illinois - Pre-Foreclosure",
+          baseUrl:     "https://www.zillow.com/il/",
+          listingType: "pre_foreclosure" as const,
+        },
+        {
+          name:        "Illinois - Foreclosure (REO)",
+          baseUrl:     "https://www.zillow.com/il/",
+          listingType: "foreclosure" as const,
+        },
       ] as Array<{
         name:        string;
         baseUrl:     string;

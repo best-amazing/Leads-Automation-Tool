@@ -72,6 +72,7 @@ const BASE_HEADERS = {
  * --headless=new is explicit to guard against playwright-extra stealth plugin
  * accidentally forcing headed mode via its global chromium patches.
 */
+
 const CHROMIUM_ARGS = [
   "--headless=new",
   "--no-sandbox",
@@ -184,10 +185,10 @@ export class InvestorLiftScraper extends BaseScraper {
       const valid = await this.isSessionValid();
       if (valid) {
         logger.info("[investorlift] Session is valid");
-        return;
+      } else {
+        logger.warn("[investorlift] Session validation failed or timed out — keeping file to try anyway");
       }
-      logger.warn("[investorlift] Session invalid — deleting stale session file");
-      fs.unlinkSync(SESSION_FILE);
+      return;
     } else {
       logger.info("[investorlift] No session file found");
     }
@@ -429,7 +430,11 @@ export class InvestorLiftScraper extends BaseScraper {
 
       try {
         logger.info("[investorlift] Loading marketplace…");
-        await page.goto(MARKETPLACE_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
+        try {
+          await page.goto(MARKETPLACE_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
+        } catch (gotoErr) {
+          logger.warn(`[investorlift] page.goto failed or timed out: ${gotoErr} — continuing anyway`);
+        }
 
         // ── Guard: session expiry / bot detection ────────────────────────
         const landedUrl = page.url();

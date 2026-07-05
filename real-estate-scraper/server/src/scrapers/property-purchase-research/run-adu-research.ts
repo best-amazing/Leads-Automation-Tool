@@ -11,11 +11,14 @@
 import "dotenv/config";
 import { AduResearchScraper } from "./adu-research.scraper";
 import { ZillowAduScraper } from "./zillow-adu.scraper";
-import { RealtorAduScraper } from "./realtor-adu.scraper";
+
 import { logger } from "../../utils/logger";
 import { ADU_KEYWORDS, TARGET_STATES } from "./adu-keywords";
-import { writeAduResults } from "./adu-csv-writer";
+import { writeAduResults, writeCsvOnly } from "./adu-csv-writer";
 import { AduResearchListing } from "./adu-research.parser";
+import { passesKeywordFilter, passesLocationFilter } from "./adu-research.scraper";
+import * as fs from "fs";
+import * as path from "path";
 
 async function main(): Promise<void> {
   logger.info("═".repeat(60));
@@ -27,30 +30,33 @@ async function main(): Promise<void> {
 
   const investorLift = new AduResearchScraper({
     maxPages:    1,        // InvestorLift is single-page
-    maxListings: 10_000,
+    maxListings: 100,
   });
 
   const zillow = new ZillowAduScraper({
-    maxListings: 10_000,
-  });
-
-  const realtor = new RealtorAduScraper({
-    maxListings: 10_000,
+    maxListings: 100,
   });
 
   try {
-    const [ilResults, zillowResults, realtorResults] = await Promise.all([
+    const [ilResults, zillowResults] = await Promise.all([
       investorLift.run(),
-      zillow.run(),
-      realtor.run()
+      zillow.run()
     ]);
 
-    const allResults = [...ilResults, ...zillowResults, ...realtorResults] as AduResearchListing[];
+    const finalResults = [...ilResults, ...zillowResults] as AduResearchListing[];
+
+    try {
+      const DEBUG_DIR = path.resolve("logs");
+      fs.mkdirSync(DEBUG_DIR, { recursive: true });
+      // Removed the intermediate CSV write as the finalResults are now fully filtered
+    } catch (err) {
+      logger.warn(`[runner] Failed to save combined CSV: ${err}`);
+    }
 
     logger.info("═".repeat(60));
-    logger.info(`ADU Research Complete — ${allResults.length} matches found`);
-    if (allResults.length > 0) {
-      const { csvPath, jsonPath } = writeAduResults(allResults);
+    logger.info(`ADU Research Complete — ${finalResults.length} matches found`);
+    if (finalResults.length > 0) {
+      const { csvPath, jsonPath } = writeAduResults(finalResults);
       logger.info(`Output: ${csvPath} + ${jsonPath}`);
     }
     logger.info("═".repeat(60));

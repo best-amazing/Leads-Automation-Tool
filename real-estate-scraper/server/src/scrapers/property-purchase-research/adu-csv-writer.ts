@@ -98,3 +98,27 @@ export function writeAduResults(
 
   return { csvPath, jsonPath };
 }
+
+export function writeCsvOnly(
+  listings: AduResearchListing[],
+  csvPath: string
+): void {
+  const headerRow = CSV_COLUMNS.map((c) => c.header).join(",");
+  const dataRows = listings.map((listing) => {
+    return CSV_COLUMNS.map((col) => {
+      if (col.field === "descriptionPreview") {
+        const desc = listing.description ?? "";
+        return csvEscape(desc.slice(0, 200));
+      }
+      if (col.field === "price") {
+        return listing.price != null ? `$${listing.price.toLocaleString()}` : "";
+      }
+      const value = (listing as any)[col.field];
+      return csvEscape(value);
+    }).join(",");
+  });
+
+  const csvContent = [headerRow, ...dataRows].join("\n");
+  fs.writeFileSync(csvPath, csvContent, "utf-8");
+  logger.info(`[adu-research] CSV written: ${csvPath} (${listings.length} rows)`);
+}
