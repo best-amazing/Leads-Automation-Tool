@@ -37,7 +37,7 @@
     "test:facebook-commenter:dry-run": "node --max-old-space-size=512 -r ./polyfill-file.js -r ts-node/register scripts/test-facebook-commenter.ts --dry-run --dynamic",
     "scrape:facebook:with-comments": "node --max-old-space-size=512 -r ./polyfill-file.js -r ts-node/register scripts/scrape-and-comment.ts",
     "session:investorlift": "node -r ts-node/register scripts/export-investorlift-session.ts",
-    "scrape:adu-research": "node --max-old-space-size=512 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/run-adu-research.ts"
+    "scrape:adu-research": "node --max-old-space-size=2048 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/run-adu-research.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.13.0",
@@ -47,6 +47,7 @@
     "dotenv": "^16.6.1",
     "express": "^4.22.1",
     "fetch-blob": "^4.0.0",
+    "googleapis": "^173.0.0",
     "https-proxy-agent": "^5.0.1",
     "p-limit": "^5.0.0",
     "p-retry": "^6.2.0",

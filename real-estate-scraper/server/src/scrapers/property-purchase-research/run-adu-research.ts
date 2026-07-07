@@ -19,6 +19,7 @@ import { AduResearchListing } from "./adu-research.parser";
 import { passesKeywordFilter, passesLocationFilter } from "./adu-research.scraper";
 import * as fs from "fs";
 import * as path from "path";
+import { writeAduResearchToSheets } from "../../utils/google-sheets";
 
 async function main(): Promise<void> {
   logger.info("═".repeat(60));
@@ -58,6 +59,7 @@ async function main(): Promise<void> {
     if (finalResults.length > 0) {
       const { csvPath, jsonPath } = writeAduResults(finalResults);
       logger.info(`Output: ${csvPath} + ${jsonPath}`);
+      await writeAduResearchToSheets(finalResults);
     }
     logger.info("═".repeat(60));
 

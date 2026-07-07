@@ -53,8 +53,8 @@ export class ZillowAduScraper extends ZillowScraper {
 
         let pageListings: RawListing[] = [];
         try {
-          // Call the protected scrapeMarketPage from the parent class
-          const result = await (this as any).scrapeMarketPage(market, page);
+          // Call the protected scrapeMarketPage from the parent class, bypassing price filter
+          const result = await (this as any).scrapeMarketPage(market, page, true);
           pageListings = result.listings;
           if (result.stop) stopPaging = true;
         } catch (err) {
@@ -127,6 +127,13 @@ export class ZillowAduScraper extends ZillowScraper {
             logger.warn(`[${this.sourceName}] Failed to fetch detail for ${rawListing.url}: ${err}`);
           }
 
+          // Extract zip from address
+          let zip: string | undefined;
+          if (rawListing.address) {
+            const match = rawListing.address.match(/\b\d{5}(-\d{4})?\b/);
+            if (match) zip = match[0];
+          }
+
           const enriched: AduResearchListing = {
             ...rawListing,
             description,
@@ -134,7 +141,8 @@ export class ZillowAduScraper extends ZillowScraper {
             totalBedrooms: rawListing.bedrooms, // Fallback to main bed count
             units,
             yearBuilt,
-            schoolRating
+            schoolRating,
+            zip
           } as AduResearchListing;
 
           // Now filter by keywords

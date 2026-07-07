@@ -29,11 +29,19 @@ export class RealtorAduScraper extends RealtorScraper {
         haystack.includes(kw.toLowerCase())
       );
 
+      // Extract zip from address
+      let zip: string | undefined;
+      if (listing.address) {
+        const match = listing.address.match(/\b\d{5}(-\d{4})?\b/);
+        if (match) zip = match[0];
+      }
+
       return {
         ...listing,
         source: this.sourceName,
         totalBedrooms: listing.bedrooms, // Fallback to main bed count
         matchedKeyword,
+        zip,
       } as AduResearchListing;
     });
 

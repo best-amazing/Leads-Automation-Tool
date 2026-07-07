@@ -80,12 +80,12 @@ interface MarketConfig {
 function buildPageUrl(
   baseUrl:     string,
   listingType: OffMarketType,
-  pageNumber:  number
+  pageNumber:  number,
+  ignorePriceFilter: boolean = false
 ): string {
   const [basePath] = baseUrl.split("?");
 
   const filterState: Record<string, any> = {
-    price: { max: config.filter.maxPrice },
     // Disable every on-market listing type
     fsba: { value: false },
     fsbo: { value: false },
@@ -96,6 +96,10 @@ function buildPageUrl(
     fore: { value: listingType === "foreclosure" },
     pf:   { value: listingType === "pre_foreclosure" },
   };
+
+  if (!ignorePriceFilter) {
+    filterState.price = { max: config.filter.maxPrice };
+  }
 
   const state: Record<string, any> = {
     filterState,
@@ -462,12 +466,13 @@ export class ZillowScraper extends BaseScraper {
 
   // ── scrapeMarketPage ──────────────────────────────────────────────────────
 
-  private async scrapeMarketPage(
+  protected async scrapeMarketPage(
     market:     MarketConfig,
-    pageNumber: number
+    pageNumber: number,
+    ignorePriceFilter: boolean = false
   ): Promise<{ listings: RawListing[]; stop: boolean }> {
 
-    const pageUrl = buildPageUrl(market.baseUrl, market.listingType, pageNumber);
+    const pageUrl = buildPageUrl(market.baseUrl, market.listingType, pageNumber, ignorePriceFilter);
     const slug    = marketSlug(market);
 
     logger.info(`[zillow] ${market.name} page ${pageNumber} → ${pageUrl}`);

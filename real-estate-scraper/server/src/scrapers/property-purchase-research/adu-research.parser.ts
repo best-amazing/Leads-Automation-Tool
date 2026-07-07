@@ -28,6 +28,8 @@ export interface AduResearchListing extends RawListing {
   schoolRating?: string;
   /** Which ADU keyword triggered the match — for QA */
   matchedKeyword?: string;
+  /** Zip code of the property */
+  zip?: string;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -171,9 +173,10 @@ export function mapAduItems(
           schoolRating: item.school_rating ?? undefined,
           matchedKeyword,
 
-          // Location fields for filtering
+           // Location fields for filtering
           city: item.city ?? undefined,
           state: item.state_code ?? undefined,
+          zip: item.zip ?? undefined,
         };
       } catch {
         return null;
@@ -197,6 +200,20 @@ export function parseAduApiResponse(
 
   if (typeof json === "object" && !Array.isArray(json)) {
     const raw = json as Record<string, unknown>;
+
+    // Columnar format envelope shape (InvestorLift often returns this)
+    if (Array.isArray(raw.columns) && Array.isArray(raw.data)) {
+      const columns = raw.columns as string[];
+      const rows = raw.data as any[][];
+      const objects = rows.map(row => {
+        const obj: any = {};
+        columns.forEach((col, idx) => {
+          obj[col] = row[idx];
+        });
+        return obj;
+      });
+      return mapAduItems(objects, source);
+    }
 
     // Object array envelope shapes
     if (Array.isArray(raw.data)) {
