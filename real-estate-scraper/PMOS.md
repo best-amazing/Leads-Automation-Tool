@@ -2,6 +2,7 @@
 
 **Version:** 1.0  
 **Date:** June 2026  
+**Timeline:** 2 weeks  
 **Owner:** AB Investments  
 **Status:** Draft
 
@@ -22,7 +23,7 @@ The system is a multi-pipeline Kanban board with per-ticket checklists, comments
 - Surface SLA breaches before they become problems, not after.
 - Give the admin a complete audit trail for every ticket without requiring manual note-taking.
 
----
+--- 
 
 ## 3. Non-goals
 
@@ -257,9 +258,9 @@ The backend exposes a REST API at `/api`. All routes except `POST /api/auth/logi
 
 | Layer      | Choice                  |
 |------------|-------------------------|
-| Language   | Go 1.22                 |
-| Framework  | Fiber v2                |
-| ORM        | Ent                     |
+| Language   | TypeScript              |
+| Framework  | Node.js with Express    |
+| ORM        | Prisma                  |
 | Database   | PostgreSQL 16           |
 | Auth       | JWT HS256, bcrypt       |
 | Frontend   | Existing HTML/JS static |

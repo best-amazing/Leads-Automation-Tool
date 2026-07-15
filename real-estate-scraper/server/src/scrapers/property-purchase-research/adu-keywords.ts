@@ -20,6 +20,7 @@ export const ADU_KEYWORDS = [
   "second home",
   "second house",
   "package",
+  "unit",
   "ADU",
   "add-on unit",
   "in-law",
@@ -41,9 +42,15 @@ export const ADU_KEYWORDS = [
   "in one lot",
   "in one parcel",
   "carriage",
+  "First house",
+  "First residence",
+  "First home",
+  "Primary house",
+  "primary home",
+  "Primary residence",
 ];
 
 /**
  * US state abbreviations to filter listings by geography.
  */
-export const TARGET_STATES = ["OH", "IN", "WI", "IA", "IL"];
+export const TARGET_STATES = ["OH"];

@@ -55,7 +55,7 @@ const MAX_DETAIL_SAVES   = 3;       // how many detail-page __NEXT_DATA__ files 
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type OffMarketType = "pre_foreclosure" | "foreclosure";
+export type OffMarketType = "pre_foreclosure" | "foreclosure" | "active";
 
 interface MarketConfig {
   name:        string;
@@ -86,12 +86,12 @@ function buildPageUrl(
   const [basePath] = baseUrl.split("?");
 
   const filterState: Record<string, any> = {
-    // Disable every on-market listing type
-    fsba: { value: false },
-    fsbo: { value: false },
-    nc:   { value: false },
-    cmsn: { value: false },
-    auc:  { value: false },
+    // Disable on-market listing types unless active is requested
+    fsba: { value: listingType === "active" },
+    fsbo: { value: listingType === "active" },
+    nc:   { value: false }, // new construction
+    cmsn: { value: false }, // coming soon
+    auc:  { value: false }, // auctions
     // Enable exactly the requested off-market type
     fore: { value: listingType === "foreclosure" },
     pf:   { value: listingType === "pre_foreclosure" },

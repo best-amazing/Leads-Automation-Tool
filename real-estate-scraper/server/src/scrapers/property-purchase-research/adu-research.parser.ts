@@ -142,9 +142,10 @@ export function mapAduItems(
         const haystack = [item.title, description, address]
           .join(" ")
           .toLowerCase();
-        const matchedKeyword = ADU_KEYWORDS.find((kw) =>
-          haystack.includes(kw.toLowerCase()),
-        );
+        const matchedKeyword = ADU_KEYWORDS.find((kw) => {
+          const regex = new RegExp(`\\b${kw}\\b`, 'i');
+          return regex.test(haystack);
+        });
 
         return {
           source,

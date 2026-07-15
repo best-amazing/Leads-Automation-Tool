@@ -21,6 +21,8 @@ export interface ScraperOptions {
   proxyUrl?: string | null;
   /** Override headless mode for this specific scraper (default: true) */
   headless?: boolean;
+  /** Callback fired immediately when a match is found (for incremental writing) */
+  onMatch?: (listing: any) => Promise<void>;
 }
 
 export abstract class BaseScraper {
@@ -37,7 +39,8 @@ export abstract class BaseScraper {
       maxListings: options.maxListings ?? config.maxListings,
       proxyUrl: options.proxyUrl !== undefined ? options.proxyUrl : null,
       headless: options.headless !== undefined ? options.headless : true,
-    };
+      onMatch: options.onMatch,
+    } as Required<ScraperOptions>;
   }
 
   protected headless: boolean = true;

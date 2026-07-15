@@ -21,7 +21,7 @@ const CSV_COLUMNS = [
   { header: "High School Rating",  field: "schoolRating" },
   { header: "Matched Keyword",     field: "matchedKeyword" },
   { header: "Source URL",          field: "url" },
-  { header: "Description Preview", field: "descriptionPreview" },
+  { header: "Description", field: "description" },
 ] as const;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -55,10 +55,8 @@ export function writeAduResults(
   const headerRow = CSV_COLUMNS.map((c) => c.header).join(",");
   const dataRows = listings.map((listing) => {
     return CSV_COLUMNS.map((col) => {
-      if (col.field === "descriptionPreview") {
-        // Truncate description for CSV readability
-        const desc = listing.description ?? "";
-        return csvEscape(desc.slice(0, 200));
+      if (col.field === "description") {
+        return csvEscape(listing.description ?? "");
       }
       if (col.field === "price") {
         return listing.price != null ? `$${listing.price.toLocaleString()}` : "";
@@ -106,9 +104,8 @@ export function writeCsvOnly(
   const headerRow = CSV_COLUMNS.map((c) => c.header).join(",");
   const dataRows = listings.map((listing) => {
     return CSV_COLUMNS.map((col) => {
-      if (col.field === "descriptionPreview") {
-        const desc = listing.description ?? "";
-        return csvEscape(desc.slice(0, 200));
+      if (col.field === "description") {
+        return csvEscape(listing.description ?? "");
       }
       if (col.field === "price") {
         return listing.price != null ? `$${listing.price.toLocaleString()}` : "";
@@ -121,4 +118,62 @@ export function writeCsvOnly(
   const csvContent = [headerRow, ...dataRows].join("\n");
   fs.writeFileSync(csvPath, csvContent, "utf-8");
   logger.info(`[adu-research] CSV written: ${csvPath} (${listings.length} rows)`);
+}
+
+export function appendAduResult(
+  listing: AduResearchListing,
+  outputDir: string = path.join(process.cwd(), "logs"),
+): void {
+  fs.mkdirSync(outputDir, { recursive: true });
+
+  const csvPath  = path.join(outputDir, "adu-research.csv");
+  const jsonPath = path.join(outputDir, "adu-research.json");
+
+  // ── Append to CSV ────────────────────────────────────────────────────────
+
+  if (!fs.existsSync(csvPath)) {
+    const headerRow = CSV_COLUMNS.map((c) => c.header).join(",");
+    fs.writeFileSync(csvPath, headerRow + "\n", "utf-8");
+  }
+
+  const dataRow = CSV_COLUMNS.map((col) => {
+    if (col.field === "description") {
+      return csvEscape(listing.description ?? "");
+    }
+    if (col.field === "price") {
+      return listing.price != null ? `$${listing.price.toLocaleString()}` : "";
+    }
+    const value = (listing as any)[col.field];
+    return csvEscape(value);
+  }).join(",");
+
+  fs.appendFileSync(csvPath, dataRow + "\n", "utf-8");
+
+  // ── Append to JSON ───────────────────────────────────────────────────────
+
+  let jsonPayload = { generatedAt: new Date().toISOString(), totalMatches: 0, listings: [] as any[] };
+  if (fs.existsSync(jsonPath)) {
+    try {
+      jsonPayload = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
+    } catch {}
+  }
+
+  jsonPayload.listings.push({
+    address:        listing.address,
+    price:          listing.price,
+    units:          listing.units,
+    bedrooms:       listing.bedrooms,
+    totalBedrooms:  listing.totalBedrooms,
+    yearBuilt:      listing.yearBuilt,
+    schoolRating:   listing.schoolRating,
+    matchedKeyword: listing.matchedKeyword,
+    url:            listing.url,
+    description:    listing.description,
+    city:           listing.city,
+    state:          listing.state,
+  });
+  jsonPayload.totalMatches = jsonPayload.listings.length;
+  jsonPayload.generatedAt = new Date().toISOString();
+
+  fs.writeFileSync(jsonPath, JSON.stringify(jsonPayload, null, 2), "utf-8");
 }

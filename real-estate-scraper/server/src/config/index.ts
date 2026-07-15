@@ -118,59 +118,14 @@ export const config = {
     zillow: {
       markets: [
         {
-          name:        "Ohio - Pre-Foreclosure",
+          name:        "Ohio - Active",
           baseUrl:     "https://www.zillow.com/oh/",
-          listingType: "pre_foreclosure" as const,
-        },
-        {
-          name:        "Ohio - Foreclosure (REO)",
-          baseUrl:     "https://www.zillow.com/oh/",
-          listingType: "foreclosure" as const,
-        },
-        {
-          name:        "Wisconsin - Pre-Foreclosure",
-          baseUrl:     "https://www.zillow.com/wi/",
-          listingType: "pre_foreclosure" as const,
-        },
-        {
-          name:        "Wisconsin - Foreclosure (REO)",
-          baseUrl:     "https://www.zillow.com/wi/",
-          listingType: "foreclosure" as const,
-        },
-        {
-          name:        "Indiana - Pre-Foreclosure",
-          baseUrl:     "https://www.zillow.com/in/",
-          listingType: "pre_foreclosure" as const,
-        },
-        {
-          name:        "Indiana - Foreclosure (REO)",
-          baseUrl:     "https://www.zillow.com/in/",
-          listingType: "foreclosure" as const,
-        },
-        {
-          name:        "Iowa - Pre-Foreclosure",
-          baseUrl:     "https://www.zillow.com/ia/",
-          listingType: "pre_foreclosure" as const,
-        },
-        {
-          name:        "Iowa - Foreclosure (REO)",
-          baseUrl:     "https://www.zillow.com/ia/",
-          listingType: "foreclosure" as const,
-        },
-        {
-          name:        "Illinois - Pre-Foreclosure",
-          baseUrl:     "https://www.zillow.com/il/",
-          listingType: "pre_foreclosure" as const,
-        },
-        {
-          name:        "Illinois - Foreclosure (REO)",
-          baseUrl:     "https://www.zillow.com/il/",
-          listingType: "foreclosure" as const,
+          listingType: "active" as const,
         },
       ] as Array<{
         name:        string;
         baseUrl:     string;
-        listingType: "pre_foreclosure" | "foreclosure";
+        listingType: "active" | "pre_foreclosure" | "foreclosure";
       }>,
 
       maxPagesPerMarket: Number(process.env.ZILLOW_MAX_PAGES    ?? 20),

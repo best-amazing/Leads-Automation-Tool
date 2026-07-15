@@ -14,12 +14,21 @@ import { ZillowAduScraper } from "./zillow-adu.scraper";
 
 import { logger } from "../../utils/logger";
 import { ADU_KEYWORDS, TARGET_STATES } from "./adu-keywords";
-import { writeAduResults, writeCsvOnly } from "./adu-csv-writer";
+import { appendAduResult, writeAduResults, writeCsvOnly } from "./adu-csv-writer";
 import { AduResearchListing } from "./adu-research.parser";
 import { passesKeywordFilter, passesLocationFilter } from "./adu-research.scraper";
 import * as fs from "fs";
 import * as path from "path";
 import { writeAduResearchToSheets } from "../../utils/google-sheets";
+
+let capturedCount = 0;
+
+async function handleMatch(listing: AduResearchListing) {
+  capturedCount++;
+  logger.info(`[runner] Immediate write for match #${capturedCount}: ${listing.address || listing.url}`);
+  appendAduResult(listing);
+  await writeAduResearchToSheets([listing]);
+}
 
 async function main(): Promise<void> {
   logger.info("═".repeat(60));
@@ -31,18 +40,24 @@ async function main(): Promise<void> {
 
   const investorLift = new AduResearchScraper({
     maxPages:    1,        // InvestorLift is single-page
-    maxListings: 100,
+    maxListings: 500,
+    onMatch: handleMatch,
   });
 
   const zillow = new ZillowAduScraper({
-    maxListings: 100,
+    maxListings: 500,
+    onMatch: handleMatch,
   });
 
   try {
-    const [ilResults, zillowResults] = await Promise.all([
-      investorLift.run(),
-      zillow.run()
-    ]);
+    // Run sequentially to avoid OOM — each scraper holds large HTML/JSON
+    // payloads in memory, running both concurrently exceeds the heap limit.
+    const ilResults     = await investorLift.run();
+    if (global.gc) global.gc();
+    logger.info(`Memory after investorLift: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
+    const zillowResults = await zillow.run();
+    if (global.gc) global.gc();
+    logger.info(`Memory after zillow: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
 
     const finalResults = [...ilResults, ...zillowResults] as AduResearchListing[];
 
@@ -57,9 +72,7 @@ async function main(): Promise<void> {
     logger.info("═".repeat(60));
     logger.info(`ADU Research Complete — ${finalResults.length} matches found`);
     if (finalResults.length > 0) {
-      const { csvPath, jsonPath } = writeAduResults(finalResults);
-      logger.info(`Output: ${csvPath} + ${jsonPath}`);
-      await writeAduResearchToSheets(finalResults);
+      logger.info(`Outputs incrementally streamed to CSV, JSON, and Google Sheets`);
     }
     logger.info("═".repeat(60));
 

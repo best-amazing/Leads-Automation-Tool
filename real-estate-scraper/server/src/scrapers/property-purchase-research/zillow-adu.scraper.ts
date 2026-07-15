@@ -9,6 +9,7 @@ import {
   passesAduFilter,
   passesLocationFilter,
   passesKeywordFilter,
+  passesPropertyCriteria,
 }                                from "./adu-research.scraper";
 import { logger }                from "../../utils/logger";
 import { ADU_KEYWORDS }          from "./adu-keywords";
@@ -86,10 +87,11 @@ export class ZillowAduScraper extends ZillowScraper {
           let schoolRating: string | undefined;
 
           try {
-            const html = await (this as any).oxylabsFetch?.(rawListing.url, (this as any).sessionId) || await import("../zillow/zillow.scraper").then(m => m.oxylabsFetch(rawListing.url!, (this as any).sessionId));
+            let html: string | null = await (this as any).oxylabsFetch?.(rawListing.url, (this as any).sessionId) || await import("../zillow/zillow.scraper").then(m => m.oxylabsFetch(rawListing.url!, (this as any).sessionId));
             if (html) {
               const { extractNextData } = await import("../zillow/zillow.scraper");
               const json = extractNextData(html);
+              html = null; // Release ~1-2 MB HTML string for GC
               if (json) {
                 const props = json?.props?.pageProps;
                 
@@ -145,14 +147,25 @@ export class ZillowAduScraper extends ZillowScraper {
             zip
           } as AduResearchListing;
 
+          // Apply strict criteria
+          if (!passesPropertyCriteria(enriched)) {
+             continue;
+          }
+
           // Now filter by keywords
           const haystack = [enriched.title, enriched.description, enriched.address].join(" ").toLowerCase();
-          const matchedKeyword = ADU_KEYWORDS.find((kw) => haystack.includes(kw.toLowerCase()));
+          const matchedKeyword = ADU_KEYWORDS.find((kw) => {
+            const regex = new RegExp(`\\b${kw}\\b`, 'i');
+            return regex.test(haystack);
+          });
           
           if (matchedKeyword) {
              enriched.matchedKeyword = matchedKeyword;
              this.results.push(enriched);
              logger.info(`[${this.sourceName}] ✓ MATCHED ADU KEYWORD: ${matchedKeyword}`);
+             if (this.options.onMatch) {
+               await this.options.onMatch(enriched);
+             }
           }
 
           await sleep(jitter(BETWEEN_DETAIL_MS));
@@ -163,6 +176,8 @@ export class ZillowAduScraper extends ZillowScraper {
           break;
         }
       }
+      if (global.gc) global.gc();
+      logger.info(`[${this.sourceName}] Memory after ${market.name}: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
     }
     
     return this.results;

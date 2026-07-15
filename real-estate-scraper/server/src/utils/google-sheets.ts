@@ -3,6 +3,9 @@ import * as fs from "fs";
 import { logger } from "./logger";
 import { AduResearchListing } from "../scrapers/property-purchase-research/adu-research.parser";
 
+let cachedExistingLinks: Set<string> | null = null;
+let cachedHasHeaders = false;
+
 function getServiceAccountPath(): string {
   let p = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH || "";
   // Fix WSL path for Windows
@@ -23,7 +26,7 @@ export async function writeAduResearchToSheets(
     return;
   }
 
-  const sheetName = "property research";
+  const sheetName = "property research tool";
   const keyPath = getServiceAccountPath();
 
   if (!fs.existsSync(keyPath)) {
@@ -69,8 +72,6 @@ export async function writeAduResearchToSheets(
       "Source",
       "Title",
       "Address",
-      "City",
-      "State",
       "Zip",
       "Price",
       "Beds",
@@ -82,7 +83,7 @@ export async function writeAduResearchToSheets(
       "School Rating",
       "Matched Keyword",
       "Link",
-      "Description Preview",
+      "Description",
     ];
 
     const rows = listings.map((l) => {
@@ -94,8 +95,6 @@ export async function writeAduResearchToSheets(
         l.source || "",
         l.title || "",
         l.address || "",
-        l.city || "",
-        l.state || "",
         l.zip || "",
         l.price ? `$${l.price.toLocaleString()}` : "",
         l.bedrooms || "",
@@ -107,20 +106,57 @@ export async function writeAduResearchToSheets(
         l.schoolRating || "",
         matchedKw,
         l.url || "",
-        l.description ? l.description.substring(0, 150).replace(/\n/g, " ") : "",
+        l.description ? l.description.replace(/\n/g, " ") : "",
       ];
     });
 
-    // Check if headers already exist
-    const getRes = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: `${sheetName}!A1:Z1`,
+    // Cache existing links to avoid fetching entire sheet on every match
+    if (!cachedExistingLinks) {
+      cachedExistingLinks = new Set<string>();
+      
+      try {
+        const getRes = await sheets.spreadsheets.values.get({
+          spreadsheetId,
+          range: `${sheetName}!A:Z`,
+        });
+        
+        const existingRows = getRes.data.values || [];
+        cachedHasHeaders = existingRows.length > 0;
+        
+        if (cachedHasHeaders) {
+          const headerRow = existingRows[0];
+          let linkIndex = headerRow.indexOf("Link");
+          if (linkIndex === -1) linkIndex = 14; // fallback to index 14
+          
+          for (let i = 1; i < existingRows.length; i++) {
+            const row = existingRows[i];
+            if (row && row[linkIndex]) {
+              cachedExistingLinks.add(row[linkIndex]);
+            }
+          }
+        }
+      } catch (err) {
+        // If sheet doesn't exist yet, get() might throw, which is fine
+        cachedHasHeaders = false;
+      }
+    }
+
+    const newRows = rows.filter((row) => {
+      const link = row[14];
+      if (link && cachedExistingLinks?.has(link)) {
+        return false;
+      }
+      return true;
     });
 
-    const hasHeaders = getRes.data.values && getRes.data.values.length > 0;
-    const dataToAppend = hasHeaders ? rows : [headers, ...rows];
+    if (newRows.length === 0) {
+      logger.info(`[sheets] All ${listings.length} listings already exist in Google Sheets. Skipping append.`);
+      return;
+    }
 
-    logger.info(`[sheets] Appending ${listings.length} rows to "${sheetName}"...`);
+    const dataToAppend = cachedHasHeaders ? newRows : [headers, ...newRows];
+
+    logger.info(`[sheets] Appending ${newRows.length} new rows to "${sheetName}" (skipped ${listings.length - newRows.length} duplicates)...`);
     await sheets.spreadsheets.values.append({
       spreadsheetId,
       range: `${sheetName}!A1`,
@@ -129,6 +165,14 @@ export async function writeAduResearchToSheets(
         values: dataToAppend,
       },
     });
+
+    // Update caches
+    cachedHasHeaders = true;
+    for (const row of newRows) {
+      if (row[14]) {
+        cachedExistingLinks.add(row[14]);
+      }
+    }
 
     logger.info(`[sheets] Successfully wrote to Google Sheets!`);
   } catch (error: any) {

@@ -25,9 +25,10 @@ export class RealtorAduScraper extends RealtorScraper {
           .join(" ")
           .toLowerCase();
       
-      const matchedKeyword = ADU_KEYWORDS.find((kw) =>
-        haystack.includes(kw.toLowerCase())
-      );
+      const matchedKeyword = ADU_KEYWORDS.find((kw) => {
+        const regex = new RegExp(`\\b${kw}\\b`, 'i');
+        return regex.test(haystack);
+      });
 
       // Extract zip from address
       let zip: string | undefined;

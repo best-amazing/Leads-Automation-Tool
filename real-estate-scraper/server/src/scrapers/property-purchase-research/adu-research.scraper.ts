@@ -4,7 +4,7 @@
 //
 // Extends the existing InvestorLiftScraper to:
 //   1. Replace price/location passesFilter() with keyword-based ADU matching
-//   2. Match listings across target states (OH, IN, WI, IA, IL)
+//   2. Match listings in Ohio (OH)
 //   3. Capture extended fields (description, units, yearBuilt, schoolRating)
 //   4. Output results to CSV + JSON instead of the database
 //
@@ -32,16 +32,16 @@ import {
 
 // ── Constants (reuse from InvestorLift) ────────────────────────────────────
 
-const MARKETPLACE_URL    = "https://investorlift.com/marketplace/";
+const MARKETPLACE_URL = "https://investorlift.com/marketplace/";
 const PROPERTIES_API_URL = "https://investorlift.com/marketplace/api/customer/api/properties";
 const ADDRESS_INQUIRY_URL = "https://investorlift.com/marketplace/api/customer/api/inquiry";
 
 const ADDRESS_LIMIT_SENTINEL = "You have reached the daily address request limit";
-const ADDRESS_FETCH_LIMIT    = 5;
-const ADDRESS_REQUEST_DELAY  = 800;
+const ADDRESS_FETCH_LIMIT = 5;
+const ADDRESS_REQUEST_DELAY = 800;
 
 const SESSION_FILE = path.join(__dirname, "../../..", "investorlift-session.json");
-const DEBUG_DIR    = path.resolve("logs");
+const DEBUG_DIR = path.resolve("logs");
 
 // How many raw XHR payloads to save for inspection (avoids disk spam if there are many requests)
 const MAX_RAW_SAVES = 3;
@@ -52,8 +52,8 @@ const USER_AGENT =
 
 const BASE_HEADERS = {
   "User-Agent": USER_AGENT,
-  "Origin":     "https://investorlift.com",
-  "Referer":    "https://investorlift.com/marketplace/",
+  "Origin": "https://investorlift.com",
+  "Referer": "https://investorlift.com/marketplace/",
 };
 
 const CHROMIUM_ARGS = [
@@ -92,12 +92,14 @@ function extractListingId(url: string | undefined): string | undefined {
 
 // Counter for diagnostic logging (reset per run)
 let _locationDiagCount = 0;
-let _keywordDiagCount  = 0;
+let _keywordDiagCount = 0;
+let _criteriaDiagCount = 0;
 
 /** Reset diagnostic counters — call at the start of each run */
 export function resetDiagCounters(): void {
   _locationDiagCount = 0;
-  _keywordDiagCount  = 0;
+  _keywordDiagCount = 0;
+  _criteriaDiagCount = 0;
 }
 
 /**
@@ -106,11 +108,13 @@ export function resetDiagCounters(): void {
  */
 export function passesLocationFilter(listing: AduResearchListing): boolean {
   const addressUpper = (listing.address ?? "").toUpperCase();
-  const stateUpper   = (listing.state   ?? "").toUpperCase();
+  const stateUpper = (listing.state ?? "").toUpperCase();
 
-  const matchedState = TARGET_STATES.find((s) =>
-    addressUpper.includes(`, ${s}`) || stateUpper === s
-  );
+  const matchedState = TARGET_STATES.find((s) => {
+    if (stateUpper === s) return true;
+    const regex = new RegExp(`\\b${s}\\b`);
+    return regex.test(addressUpper);
+  });
 
   const passed = !!matchedState;
 
@@ -135,17 +139,18 @@ export function passesLocationFilter(listing: AduResearchListing): boolean {
  * Logs diagnostic details for the first N listings.
  */
 export function passesKeywordFilter(listing: AduResearchListing): boolean {
-  const titlePart       = listing.title       ?? "";
+  const titlePart = listing.title ?? "";
   const descriptionPart = listing.description ?? "";
-  const addressPart     = listing.address     ?? "";
+  const addressPart = listing.address ?? "";
 
   const haystack = [titlePart, descriptionPart, addressPart]
     .join(" ")
     .toLowerCase();
 
-  const matchedKeyword = ADU_KEYWORDS.find((kw) =>
-    haystack.includes(kw.toLowerCase()),
-  );
+  const matchedKeyword = ADU_KEYWORDS.find((kw) => {
+    const regex = new RegExp(`\\b${kw}\\b`, 'i');
+    return regex.test(haystack);
+  });
 
   const passed = !!matchedKeyword;
 
@@ -168,12 +173,87 @@ export function passesKeywordFilter(listing: AduResearchListing): boolean {
 }
 
 /**
- * Combined filter: location + keyword (backward compatible).
- * Use passesLocationFilter + passesKeywordFilter separately when
+ * Stage 3: Check strict property criteria (Price, Beds, Baths, Year, HOA, etc.)
+ */
+export function passesPropertyCriteria(listing: AduResearchListing): boolean {
+  let passed = true;
+  let failReason = "";
+
+  // 1. Price <= $600,000
+  if (listing.price != null && listing.price > 600000) {
+    passed = false;
+    failReason = `price > 600k (${listing.price})`;
+  }
+  // 2. Bedrooms >= 3
+  else if (listing.bedrooms != null && listing.bedrooms < 3) {
+    passed = false;
+    failReason = `bedrooms < 3 (${listing.bedrooms})`;
+  }
+  // 3. Bathrooms >= 2
+  else if (listing.bathrooms != null && listing.bathrooms < 2) {
+    passed = false;
+    failReason = `bathrooms < 2 (${listing.bathrooms})`;
+  }
+  // 4. Year Built >= 1950
+  else if (listing.yearBuilt != null && listing.yearBuilt < 1950) {
+    passed = false;
+    failReason = `year built < 1950 (${listing.yearBuilt})`;
+  }
+  // 5. Exclude HOA, 55+, New Construction, Auctions, Foreclosures, Short Sales
+  else {
+    const haystack = [listing.title, listing.description, listing.address].join(" ").toLowerCase();
+
+    if (haystack.includes("condo") || haystack.includes("townhouse") || haystack.includes("townhome")) {
+      passed = false;
+      failReason = "property type (condo/townhome)";
+    }
+    else if (haystack.includes("hoa") || haystack.includes("homeowners association") || haystack.includes("home owner association") || haystack.includes("home owner's association")) {
+      passed = false;
+      failReason = "has HOA";
+    }
+    else if (haystack.includes("55+") || haystack.includes("55 and older") || haystack.includes("active adult") || haystack.includes("senior community")) {
+      passed = false;
+      failReason = "55+ community";
+    }
+    else if (haystack.includes("new construction") || haystack.includes("to be built") || haystack.includes("under construction") || haystack.includes("pre-construction")) {
+      passed = false;
+      failReason = "new construction";
+    }
+    else if (haystack.includes("auction")) {
+      passed = false;
+      failReason = "auction";
+    }
+    else if (haystack.includes("foreclosure") || haystack.includes("reo ") || haystack.includes("bank owned")) {
+      passed = false;
+      failReason = "foreclosure";
+    }
+    else if (haystack.includes("short sale")) {
+      passed = false;
+      failReason = "short sale";
+    }
+  }
+
+  // Diagnostic logging for first N listings
+  if (_criteriaDiagCount < DIAGNOSTIC_LOG_LIMIT) {
+    _criteriaDiagCount++;
+    logger.info(
+      `[adu-filter] CRITERIA [${_criteriaDiagCount}] ` +
+      `${passed ? "✓ PASS" : "✗ FAIL"} | ` +
+      `reason="${failReason}" | ` +
+      `price=${listing.price} beds=${listing.bedrooms} baths=${listing.bathrooms} year=${listing.yearBuilt}`
+    );
+  }
+
+  return passed;
+}
+
+/**
+ * Combined filter: location + criteria + keyword (backward compatible).
+ * Use passesLocationFilter + passesPropertyCriteria + passesKeywordFilter separately when
  * you need to inspect the intermediate set.
  */
 export function passesAduFilter(listing: AduResearchListing): boolean {
-  return passesLocationFilter(listing) && passesKeywordFilter(listing);
+  return passesLocationFilter(listing) && passesPropertyCriteria(listing) && passesKeywordFilter(listing);
 }
 
 // ── Scraper ──────────────────────────────────────────────────────────────────
@@ -230,7 +310,7 @@ export class AduResearchScraper extends BaseScraper {
     try {
       const context = await browser.newContext({
         storageState: SESSION_FILE,
-        userAgent:    USER_AGENT,
+        userAgent: USER_AGENT,
       });
       const page = await context.newPage();
       try {
@@ -242,7 +322,7 @@ export class AduResearchScraper extends BaseScraper {
 
         const result = await page.evaluate(async (url: string) => {
           try {
-            const r    = await fetch(url, { credentials: "include" });
+            const r = await fetch(url, { credentials: "include" });
             const body = await r.json().catch(() => null);
             return { status: r.status, hasData: !!(body?.data?.length) };
           } catch {
@@ -287,7 +367,7 @@ export class AduResearchScraper extends BaseScraper {
   private async launchBrowser(): Promise<Browser> {
     return chromium.launch({
       headless: true,
-      args:     CHROMIUM_ARGS,
+      args: CHROMIUM_ARGS,
     });
   }
 
@@ -296,7 +376,7 @@ export class AduResearchScraper extends BaseScraper {
   private buildCookieHeader(): string | null {
     try {
       if (!fs.existsSync(SESSION_FILE)) return null;
-      const state   = JSON.parse(fs.readFileSync(SESSION_FILE, "utf-8"));
+      const state = JSON.parse(fs.readFileSync(SESSION_FILE, "utf-8"));
       const cookies = (state.cookies ?? []) as Array<{ name: string; value: string }>;
       if (cookies.length === 0) return null;
       return cookies.map((c) => `${c.name}=${c.value}`).join("; ");
@@ -316,12 +396,12 @@ export class AduResearchScraper extends BaseScraper {
     let response: Response;
     try {
       response = await fetch(ADDRESS_INQUIRY_URL, {
-        method:  "POST",
+        method: "POST",
         headers: {
           ...BASE_HEADERS,
           "Content-Type": "text/plain;charset=UTF-8",
-          "Referer":      `https://investorlift.com/marketplace/deal/${listingId}`,
-          "Cookie":       cookieHeader,
+          "Referer": `https://investorlift.com/marketplace/deal/${listingId}`,
+          "Cookie": cookieHeader,
         },
         body: JSON.stringify({ property_id: listingId, type: "address_request" }),
       });
@@ -337,7 +417,7 @@ export class AduResearchScraper extends BaseScraper {
       return undefined;
     }
 
-    const text    = await response.text();
+    const text = await response.text();
     const address = text.trim().replace(/^"|"$/g, "");
 
     if (address.includes(ADDRESS_LIMIT_SENTINEL)) {
@@ -353,57 +433,100 @@ export class AduResearchScraper extends BaseScraper {
     return address;
   }
 
+  private async fetchFullDetails(listingId: string): Promise<any> {
+    const cookieHeader = this.buildCookieHeader();
+    if (!cookieHeader) return null;
+
+    try {
+      const response = await fetch(`https://investorlift.com/marketplace/api/customer/api/properties/${listingId}`, {
+        headers: {
+          ...BASE_HEADERS,
+          "Cookie": cookieHeader,
+        },
+      });
+      if (response.ok) {
+        return await response.json();
+      }
+    } catch (err) {
+      logger.warn(`[adu-research] Network error fetching details for ${listingId}: ${err}`);
+    }
+    return null;
+  }
+
   // ── Post-filter enrichment ─────────────────────────────────────────────
 
   protected async enrichAfterFilter(listings: RawListing[]): Promise<RawListing[]> {
     if (listings.length === 0) return listings;
 
     logger.info(
-      `[adu-research] Enriching up to ${ADDRESS_FETCH_LIMIT} of ${listings.length} matched listings with addresses`,
+      `[adu-research] Enriching ${listings.length} candidate listings with descriptions for keyword filtering...`,
     );
 
     const result:       RawListing[] = [];
-    let   fetchedCount               = 0;
-    let   limitReached               = false;
+    let   fetchedAddressCount        = 0;
+    let   addressLimitReached        = false;
+    let   descFetchCount             = 0;
 
     for (let i = 0; i < listings.length; i++) {
-      const listing = { ...listings[i] };
-
-      if (limitReached || fetchedCount >= ADDRESS_FETCH_LIMIT) {
-        result.push(listing);
-        continue;
-      }
-
+      const listing = { ...listings[i] } as AduResearchListing;
       const listingId = extractListingId(listing.url);
-      if (!listingId) {
-        result.push(listing);
-        continue;
+
+      // 1. Fetch the full description from the individual property API
+      if (listingId) {
+        const details = await this.fetchFullDetails(listingId);
+        if (details?.description) {
+          // Strip HTML tags for clean keyword matching
+          listing.description = details.description.replace(/<[^>]*>?/gm, ' ');
+          descFetchCount++;
+        }
+        await sleep(400); // small delay to avoid spamming the API
       }
 
-      try {
-        const fullAddress = await this.fetchFullAddress(listingId);
-        if (fullAddress) {
-          listing.address = fullAddress;
-          fetchedCount++;
-        }
-        result.push(listing);
-        await sleep(ADDRESS_REQUEST_DELAY);
-      } catch (err) {
-        if (err instanceof DailyLimitReachedError) {
-          logger.warn(
-            `[adu-research] Daily address limit reached after ${fetchedCount} fetches`,
-          );
-          limitReached = true;
-          result.push(listing);
-          continue;
-        }
-        logger.warn(`[adu-research] Address fetch failed for ${listingId}: ${err}`);
-        result.push(listing);
+      // 2. Now run keyword filter (requires description)
+      if (!passesKeywordFilter(listing)) {
+        continue; // drop it if it doesn't match any ADU keywords
       }
+
+      // Set matchedKeyword for traceability (passesKeywordFilter doesn't mutate)
+      if (!listing.matchedKeyword) {
+        const kHaystack = [listing.title, listing.description, listing.address].join(" ").toLowerCase();
+        listing.matchedKeyword = ADU_KEYWORDS.find((kw) => {
+          const regex = new RegExp(`\\b${kw}\\b`, 'i');
+          return regex.test(kHaystack);
+        });
+      }
+
+      // 3. Fetch full address for keyword-matched listings
+      if (listingId && !addressLimitReached && fetchedAddressCount < ADDRESS_FETCH_LIMIT) {
+        try {
+          const fullAddress = await this.fetchFullAddress(listingId);
+          if (fullAddress) {
+            listing.address = fullAddress;
+            fetchedAddressCount++;
+          }
+          await sleep(ADDRESS_REQUEST_DELAY);
+        } catch (err) {
+          if (err instanceof DailyLimitReachedError) {
+            logger.warn(
+              `[adu-research] Daily address limit reached after ${fetchedAddressCount} fetches`,
+            );
+            addressLimitReached = true;
+          } else {
+            logger.warn(`[adu-research] Address fetch failed for ${listingId}: ${err}`);
+          }
+        }
+      }
+
+      // Final match — passes location + criteria + keyword!
+      logger.info(
+        `[adu-research] ✓ MATCH #${result.length + 1}: ${listing.address || listing.url} | keyword="${listing.matchedKeyword ?? ''}"`,
+      );
+      result.push(listing);
+      if (this.options.onMatch) await this.options.onMatch(listing);
     }
 
     logger.info(
-      `[adu-research] Enrichment done — ${fetchedCount} addresses fetched, ${result.length} listings total`,
+      `[adu-research] Enrichment done — ${descFetchCount} descriptions fetched, ${fetchedAddressCount} addresses fetched, ${result.length} listings passed all filters`,
     );
     return result;
   }
@@ -441,16 +564,16 @@ export class AduResearchScraper extends BaseScraper {
     try {
       const context = await browser.newContext({
         storageState: SESSION_FILE,
-        userAgent:    USER_AGENT,
+        userAgent: USER_AGENT,
       });
 
       const page = await context.newPage();
 
-      const seenUrls:       Set<string>              = new Set();
-      const apiListings:    AduResearchListing[]     = [];
-      const rawStateCounts: Map<string, number>      = new Map();
-      const pendingParses:  Promise<void>[]          = [];
-      let   rawSaveCount                             = 0;
+      const seenUrls: Set<string> = new Set();
+      const apiListings: AduResearchListing[] = [];
+      const rawStateCounts: Map<string, number> = new Map();
+      const pendingParses: Promise<void>[] = [];
+      let rawSaveCount = 0;
 
       // Intercept all /api/customer/api/properties XHR responses
       // — use ADU parser to capture description + extended fields
@@ -492,23 +615,23 @@ export class AduResearchScraper extends BaseScraper {
             for (const listing of parsed) {
               if (!listing.url || seenUrls.has(listing.url)) continue;
               seenUrls.add(listing.url);
-              
+
               if (passesLocationFilter(listing)) {
                 // Determine which target state it matched
                 const addressUpper = (listing.address ?? "").toUpperCase();
-                const stateUpper   = (listing.state   ?? "").toUpperCase();
+                const stateUpper = (listing.state ?? "").toUpperCase();
                 const matchedState = TARGET_STATES.find((s) =>
                   addressUpper.includes(`, ${s}`) || stateUpper === s
                 ) ?? "UNKNOWN";
 
                 const stateCount = rawStateCounts.get(matchedState) || 0;
-                
+
                 // Track RAW listings per state, stop at maxListings
                 if (stateCount < this.options.maxListings) {
                   rawStateCounts.set(matchedState, stateCount + 1);
-                  
-                  // Filter by keyword inline
-                  if (passesKeywordFilter(listing)) {
+
+                  // Filter by criteria only inline - keyword filtering happens later after description fetch
+                  if (passesPropertyCriteria(listing)) {
                     apiListings.push(listing);
                   }
                 }
@@ -577,15 +700,43 @@ export class AduResearchScraper extends BaseScraper {
         await sleep(2000);
         await Promise.allSettled(pendingParses);
 
-        // Scroll to trigger additional XHRs
-        if (apiListings.length === 0) {
-          logger.info("[adu-research] No listings yet — scrolling to trigger XHR");
-          for (let i = 0; i < 5; i++) {
-            await page.mouse.wheel(0, 5000);
-            await sleep(2500);
-          }
-          await sleep(3000);
+        // Scroll to load more listings from InvestorLift
+        logger.info("[adu-research] Scrolling to load more listings...");
+
+        const MAX_SCROLLS = 50;
+        let consecutiveEmptyScrolls = 0;
+        const MAX_EMPTY_SCROLLS = 3;
+
+        for (let scrollIdx = 0; scrollIdx < MAX_SCROLLS; scrollIdx++) {
+          const prevCount = seenUrls.size;
+
+          await page.mouse.wheel(0, 8000);
+          await sleep(2500);
           await Promise.allSettled(pendingParses);
+
+          if (seenUrls.size === prevCount) {
+            consecutiveEmptyScrolls++;
+            if (consecutiveEmptyScrolls >= MAX_EMPTY_SCROLLS) {
+              logger.info(`[adu-research] No new listings after ${MAX_EMPTY_SCROLLS} scrolls. Stopping.`);
+              break;
+            }
+          } else {
+            consecutiveEmptyScrolls = 0;
+          }
+
+          // Stop if all target states have hit maxListings
+          let totalRawScanned = 0;
+          for (const count of rawStateCounts.values()) {
+            totalRawScanned += count;
+          }
+          if (totalRawScanned >= TARGET_STATES.length * this.options.maxListings) {
+            logger.info("[adu-research] Reached maxListings for all target states. Stopping scroll.");
+            break;
+          }
+
+          logger.info(
+            `[adu-research] Scroll ${scrollIdx + 1}/${MAX_SCROLLS} — ${seenUrls.size} unique listings seen, ${apiListings.length} candidates collected`,
+          );
         }
 
         // Log results
@@ -623,6 +774,6 @@ export class AduResearchScraper extends BaseScraper {
         html,
       );
       logger.info(`[adu-research] Debug HTML saved: logs/adu-research_${label}.html`);
-    } catch {}
+    } catch { }
   }
 }
