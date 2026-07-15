@@ -8,7 +8,7 @@ import type {
 } from "./types";
 
 const API_BASE_URL =
-  "https://leads-automation-tool-production.up.railway.app/api/v1";
+  "https://leads-automation-tool.onrender.com/api/v1/properties/api/v1";
 
 async function fetchJson<T>(
   input: RequestInfo,

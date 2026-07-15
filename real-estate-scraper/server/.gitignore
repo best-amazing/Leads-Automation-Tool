@@ -139,3 +139,7 @@ docker-compose.yaml
 # Session files
 facebook-session.json
 investorlift-session.json
+
+*.json
+
+*.json
