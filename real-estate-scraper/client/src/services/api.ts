@@ -7,7 +7,7 @@ import type {
   SourceListingsPayload,
 } from "./types";
 
-const API_BASE_URL = "https://leads-automation-tool.onrender.com/api/v1/properties/api/v1";
+const API_BASE_URL = "https://leads-automation-tool.onrender.com/api/v1";
 
 async function fetchJson<T>(
   input: RequestInfo,
