@@ -203,11 +203,12 @@ export function passesPropertyCriteria(listing: AduResearchListing): boolean {
   else {
     const haystack = [listing.title, listing.description, listing.address].join(" ").toLowerCase();
 
-    if (haystack.includes("condo") || haystack.includes("townhouse") || haystack.includes("townhome")) {
+    // Property Type constraint (Single Family Home or Multi-Family only) -> exclude condo/townhouse/mobile/land
+    if (haystack.includes("condo") || haystack.includes("townhouse") || haystack.includes("townhome") || haystack.includes("mobile") || haystack.includes("manufactured") || haystack.includes("land") || haystack.includes("lot")) {
       passed = false;
-      failReason = "property type (condo/townhome)";
+      failReason = "property type (not SFH/Multi)";
     }
-    else if (haystack.includes("hoa") || haystack.includes("homeowners association") || haystack.includes("home owner association") || haystack.includes("home owner's association")) {
+    else if (haystack.includes("hoa") || haystack.includes("homeowners association") || haystack.includes("home owner association") || haystack.includes("home owner's association") || haystack.includes("homeowner's association")) {
       passed = false;
       failReason = "has HOA";
     }
