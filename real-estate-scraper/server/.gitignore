@@ -137,11 +137,10 @@ docker-compose.yaml
 /src/generated/prisma
 
 # Session files
-facebook-session.json
+*-session.json
+investor-session.json
 investorlift-session.json
+facebook-session.json
 
-*.json
-
-*.json
-
-*amazing-properties-447020-967dd309d7f2.json
+# Service account keys
+amazing-properties-*.json

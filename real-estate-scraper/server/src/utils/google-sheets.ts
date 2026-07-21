@@ -7,13 +7,29 @@ let cachedExistingLinks: Set<string> | null = null;
 let cachedHasHeaders = false;
 let hasWrittenHeaderForRun = false;
 
+import * as path from "path";
+
 function getServiceAccountPath(): string {
-  let p = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH || "";
-  // Fix WSL path for Windows
-  if (p.startsWith("/mnt/c/")) {
-    p = "C:\\\\" + p.slice(7).replace(/\//g, "\\\\");
+  let raw = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH || "";
+  if (raw.startsWith("/mnt/c/")) {
+    raw = "C:\\" + raw.slice(7).replace(/\//g, "\\");
   }
-  return p;
+
+  const candidates = [
+    raw,
+    path.resolve(raw),
+    path.join(process.cwd(), "amazing-properties-447020-b2f3946f4b3e.json"),
+    path.join(__dirname, "../..", "amazing-properties-447020-b2f3946f4b3e.json"),
+    path.join(__dirname, "../../..", "amazing-properties-447020-b2f3946f4b3e.json")
+  ];
+
+  for (const cand of candidates) {
+    if (cand && fs.existsSync(cand)) {
+      return cand;
+    }
+  }
+
+  return raw;
 }
 
 export async function writeAduResearchToSheets(
@@ -27,7 +43,7 @@ export async function writeAduResearchToSheets(
     return;
   }
 
-  const sheetName = "property research tool";
+  const sheetName = "New Property Research Tool";
   const keyPath = getServiceAccountPath();
 
   if (!fs.existsSync(keyPath)) {

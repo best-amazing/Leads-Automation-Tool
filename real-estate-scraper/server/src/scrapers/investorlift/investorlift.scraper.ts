@@ -54,7 +54,11 @@ const ADDRESS_LIMIT_SENTINEL = "You have reached the daily address request limit
 const ADDRESS_FETCH_LIMIT    = 5;   // InvestorLift rate-limits address lookups per day
 const ADDRESS_REQUEST_DELAY  = 800; // ms between address requests
 
-const SESSION_FILE = path.join(__dirname, "../../..", "investorlift-session.json");
+const SESSION_FILE_DEFAULT = path.join(__dirname, "../../..", "investorlift-session.json");
+const SESSION_FILE_FALLBACK = path.join(__dirname, "../../..", "investor-session.json");
+const SESSION_FILE = fs.existsSync(SESSION_FILE_FALLBACK) && !fs.existsSync(SESSION_FILE_DEFAULT)
+  ? SESSION_FILE_FALLBACK
+  : SESSION_FILE_DEFAULT;
 const DEBUG_DIR    = path.resolve("logs");
 
 const USER_AGENT =

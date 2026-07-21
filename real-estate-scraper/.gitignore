@@ -1,1 +1,35 @@
-amazing-properties-447020-967dd309d7f2.json
+# Dependencies
+node_modules/
+
+# Build and distribution
+dist/
+build/
+
+# Environment and sensitive keys
+.env
+.env.*
+!.env.example
+amazing-properties-*.json
+*.pem
+
+# Session and authentication files
+*-session.json
+investor-session.json
+investorlift-session.json
+facebook-session.json
+
+# Scraper output & debug logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+*.csv
+adu_research_*.csv
+adu_research_*.json
+prop_api.json
+
+# System & IDE files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
