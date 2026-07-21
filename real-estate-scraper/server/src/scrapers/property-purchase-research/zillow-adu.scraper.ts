@@ -12,7 +12,7 @@ import {
   passesPropertyCriteria,
 }                                from "./adu-research.scraper";
 import { logger }                from "../../utils/logger";
-import { ADU_KEYWORDS }          from "./adu-keywords";
+import { ADU_KEYWORDS, TARGET_STATES } from "./adu-keywords";
 import { sleep, jitter }         from "../../utils/browser";
 
 // Pause between detail-page fetches to avoid hammering Oxylabs
@@ -156,6 +156,12 @@ export class ZillowAduScraper extends ZillowScraper {
             status: status ?? rawListing.status,
             lotSqft: lotSqft ?? rawListing.lotSqft
           } as AduResearchListing;
+
+          // Apply location filter — only Ohio
+          if (!passesLocationFilter(enriched)) {
+             logger.debug(`[${this.sourceName}] ✗ Location filter: ${enriched.address}`);
+             continue;
+          }
 
           // Apply strict criteria
           if (!passesPropertyCriteria(enriched)) {

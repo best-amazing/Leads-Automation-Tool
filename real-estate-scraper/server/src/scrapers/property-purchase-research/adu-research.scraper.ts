@@ -116,8 +116,7 @@ export function passesLocationFilter(listing: AduResearchListing): boolean {
 
   const matchedState = TARGET_STATES.find((s) => {
     if (stateUpper === s) return true;
-    const regex = new RegExp(`\\b${s}\\b`);
-    return regex.test(addressUpper);
+    return addressUpper.includes(`, ${s}`);
   });
 
   const passed = !!matchedState;
@@ -182,22 +181,6 @@ export function passesKeywordFilter(listing: AduResearchListing): boolean {
 export function passesPropertyCriteria(listing: AduResearchListing): boolean {
   let passed = true;
   let failReason = "";
-
-  // 0. Data Validation Logging (Missing Core Fields)
-  const missingFields: string[] = [];
-  if (listing.price == null) missingFields.push("price");
-  if (listing.bedrooms == null) missingFields.push("bedrooms");
-  if (listing.bathrooms == null) missingFields.push("bathrooms");
-  if (listing.status == null) missingFields.push("status");
-  if (listing.daysOnMarket == null) missingFields.push("daysOnMarket");
-  if (listing.squareFeet == null) missingFields.push("squareFeet");
-  if (listing.yearBuilt == null) missingFields.push("yearBuilt");
-  
-  if (missingFields.length > 0) {
-    // We log it at debug level for every missing field so we don't spam the console too much, 
-    // but the user can see if large numbers of fields are missing.
-    logger.debug(`[adu-filter] [VALIDATION WARNING] Source: ${listing.source || 'unknown'} - URL: ${listing.url} is missing core fields: ${missingFields.join(", ")}`);
-  }
 
   // 1. Price <= $600,000
   if (listing.price != null && listing.price > 600000) {
@@ -507,13 +490,107 @@ export class AduResearchScraper extends BaseScraper {
       const listing = { ...listings[i] } as AduResearchListing;
       const listingId = extractListingId(listing.url);
 
-      // 1. Fetch the full description from the individual property API
       if (listingId) {
         const details = await this.fetchFullDetails(listingId);
-        if (details?.description) {
-          // Strip HTML tags for clean keyword matching
-          listing.description = details.description.replace(/<[^>]*>?/gm, ' ');
-          descFetchCount++;
+        if (details) {
+          if (details.description) {
+            listing.description = details.description.replace(/<[^>]*>?/gm, ' ');
+            descFetchCount++;
+          }
+          if (details.year_built && !listing.yearBuilt) {
+            listing.yearBuilt = Number(details.year_built);
+          }
+          if (details.units && !listing.units) {
+            listing.units = Number(details.units);
+          }
+          if (!listing.ownerName) {
+            listing.ownerName = details.dispositions_manager?.name || details.account?.title;
+          }
+          if (!listing.bedrooms && details.bedrooms) {
+            listing.bedrooms = Number(details.bedrooms);
+          }
+          if (!listing.bathrooms && details.bathrooms) {
+            listing.bathrooms = Number(details.bathrooms);
+          }
+          if (!listing.squareFeet && details.sq_footage) {
+            listing.squareFeet = Number(details.sq_footage);
+          }
+          if (!listing.lotSqft && details.lot_size) {
+            listing.lotSqft = Number(details.lot_size);
+          }
+
+          // ── Detail API enrichment ──────────────────────────────────────
+          if (!listing.arvEstimate && details.arv_estimate != null) {
+            listing.arvEstimate = Number(details.arv_estimate);
+          }
+          if (!listing.arvPercentage && details.arv_percentage != null) {
+            listing.arvPercentage = Number(details.arv_percentage);
+          }
+          if (!listing.grossMargin && details.gross_margin != null) {
+            listing.grossMargin = Number(details.gross_margin);
+          }
+          if (!listing.views && details.views != null) {
+            listing.views = Number(details.views);
+          }
+          if (!listing.entryFee && details.entry_fee != null) {
+            listing.entryFee = Number(details.entry_fee);
+          }
+          if (!listing.propertyTypeId && details.property_type_id != null) {
+            listing.propertyTypeId = Number(details.property_type_id);
+          }
+          if (!listing.parkingTypeId && details.parking_type_id != null) {
+            listing.parkingTypeId = Number(details.parking_type_id);
+          }
+          if (!listing.publishedAt && details.published_at) {
+            listing.publishedAt = details.published_at;
+          }
+          if (!listing.latitude && details.latitude != null) {
+            listing.latitude = Number(details.latitude);
+          }
+          if (!listing.longitude && details.longitude != null) {
+            listing.longitude = Number(details.longitude);
+          }
+          if (!listing.tags && details.tags) {
+            listing.tags = details.tags;
+          }
+          if (!listing.isVerified && details.is_verified != null) {
+            listing.isVerified = Boolean(details.is_verified);
+          }
+
+          // ── Detail-only API fields ────────────────────────────────────
+          if (!listing.buyNowPrice && details.buy_now_price != null) {
+            listing.buyNowPrice = Number(details.buy_now_price);
+          }
+          if (!listing.repairEstimateMin && details.repair_estimate_min != null) {
+            listing.repairEstimateMin = Number(details.repair_estimate_min);
+          }
+          if (!listing.repairEstimateMax && details.repair_estimate_max != null) {
+            listing.repairEstimateMax = Number(details.repair_estimate_max);
+          }
+          if (!listing.occupancy && details.occupancy?.value) {
+            listing.occupancy = details.occupancy.value;
+          }
+          if (!listing.condition && details.condition?.value) {
+            listing.condition = details.condition.value;
+          }
+          if (!listing.halfBathrooms && details.half_bathrooms != null) {
+            listing.halfBathrooms = Number(details.half_bathrooms);
+          }
+          if (!listing.lotSizeUnit && details.lot_size_unit) {
+            listing.lotSizeUnit = details.lot_size_unit;
+          }
+          if (!listing.accountType && details.account?.account_type) {
+            listing.accountType = details.account.account_type;
+          }
+          if (!listing.expiresAt && details.expires_at) {
+            listing.expiresAt = details.expires_at;
+          }
+          if (!listing.publicAddress && details.public_address) {
+            listing.publicAddress = details.public_address;
+          }
+          if (!listing.propertyPageUrl && details.property_page_url) {
+            listing.propertyPageUrl = details.property_page_url;
+          }
         }
         await sleep(400); // small delay to avoid spamming the API
       }

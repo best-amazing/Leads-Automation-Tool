@@ -5,7 +5,6 @@ import { AduResearchListing } from "../scrapers/property-purchase-research/adu-r
 
 let cachedExistingLinks: Set<string> | null = null;
 let cachedHasHeaders = false;
-let hasWrittenHeaderForRun = false;
 
 import * as path from "path";
 
@@ -101,7 +100,7 @@ export async function writeAduResearchToSheets(
       "Beds",
       "Baths",
       "SqFt",
-      "Lot Size (sqft)",
+      "Lot Size (acres)",
       "Property Owner",
       "Phone Number",
       "Email address",
@@ -130,7 +129,7 @@ export async function writeAduResearchToSheets(
         l.bedrooms || "",
         l.bathrooms || "",
         l.squareFeet || "",
-        l.lotSqft || "",
+        l.lotSqft != null ? (l.lotSqft / 43560).toFixed(2) : "",
         l.ownerName || "",
         l.ownerPhone || "",
         l.ownerEmail || "",
@@ -188,7 +187,7 @@ export async function writeAduResearchToSheets(
       return;
     }
 
-    if (!hasWrittenHeaderForRun && sheetId !== undefined) {
+    if (!cachedHasHeaders && sheetId !== undefined) {
       logger.info(`[sheets] First run today: appending bold header row...`);
       await sheets.spreadsheets.batchUpdate({
         spreadsheetId,
@@ -211,7 +210,6 @@ export async function writeAduResearchToSheets(
           ],
         },
       });
-      hasWrittenHeaderForRun = true;
       cachedHasHeaders = true;
     }
 

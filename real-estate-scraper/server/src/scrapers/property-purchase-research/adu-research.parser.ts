@@ -30,6 +30,36 @@ export interface AduResearchListing extends RawListing {
   matchedKeyword?: string;
   /** Zip code of the property */
   zip?: string;
+
+  // ── Columnar API fields ──────────────────────────────────────────────
+  arvEstimate?: number;
+  arvPercentage?: number;
+  grossMargin?: number;
+  views?: number;
+  hotness?: number;
+  score?: number;
+  entryFee?: number;
+  propertyTypeId?: number;
+  parkingTypeId?: number;
+  statusIndex?: number;
+  publishedAt?: string;
+  latitude?: number;
+  longitude?: number;
+  tags?: any;
+  isVerified?: boolean;
+
+  // ── Detail API fields ─────────────────────────────────────────────────
+  buyNowPrice?: number;
+  repairEstimateMin?: number;
+  repairEstimateMax?: number;
+  occupancy?: string;
+  condition?: string;
+  halfBathrooms?: number;
+  lotSizeUnit?: string;
+  accountType?: string;
+  expiresAt?: string;
+  publicAddress?: string;
+  propertyPageUrl?: string;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -157,17 +187,26 @@ export function mapAduItems(
 
           // Standard fields
           status: item.status ?? undefined,
-          daysOnMarket: item.days_on_market != null ? Number(item.days_on_market) : undefined,
-          ownerName: item.seller_name ?? undefined,
-          ownerPhone: item.seller_phone ?? undefined,
-          ownerEmail: item.seller_email ?? undefined,
+          daysOnMarket:
+            (item.days_on_market ?? item.days_published) != null
+              ? Number(item.days_on_market ?? item.days_published)
+              : undefined,
+          ownerName:
+            item.seller_name ??
+            item.dispositions_manager?.name ??
+            item.account?.title ??
+            undefined,
+          ownerPhone: item.seller_phone ?? item.dispositions_manager?.phone ?? undefined,
+          ownerEmail: item.seller_email ?? item.dispositions_manager?.email ?? undefined,
           bedrooms:
             item.bedrooms != null ? Number(item.bedrooms) : undefined,
           bathrooms:
             item.bathrooms != null ? Number(item.bathrooms) : undefined,
           squareFeet:
-            item.sq_footage != null ? Number(item.sq_footage) : undefined,
-          lotSqft: item.lot_size != null ? Number(item.lot_size) : undefined,
+            (item.sq_footage ?? item.sqft) != null
+              ? Number(item.sq_footage ?? item.sqft)
+              : undefined,
+          lotSqft: (item.lot_size ?? item.lot_sqft) != null ? Number(item.lot_size ?? item.lot_sqft) : undefined,
 
           // ADU-specific fields
           units: item.units != null ? Number(item.units) : undefined,
@@ -182,8 +221,25 @@ export function mapAduItems(
 
            // Location fields for filtering
           city: item.city ?? undefined,
-          state: item.state_code ?? undefined,
+          state: item.state_code ?? item.state ?? undefined,
           zip: item.zip ?? undefined,
+
+          // ── Columnar API fields ──────────────────────────────────────
+          arvEstimate: item.arv_estimate != null ? Number(item.arv_estimate) : undefined,
+          arvPercentage: item.arv_percentage != null ? Number(item.arv_percentage) : undefined,
+          grossMargin: item.gross_margin != null ? Number(item.gross_margin) : undefined,
+          views: item.views != null ? Number(item.views) : undefined,
+          hotness: item.hotness != null ? Number(item.hotness) : undefined,
+          score: item.score != null ? Number(item.score) : undefined,
+          entryFee: item.entry_fee != null ? Number(item.entry_fee) : undefined,
+          propertyTypeId: item.property_type_id != null ? Number(item.property_type_id) : undefined,
+          parkingTypeId: item.parking_type_id != null ? Number(item.parking_type_id) : undefined,
+          statusIndex: item.status_index != null ? Number(item.status_index) : undefined,
+          publishedAt: item.published_at ?? undefined,
+          latitude: item.latitude != null ? Number(item.latitude) : undefined,
+          longitude: item.longitude != null ? Number(item.longitude) : undefined,
+          tags: item.tags ?? undefined,
+          isVerified: item.is_verified != null ? Boolean(item.is_verified) : undefined,
         };
       } catch {
         return null;
