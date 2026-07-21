@@ -179,6 +179,22 @@ export function passesPropertyCriteria(listing: AduResearchListing): boolean {
   let passed = true;
   let failReason = "";
 
+  // 0. Data Validation Logging (Missing Core Fields)
+  const missingFields: string[] = [];
+  if (listing.price == null) missingFields.push("price");
+  if (listing.bedrooms == null) missingFields.push("bedrooms");
+  if (listing.bathrooms == null) missingFields.push("bathrooms");
+  if (listing.status == null) missingFields.push("status");
+  if (listing.daysOnMarket == null) missingFields.push("daysOnMarket");
+  if (listing.squareFeet == null) missingFields.push("squareFeet");
+  if (listing.yearBuilt == null) missingFields.push("yearBuilt");
+  
+  if (missingFields.length > 0) {
+    // We log it at debug level for every missing field so we don't spam the console too much, 
+    // but the user can see if large numbers of fields are missing.
+    logger.debug(`[adu-filter] [VALIDATION WARNING] Source: ${listing.source || 'unknown'} - URL: ${listing.url} is missing core fields: ${missingFields.join(", ")}`);
+  }
+
   // 1. Price <= $600,000
   if (listing.price != null && listing.price > 600000) {
     passed = false;
@@ -234,6 +250,21 @@ export function passesPropertyCriteria(listing: AduResearchListing): boolean {
     }
   }
 
+  // 6. Exclude Pending/Contingent/Under Contract/Sold
+  if (passed && listing.status) {
+    const s = listing.status.toLowerCase();
+    if (s.includes("pending") || s.includes("contingent") || s.includes("under contract") || s.includes("sold")) {
+      passed = false;
+      failReason = `status is non-active (${listing.status})`;
+    }
+  }
+
+  // 7. Days on Market >= 30 (target older listings)
+  if (passed && listing.daysOnMarket != null && listing.daysOnMarket < 30) {
+    passed = false;
+    failReason = `too new (${listing.daysOnMarket} days on market)`;
+  }
+
   // Diagnostic logging for first N listings
   if (_criteriaDiagCount < DIAGNOSTIC_LOG_LIMIT) {
     _criteriaDiagCount++;
@@ -241,7 +272,7 @@ export function passesPropertyCriteria(listing: AduResearchListing): boolean {
       `[adu-filter] CRITERIA [${_criteriaDiagCount}] ` +
       `${passed ? "✓ PASS" : "✗ FAIL"} | ` +
       `reason="${failReason}" | ` +
-      `price=${listing.price} beds=${listing.bedrooms} baths=${listing.bathrooms} year=${listing.yearBuilt}`
+      `price=${listing.price} beds=${listing.bedrooms} baths=${listing.bathrooms} year=${listing.yearBuilt} dom=${listing.daysOnMarket} status=${listing.status}`
     );
   }
 

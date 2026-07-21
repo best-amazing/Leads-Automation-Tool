@@ -5,6 +5,7 @@ import { AduResearchListing } from "../scrapers/property-purchase-research/adu-r
 
 let cachedExistingLinks: Set<string> | null = null;
 let cachedHasHeaders = false;
+let hasWrittenHeaderForRun = false;
 
 function getServiceAccountPath(): string {
   let p = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH || "";
@@ -45,13 +46,17 @@ export async function writeAduResearchToSheets(
     // Check if sheet exists
     const meta = await sheets.spreadsheets.get({ spreadsheetId });
     let sheetExists = false;
+    let sheetId: number | undefined;
     meta.data.sheets?.forEach((s) => {
-      if (s.properties?.title === sheetName) sheetExists = true;
+      if (s.properties?.title === sheetName) {
+         sheetExists = true;
+         sheetId = s.properties.sheetId ?? undefined;
+      }
     });
 
     if (!sheetExists) {
       logger.info(`[sheets] Creating new sheet "${sheetName}"`);
-      await sheets.spreadsheets.batchUpdate({
+      const createRes = await sheets.spreadsheets.batchUpdate({
         spreadsheetId,
         requestBody: {
           requests: [
@@ -65,25 +70,32 @@ export async function writeAduResearchToSheets(
           ],
         },
       });
+      sheetId = createRes.data.replies?.[0]?.addSheet?.properties?.sheetId ?? undefined;
     }
 
     const headers = [
       "Date Found",
+      "Owner",
       "Source",
-      "Title",
+      "Listing Status",
+      "Days on Market",
       "Address",
       "Zip",
       "Price",
       "Beds",
       "Baths",
       "SqFt",
+      "Lot Size (sqft)",
+      "Property Owner",
+      "Phone Number",
+      "Email address",
       "Units",
       "Total Bedrooms",
       "Year Built",
       "School Rating",
       "Matched Keyword",
       "Link",
-      "Description",
+      "Description Preview",
     ];
 
     const rows = listings.map((l) => {
@@ -92,14 +104,20 @@ export async function writeAduResearchToSheets(
       
       return [
         new Date().toLocaleDateString(),
+        "Eddy Ephraim",
         l.source || "",
-        l.title || "",
+        l.status || "",
+        l.daysOnMarket != null ? l.daysOnMarket.toString() : "",
         l.address || "",
         l.zip || "",
         l.price ? `$${l.price.toLocaleString()}` : "",
         l.bedrooms || "",
         l.bathrooms || "",
         l.squareFeet || "",
+        l.lotSqft || "",
+        l.ownerName || "",
+        l.ownerPhone || "",
+        l.ownerEmail || "",
         l.units || "",
         l.totalBedrooms || "",
         l.yearBuilt || "",
@@ -126,7 +144,7 @@ export async function writeAduResearchToSheets(
         if (cachedHasHeaders) {
           const headerRow = existingRows[0];
           let linkIndex = headerRow.indexOf("Link");
-          if (linkIndex === -1) linkIndex = 14; // fallback to index 14
+          if (linkIndex === -1) linkIndex = 20; // fallback to index 20
           
           for (let i = 1; i < existingRows.length; i++) {
             const row = existingRows[i];
@@ -142,7 +160,7 @@ export async function writeAduResearchToSheets(
     }
 
     const newRows = rows.filter((row) => {
-      const link = row[14];
+      const link = row[20];
       if (link && cachedExistingLinks?.has(link)) {
         return false;
       }
@@ -154,7 +172,32 @@ export async function writeAduResearchToSheets(
       return;
     }
 
-    const dataToAppend = cachedHasHeaders ? newRows : [headers, ...newRows];
+    if (!hasWrittenHeaderForRun && sheetId !== undefined) {
+      logger.info(`[sheets] First run today: appending bold header row...`);
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [
+            {
+              appendCells: {
+                sheetId,
+                rows: [
+                  {
+                    values: headers.map((h) => ({
+                      userEnteredValue: { stringValue: h },
+                      userEnteredFormat: { textFormat: { bold: true } },
+                    })),
+                  },
+                ],
+                fields: "userEnteredValue,userEnteredFormat.textFormat.bold",
+              },
+            },
+          ],
+        },
+      });
+      hasWrittenHeaderForRun = true;
+      cachedHasHeaders = true;
+    }
 
     logger.info(`[sheets] Appending ${newRows.length} new rows to "${sheetName}" (skipped ${listings.length - newRows.length} duplicates)...`);
     await sheets.spreadsheets.values.append({
@@ -162,15 +205,15 @@ export async function writeAduResearchToSheets(
       range: `${sheetName}!A1`,
       valueInputOption: "USER_ENTERED",
       requestBody: {
-        values: dataToAppend,
+        values: newRows,
       },
     });
 
     // Update caches
     cachedHasHeaders = true;
     for (const row of newRows) {
-      if (row[14]) {
-        cachedExistingLinks.add(row[14]);
+      if (row[20]) {
+        cachedExistingLinks.add(row[20]);
       }
     }
 

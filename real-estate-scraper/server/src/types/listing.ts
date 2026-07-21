@@ -49,6 +49,7 @@ export interface RawListing {
   // Owner / Broker contact
   ownerName?: string;
   ownerPhone?: string;
+  ownerEmail?: string;
 
   // Dates
   postedDate?: Date;

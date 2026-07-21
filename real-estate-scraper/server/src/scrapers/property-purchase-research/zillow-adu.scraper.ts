@@ -85,6 +85,8 @@ export class ZillowAduScraper extends ZillowScraper {
           let units: number | undefined;
           let yearBuilt: number | undefined;
           let schoolRating: string | undefined;
+          let status: string | undefined;
+          let lotSqft: number | undefined;
 
           try {
             let html: string | null = await (this as any).oxylabsFetch?.(rawListing.url, (this as any).sessionId) || await import("../zillow/zillow.scraper").then(m => m.oxylabsFetch(rawListing.url!, (this as any).sessionId));
@@ -109,6 +111,11 @@ export class ZillowAduScraper extends ZillowScraper {
                           
                           // Extract units, yearBuilt, schoolRating from gdpClientCache
                           if (propData.yearBuilt) yearBuilt = Number(propData.yearBuilt);
+                          if (propData.homeStatus) status = propData.homeStatus;
+                          if (propData.lotAreaValue) {
+                            if (propData.lotAreaUnit === "acres") lotSqft = Math.round(propData.lotAreaValue * 43560);
+                            else lotSqft = Math.round(propData.lotAreaValue);
+                          }
                           
                           // Schools
                           if (Array.isArray(propData.schools) && propData.schools.length > 0) {
@@ -144,7 +151,10 @@ export class ZillowAduScraper extends ZillowScraper {
             units,
             yearBuilt,
             schoolRating,
-            zip
+            zip,
+            daysOnMarket: rawListing.daysOnMarket ?? rawListing.daysOnZillow,
+            status: status ?? rawListing.status,
+            lotSqft: lotSqft ?? rawListing.lotSqft
           } as AduResearchListing;
 
           // Apply strict criteria

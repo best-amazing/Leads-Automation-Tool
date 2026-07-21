@@ -156,12 +156,18 @@ export function mapAduItems(
           description,
 
           // Standard fields
+          status: item.status ?? undefined,
+          daysOnMarket: item.days_on_market != null ? Number(item.days_on_market) : undefined,
+          ownerName: item.seller_name ?? undefined,
+          ownerPhone: item.seller_phone ?? undefined,
+          ownerEmail: item.seller_email ?? undefined,
           bedrooms:
             item.bedrooms != null ? Number(item.bedrooms) : undefined,
           bathrooms:
             item.bathrooms != null ? Number(item.bathrooms) : undefined,
           squareFeet:
             item.sq_footage != null ? Number(item.sq_footage) : undefined,
+          lotSqft: item.lot_size != null ? Number(item.lot_size) : undefined,
 
           // ADU-specific fields
           units: item.units != null ? Number(item.units) : undefined,
