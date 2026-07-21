@@ -22,10 +22,25 @@ import * as path from "path";
 import { writeAduResearchToSheets } from "../../utils/google-sheets";
 
 let capturedCount = 0;
+const seenKeys = new Set<string>();
+
+function dedupKey(listing: AduResearchListing): string {
+  if (listing.address) {
+    return listing.address.replace(/\s+/g, " ").trim().toLowerCase();
+  }
+  return listing.url ?? "";
+}
 
 async function handleMatch(listing: AduResearchListing) {
+  const key = dedupKey(listing);
+  if (seenKeys.has(key)) {
+    logger.debug(`[runner] Skipping duplicate: ${listing.address || listing.url}`);
+    return;
+  }
+  seenKeys.add(key);
+
   capturedCount++;
-  logger.info(`[runner] Immediate write for match #${capturedCount}: ${listing.address || listing.url}`);
+  logger.info(`[runner] Match #${capturedCount}: ${listing.address || listing.url}`);
   appendAduResult(listing);
   await writeAduResearchToSheets([listing]);
 }
