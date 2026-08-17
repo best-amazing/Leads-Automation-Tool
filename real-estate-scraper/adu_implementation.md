@@ -1,21 +1,16 @@
 # Goal Description
 
 The goal is to update the ADU scrapers to:
-1. Ensure only "Active" listings are collected, explicitly rejecting Contingent, Pending, or Under Contract statuses.
-2. Target older listings (30+ days on market) to increase diversity instead of only scraping newly listed properties.
-3. Validate the existence of all scraped fields to ensure robust data collection.
-
-## User Review Required
-Please review the finalized proposed changes below. Once approved, I will begin execution.
+1. Allow all listing statuses and listing ages (removed non-active status and 30+ days restrictions).
+2. Sort listings by newest first so fresh listings are captured daily.
+3. Maximize listing intake across InvestorLift, Zillow, Redfin, and Crexi.
 
 ## Proposed Changes
 
-### 1. Filter Logic & Data Validation
-#### [MODIFY] [adu-research.scraper.ts](file:///c:/Users/USERR/work/AB_Group/Leads-Automation-Tool/real-estate-scraper/server/src/scrapers/property-purchase-research/adu-research.scraper.ts)
-- Update the `passesPropertyCriteria` function to add two new strict rules:
-  - **Status Check**: If the `status` field contains "pending", "contingent", "under contract", or "sold" (case-insensitive), reject the listing.
-  - **Days on Market Check**: If the `daysOnMarket` field is less than 30, reject the listing.
-- **Comprehensive Data Validation Test**: Before applying filters or saving, the script will execute a validation pass on the extracted data (`status`, `daysOnMarket`, `price`, `bedrooms`, `bathrooms`, `squareFeet`, `yearBuilt`, `lotSqft`, etc.). If a significant number of properties are returning `undefined` for these fields from either Zillow or InvestorLift, the script will log prominent warnings to alert us that the upstream data shape might have changed or we are extracting the wrong fields.
+### 1. Filter Logic & Criteria
+#### [MODIFY] [adu-research.scraper.ts](file:///c:/Users/USER/Work/AB-group/Leads-Automation-Tool/real-estate-scraper/server/src/scrapers/property-purchase-research/adu-research.scraper.ts)
+- Removed **Status Check** (pending, contingent, under contract, sold are no longer rejected).
+- Removed **Days on Market Check** (properties with less than 30 days on market are now accepted).
 
 ### 2. Zillow Sorting
 #### [MODIFY] [zillow.scraper.ts](file:///c:/Users/USERR/work/AB_Group/Leads-Automation-Tool/real-estate-scraper/server/src/scrapers/zillow/zillow.scraper.ts)

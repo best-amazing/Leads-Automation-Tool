@@ -20,6 +20,7 @@ import * as path from "path";
 // How many listings to log detailed diagnostics for (avoids log spam)
 const DIAGNOSTIC_LOG_LIMIT = 10;
 
+import axios from "axios";
 import { BaseScraper, ScraperOptions } from "../base.scraper";
 import { BrowserHandle, sleep } from "../../utils/browser";
 import { RawListing } from "../../types/listing";
@@ -237,21 +238,6 @@ export function passesPropertyCriteria(listing: AduResearchListing): boolean {
     }
   }
 
-  // 6. Exclude Pending/Contingent/Under Contract/Sold
-  if (passed && listing.status) {
-    const s = listing.status.toLowerCase();
-    if (s.includes("pending") || s.includes("contingent") || s.includes("under contract") || s.includes("sold")) {
-      passed = false;
-      failReason = `status is non-active (${listing.status})`;
-    }
-  }
-
-  // 7. Days on Market >= 30 (target older listings)
-  if (passed && listing.daysOnMarket != null && listing.daysOnMarket < 30) {
-    passed = false;
-    failReason = `too new (${listing.daysOnMarket} days on market)`;
-  }
-
   // Diagnostic logging for first N listings
   if (_criteriaDiagCount < DIAGNOSTIC_LOG_LIMIT) {
     _criteriaDiagCount++;
@@ -347,7 +333,7 @@ export class AduResearchScraper extends BaseScraper {
           } catch {
             return { status: 0, hasData: false };
           }
-        }, `${PROPERTIES_API_URL}?status=available&per_page=1`);
+        }, `${PROPERTIES_API_URL}?per_page=1`);
 
         logger.info(
           `[adu-research] Session check — HTTP ${result.status}, hasData: ${result.hasData}`,
@@ -682,84 +668,8 @@ export class AduResearchScraper extends BaseScraper {
 
       const page = await context.newPage();
 
-      const seenUrls: Set<string> = new Set();
-      const apiListings: AduResearchListing[] = [];
-      const rawStateCounts: Map<string, number> = new Map();
-      const pendingParses: Promise<void>[] = [];
-      let rawSaveCount = 0;
-
-      // Intercept all /api/customer/api/properties XHR responses
-      // — use ADU parser to capture description + extended fields
-      page.on("response", (response) => {
-        if (!response.url().includes("/api/customer/api/properties")) return;
-        logger.debug(`[adu-research] XHR intercepted: ${response.url()}`);
-
-        const p = response
-          .json()
-          .then((json) => {
-            // ── Save raw XHR payload for inspection ──────────────────────────
-            // Open logs/il_adu_raw_response_<n>.json to see EVERY field
-            // the InvestorLift API returns — look for description/overview/
-            // remarks/body/details that the parser may currently be missing.
-            if (rawSaveCount < MAX_RAW_SAVES) {
-              const saveIndex = ++rawSaveCount;
-              try {
-                fs.mkdirSync(DEBUG_DIR, { recursive: true });
-                const filename = path.join(
-                  DEBUG_DIR,
-                  `il_adu_raw_response_${saveIndex}.json`,
-                );
-                fs.writeFileSync(filename, JSON.stringify(json, null, 2), "utf-8");
-                logger.info(
-                  `[adu-research] Raw XHR saved → logs/il_adu_raw_response_${saveIndex}.json`,
-                );
-              } catch (saveErr) {
-                logger.warn(`[adu-research] Could not save raw XHR: ${saveErr}`);
-              }
-            }
-            // ─────────────────────────────────────────────────────────────────
-
-            const parsed = parseAduApiResponse(json, this.sourceName);
-            if (parsed.length > 0) {
-              logger.info(
-                `[adu-research] ${parsed.length} listings from ${response.url()}`,
-              );
-            }
-            for (const listing of parsed) {
-              if (!listing.url || seenUrls.has(listing.url)) continue;
-              seenUrls.add(listing.url);
-
-              if (passesLocationFilter(listing)) {
-                // Determine which target state it matched
-                const addressUpper = (listing.address ?? "").toUpperCase();
-                const stateUpper = (listing.state ?? "").toUpperCase();
-                const matchedState = TARGET_STATES.find((s) =>
-                  addressUpper.includes(`, ${s}`) || stateUpper === s
-                ) ?? "UNKNOWN";
-
-                const stateCount = rawStateCounts.get(matchedState) || 0;
-
-                // Track RAW listings per state, stop at maxListings
-                if (stateCount < this.options.maxListings) {
-                  rawStateCounts.set(matchedState, stateCount + 1);
-
-                  // Filter by criteria only inline - keyword filtering happens later after description fetch
-                  if (passesPropertyCriteria(listing)) {
-                    apiListings.push(listing);
-                  }
-                }
-              }
-            }
-          })
-          .catch((err) => {
-            logger.debug(`[adu-research] XHR parse error from ${response.url()}: ${err}`);
-          });
-
-        pendingParses.push(p);
-      });
-
       try {
-        logger.info("[adu-research] Loading marketplace…");
+        logger.info("[adu-research] Loading marketplace to pass Cloudflare…");
         try {
           await page.goto(MARKETPLACE_URL, {
             waitUntil: "domcontentloaded",
@@ -797,64 +707,67 @@ export class AduResearchScraper extends BaseScraper {
 
         logger.info(`[adu-research] Landed on: ${landedUrl}`);
 
-        // Wait for first XHR
+        logger.info("[adu-research] Fetching properties directly via API...");
+        const cookies = await context.cookies();
+        const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join("; ");
+        
+        let json: any;
         try {
-          await page.waitForResponse(
-            (r) =>
-              r.url().includes("/api/customer/api/properties") &&
-              r.status() === 200,
-            { timeout: 15_000 },
-          );
-          logger.info("[adu-research] Properties XHR received");
-        } catch {
-          logger.warn("[adu-research] XHR timeout — scrolling to trigger lazy load");
+          const resp = await axios.get(PROPERTIES_API_URL, {
+            headers: {
+              ...BASE_HEADERS,
+              Cookie: cookieStr,
+            },
+            maxContentLength: Infinity,
+            maxBodyLength: Infinity,
+          });
+          json = resp.data;
+        } catch (err: any) {
+          logger.error(`[adu-research] Axios fetch failed: ${err.message}`);
+          return [];
         }
 
-        await sleep(2000);
-        await Promise.allSettled(pendingParses);
-
-        // Scroll to load more listings from InvestorLift
-        logger.info("[adu-research] Scrolling to load more listings...");
-
-        const MAX_SCROLLS = 50;
-        let consecutiveEmptyScrolls = 0;
-        const MAX_EMPTY_SCROLLS = 3;
-
-        for (let scrollIdx = 0; scrollIdx < MAX_SCROLLS; scrollIdx++) {
-          const prevCount = seenUrls.size;
-
-          await page.mouse.wheel(0, 8000);
-          await sleep(2500);
-          await Promise.allSettled(pendingParses);
-
-          if (seenUrls.size === prevCount) {
-            consecutiveEmptyScrolls++;
-            if (consecutiveEmptyScrolls >= MAX_EMPTY_SCROLLS) {
-              logger.info(`[adu-research] No new listings after ${MAX_EMPTY_SCROLLS} scrolls. Stopping.`);
-              break;
-            }
-          } else {
-            consecutiveEmptyScrolls = 0;
-          }
-
-          // Stop if all target states have hit maxListings
-          let totalRawScanned = 0;
-          for (const count of rawStateCounts.values()) {
-            totalRawScanned += count;
-          }
-          if (totalRawScanned >= TARGET_STATES.length * this.options.maxListings) {
-            logger.info("[adu-research] Reached maxListings for all target states. Stopping scroll.");
-            break;
-          }
-
-          logger.info(
-            `[adu-research] Scroll ${scrollIdx + 1}/${MAX_SCROLLS} — ${seenUrls.size} unique listings seen, ${apiListings.length} candidates collected`,
+        try {
+          fs.mkdirSync(DEBUG_DIR, { recursive: true });
+          fs.writeFileSync(
+            path.join(DEBUG_DIR, `il_adu_raw_response_full.json`),
+            JSON.stringify(json, null, 2),
+            "utf-8"
           );
+        } catch (saveErr) {}
+
+        const parsed = parseAduApiResponse(json, this.sourceName);
+        logger.info(`[adu-research] Fetched ${parsed.length} total listings from API.`);
+
+        const seenUrls: Set<string> = new Set();
+        const apiListings: AduResearchListing[] = [];
+        const rawStateCounts: Map<string, number> = new Map();
+
+        for (const listing of parsed) {
+          if (!listing.url || seenUrls.has(listing.url)) continue;
+          seenUrls.add(listing.url);
+
+          if (passesLocationFilter(listing)) {
+            const addressUpper = (listing.address ?? "").toUpperCase();
+            const stateUpper = (listing.state ?? "").toUpperCase();
+            const matchedState = TARGET_STATES.find((s) =>
+              addressUpper.includes(`, ${s}`) || stateUpper === s
+            ) ?? "UNKNOWN";
+
+            const stateCount = rawStateCounts.get(matchedState) || 0;
+            if (stateCount < this.options.maxListings) {
+              rawStateCounts.set(matchedState, stateCount + 1);
+
+              if (passesPropertyCriteria(listing)) {
+                apiListings.push(listing);
+              }
+            }
+          }
         }
 
         // Log results
         if (apiListings.length > 0) {
-          logger.info(`[adu-research] ${apiListings.length} total passing ADU listings collected via XHR`);
+          logger.info(`[adu-research] ${apiListings.length} total passing ADU listings collected via API`);
           for (const [state, count] of rawStateCounts.entries()) {
             logger.info(`[adu-research] Raw listings scanned for ${state}: ${count}/${this.options.maxListings}`);
           }

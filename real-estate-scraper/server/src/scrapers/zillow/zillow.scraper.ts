@@ -103,7 +103,7 @@ function buildPageUrl(
 
   const state: Record<string, any> = {
     filterState,
-    sortSelection: { value: "globalrelevanceex" },
+    sortSelection: { value: "days" },
   };
 
   if (pageNumber > 1) state.pagination = { currentPage: pageNumber };

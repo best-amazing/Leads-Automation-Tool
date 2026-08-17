@@ -11,6 +11,8 @@
 import "dotenv/config";
 import { AduResearchScraper } from "./adu-research.scraper";
 import { ZillowAduScraper } from "./zillow-adu.scraper";
+import { RedfinAduScraper } from "./redfin-adu.scraper";
+import { CrexiAduScraper } from "./crexi-adu.scraper";
 
 import { logger } from "../../utils/logger";
 import { ADU_KEYWORDS, TARGET_STATES } from "./adu-keywords";
@@ -53,28 +55,49 @@ async function main(): Promise<void> {
   logger.info(`Keywords: ${ADU_KEYWORDS.length} patterns loaded`);
   logger.info("─".repeat(60));
 
+  const maxListings = Number(process.env.MAX_LISTINGS ?? 5000);
+
   const investorLift = new AduResearchScraper({
     maxPages:    1,        // InvestorLift is single-page
-    maxListings: 500,
+    maxListings,
     onMatch: handleMatch,
   });
 
   const zillow = new ZillowAduScraper({
-    maxListings: 500,
+    maxListings,
+    onMatch: handleMatch,
+  });
+
+  const redfin = new RedfinAduScraper({
+    maxListings,
+    onMatch: handleMatch,
+  });
+
+  const crexi = new CrexiAduScraper({
+    maxListings,
     onMatch: handleMatch,
   });
 
   try {
     // Run sequentially to avoid OOM — each scraper holds large HTML/JSON
-    // payloads in memory, running both concurrently exceeds the heap limit.
+    // payloads in memory, running concurrently exceeds the heap limit.
     const ilResults     = await investorLift.run();
     if (global.gc) global.gc();
     logger.info(`Memory after investorLift: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
+
     const zillowResults = await zillow.run();
     if (global.gc) global.gc();
     logger.info(`Memory after zillow: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
 
-    const finalResults = [...ilResults, ...zillowResults] as AduResearchListing[];
+    const redfinResults = await redfin.run();
+    if (global.gc) global.gc();
+    logger.info(`Memory after redfin: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
+
+    const crexiResults  = await crexi.run();
+    if (global.gc) global.gc();
+    logger.info(`Memory after crexi: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
+
+    const finalResults = [...ilResults, ...zillowResults, ...redfinResults, ...crexiResults] as AduResearchListing[];
 
     try {
       const DEBUG_DIR = path.resolve("logs");

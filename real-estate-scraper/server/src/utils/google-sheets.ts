@@ -214,7 +214,7 @@ export async function writeAduResearchToSheets(
     }
 
     logger.info(`[sheets] Appending ${newRows.length} new rows to "${sheetName}" (skipped ${listings.length - newRows.length} duplicates)...`);
-    await sheets.spreadsheets.values.append({
+    const response = await sheets.spreadsheets.values.append({
       spreadsheetId,
       range: `${sheetName}!A1`,
       valueInputOption: "USER_ENTERED",
@@ -231,7 +231,8 @@ export async function writeAduResearchToSheets(
       }
     }
 
-    logger.info(`[sheets] Successfully wrote to Google Sheets!`);
+    const updatedRange = response.data.updates?.updatedRange;
+    logger.info(`[sheets] Successfully wrote to Google Sheets at range: ${updatedRange}`);
   } catch (error: any) {
     logger.error(`[sheets] Failed to write to Google Sheets: ${error.message}`);
   }

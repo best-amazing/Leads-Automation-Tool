@@ -94,7 +94,7 @@ const NEXT_PAGE_SELECTORS = [
 ];
 
 export class CrexiScraper extends BaseScraper {
-  readonly sourceName = "crexi";
+  readonly sourceName: string = "crexi";
 
   constructor(options: ScraperOptions = {}) {
     super(options);
@@ -499,8 +499,11 @@ export class CrexiScraper extends BaseScraper {
       const allListings: RawListing[] = [];
 
       for (let i = 0; i < SEARCH_URLS.length; i++) {
-        const url = SEARCH_URLS[i];
-        logger.info(`[crexi] URL ${i + 1}/${SEARCH_URLS.length}`);
+        let url = SEARCH_URLS[i];
+        if (!url.includes("sort=")) {
+          url += url.includes("?") ? "&sort=CreatedDateDescending" : "?sort=CreatedDateDescending";
+        }
+        logger.info(`[crexi] URL ${i + 1}/${SEARCH_URLS.length}: ${url}`);
 
         const listings = await this.scrapeUrl(page, url);
         allListings.push(...listings);

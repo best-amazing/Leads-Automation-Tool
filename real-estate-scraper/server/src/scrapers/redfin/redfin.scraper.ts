@@ -165,6 +165,7 @@ function buildGisUrl(
     status:           "1",
     sold_within_days: String(MAX_DAYS_OLD),
     sf:               "1,2,3,5,6,7",
+    ord:              "time-on-redfin-asc",
   });
   return `${GIS_BASE}?${params.toString()}`;
 }
@@ -378,7 +379,7 @@ function slugify(s: string): string {
 // ── Scraper ───────────────────────────────────────────────────────────────────
 
 export class RedfinScraper extends BaseScraper {
-  readonly sourceName = "redfin";
+  readonly sourceName: string = "redfin";
 
   private readonly markets:          readonly Market[];
   private readonly uipt:             readonly number[];

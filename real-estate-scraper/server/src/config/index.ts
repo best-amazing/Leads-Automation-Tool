@@ -122,6 +122,11 @@ export const config = {
           baseUrl:     "https://www.zillow.com/oh/",
           listingType: "active" as const,
         },
+        {
+          name:        "Wisconsin - Active",
+          baseUrl:     "https://www.zillow.com/wi/",
+          listingType: "active" as const,
+        },
       ] as Array<{
         name:        string;
         baseUrl:     string;
