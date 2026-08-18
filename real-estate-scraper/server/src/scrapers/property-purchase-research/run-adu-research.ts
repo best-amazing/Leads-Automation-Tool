@@ -19,6 +19,7 @@ import { ADU_KEYWORDS, TARGET_STATES } from "./adu-keywords";
 import { appendAduResult, writeAduResults, writeCsvOnly } from "./adu-csv-writer";
 import { AduResearchListing } from "./adu-research.parser";
 import { passesKeywordFilter, passesLocationFilter } from "./adu-research.scraper";
+import { fetchDeedTransferDate } from "./deed-data-resolver";
 import * as fs from "fs";
 import * as path from "path";
 import { writeAduResearchToSheets } from "../../utils/google-sheets";
@@ -43,6 +44,30 @@ async function handleMatch(listing: AduResearchListing) {
 
   capturedCount++;
   logger.info(`[runner] Match #${capturedCount}: ${listing.address || listing.url}`);
+
+  // ── Inline deed transfer date lookup ──────────────────────────────────
+  if (listing.address) {
+    try {
+      logger.info(`[runner] Looking up deed transfer date for: ${listing.address}`);
+      const deedDate = await fetchDeedTransferDate({
+        address: listing.address,
+        city: listing.city,
+        state: listing.state,
+        zip: listing.zip,
+        latitude: listing.latitude,
+        longitude: listing.longitude,
+      });
+      if (deedDate) {
+        listing.deedTransferDate = deedDate;
+        logger.info(`[runner] ✓ Deed transfer date: ${deedDate}`);
+      } else {
+        logger.info(`[runner] ✗ No deed transfer date found`);
+      }
+    } catch (err) {
+      logger.warn(`[runner] Deed date lookup failed: ${err}`);
+    }
+  }
+
   appendAduResult(listing);
   await writeAduResearchToSheets([listing]);
 }

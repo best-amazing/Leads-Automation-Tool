@@ -108,6 +108,7 @@ export async function writeAduResearchToSheets(
       "Total Bedrooms",
       "Year Built",
       "School Rating",
+      "Deed Transfer Date",
       "Matched Keyword",
       "Link",
       "Description Preview",
@@ -137,6 +138,7 @@ export async function writeAduResearchToSheets(
         l.totalBedrooms || "",
         l.yearBuilt || "",
         l.schoolRating || "",
+        (l as any).deedTransferDate || "", // Deed Transfer Date (resolved via ATTOM / OGRIP)
         matchedKw,
         l.url || "",
         l.description ? l.description.replace(/\n/g, " ") : "",
@@ -159,7 +161,7 @@ export async function writeAduResearchToSheets(
         if (cachedHasHeaders) {
           const headerRow = existingRows[0];
           let linkIndex = headerRow.indexOf("Link");
-          if (linkIndex === -1) linkIndex = 20; // fallback to index 20
+          if (linkIndex === -1) linkIndex = 21; // fallback to index 21 (V)
           
           for (let i = 1; i < existingRows.length; i++) {
             const row = existingRows[i];
@@ -175,7 +177,7 @@ export async function writeAduResearchToSheets(
     }
 
     const newRows = rows.filter((row) => {
-      const link = row[20];
+      const link = row[21]; // Link is now at index 21
       if (link && cachedExistingLinks?.has(link)) {
         return false;
       }
@@ -218,6 +220,7 @@ export async function writeAduResearchToSheets(
       spreadsheetId,
       range: `${sheetName}!A1`,
       valueInputOption: "USER_ENTERED",
+      insertDataOption: "INSERT_ROWS",
       requestBody: {
         values: newRows,
       },
@@ -226,8 +229,8 @@ export async function writeAduResearchToSheets(
     // Update caches
     cachedHasHeaders = true;
     for (const row of newRows) {
-      if (row[20]) {
-        cachedExistingLinks.add(row[20]);
+      if (row[21]) {
+        cachedExistingLinks.add(row[21]);
       }
     }
 

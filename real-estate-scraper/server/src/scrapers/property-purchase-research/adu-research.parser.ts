@@ -60,6 +60,9 @@ export interface AduResearchListing extends RawListing {
   expiresAt?: string;
   publicAddress?: string;
   propertyPageUrl?: string;
+
+  // ── Deed transfer date (resolved via ATTOM / OGRIP) ────────────────────
+  deedTransferDate?: string;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
