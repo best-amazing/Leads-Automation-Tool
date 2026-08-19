@@ -127,7 +127,8 @@ export class ZillowAduScraper extends ZillowScraper {
           processedThisBatch++;
 
           logger.info(
-            `[${this.sourceName}] [${processedThisBatch}/${BACKFILL_BATCH_SIZE}] Fetching description: ${rawListing.address ?? rawListing.url}`
+            `[${this.sourceName}] [${processedThisBatch}/${BACKFILL_BATCH_SIZE}] Fetching description: ${rawListing.address ?? rawListing.url} ` +
+            `(daysOnZillow=${rawListing.daysOnZillow ?? "?"})`
           );
 
           // Fetch the full description & metadata from the detail page

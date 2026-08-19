@@ -4,7 +4,10 @@ import { logger } from "./logger";
 import { AduResearchListing } from "../scrapers/property-purchase-research/adu-research.parser";
 
 let cachedExistingLinks: Set<string> | null = null;
-let cachedHasHeaders = false;
+let stateLoaded = false;
+let cachedLastRow = 0;
+let cachedLastRowIsHeader = false;
+let headerWrittenThisRun = false;
 
 import * as path from "path";
 
@@ -149,24 +152,31 @@ export async function writeAduResearchToSheets(
         ];
       });
 
-      // Cache existing links to avoid fetching entire sheet on every match
-      if (!cachedExistingLinks) {
+      // Load the current state of the sheet once per process so we always know
+      // the exact last row (no table-detection guessing).
+      if (!stateLoaded) {
+        stateLoaded = true;
         cachedExistingLinks = new Set<string>();
-        
+        cachedLastRow = 0;
+        cachedLastRowIsHeader = false;
+        headerWrittenThisRun = false;
+
         try {
           const getRes = await sheets.spreadsheets.values.get({
             spreadsheetId,
-            range: `${sheetName}!A:Z`,
+            range: `${sheetName}!A:W`,
           });
-          
+
           const existingRows = getRes.data.values || [];
-          cachedHasHeaders = existingRows.length > 0;
-          
-          if (cachedHasHeaders) {
+          cachedLastRow = existingRows.length;
+          cachedLastRowIsHeader =
+            cachedLastRow > 0 && existingRows[cachedLastRow - 1]?.[0] === "Date Found";
+
+          if (cachedLastRow > 0) {
             const headerRow = existingRows[0];
             let linkIndex = headerRow.indexOf("Link");
             if (linkIndex === -1) linkIndex = 21; // fallback to index 21 (V)
-            
+
             for (let i = 1; i < existingRows.length; i++) {
               const row = existingRows[i];
               if (row && row[linkIndex]) {
@@ -176,7 +186,8 @@ export async function writeAduResearchToSheets(
           }
         } catch (err) {
           // If sheet doesn't exist yet, get() might throw, which is fine
-          cachedHasHeaders = false;
+          cachedLastRow = 0;
+          cachedLastRowIsHeader = false;
         }
       }
 
@@ -193,15 +204,24 @@ export async function writeAduResearchToSheets(
         break; // break instead of return
       }
 
-      if (!cachedHasHeaders && sheetId !== undefined) {
-        logger.info(`[sheets] First run today: appending bold header row...`);
+      let nextRow = cachedLastRow + 1;
+
+      // Write a bold header at the top of this run's block when the sheet is
+      // empty or the last row isn't already the header (daily runs).
+      if (!headerWrittenThisRun && !cachedLastRowIsHeader && sheetId !== undefined) {
+        logger.info(`[sheets] Writing bold header row at row ${nextRow}...`);
         await sheets.spreadsheets.batchUpdate({
           spreadsheetId,
           requestBody: {
             requests: [
               {
-                appendCells: {
-                  sheetId,
+                updateCells: {
+                  range: {
+                    sheetId,
+                    startRowIndex: nextRow - 1,
+                    startColumnIndex: 0,
+                    endColumnIndex: headers.length,
+                  },
                   rows: [
                     {
                       values: headers.map((h) => ({
@@ -216,33 +236,38 @@ export async function writeAduResearchToSheets(
             ],
           },
         });
-        cachedHasHeaders = true;
+        headerWrittenThisRun = true;
+        cachedLastRowIsHeader = true;
+        nextRow += 1;
+        cachedLastRow += 1;
       }
 
-      logger.info(`[sheets] Appending ${newRows.length} new rows to "${sheetName}" (skipped ${listings.length - newRows.length} duplicates)...`);
-      const response = await sheets.spreadsheets.values.append({
+      logger.info(`[sheets] Writing ${newRows.length} new rows to "${sheetName}" starting at row ${nextRow} (skipped ${listings.length - newRows.length} duplicates)...`);
+      const response = await sheets.spreadsheets.values.update({
         spreadsheetId,
-        range: `${sheetName}!A1`,
+        range: `${sheetName}!A${nextRow}`,
         valueInputOption: "USER_ENTERED",
-        insertDataOption: "INSERT_ROWS",
         requestBody: {
           values: newRows,
         },
       });
 
       // Update caches
-      cachedHasHeaders = true;
-      for (const row of newRows) {
-        if (row[21]) {
-          cachedExistingLinks.add(row[21]);
+      cachedLastRow += newRows.length;
+      if (cachedExistingLinks) {
+        for (const row of newRows) {
+          if (row[21]) {
+            cachedExistingLinks.add(row[21]);
+          }
         }
       }
 
-      const updatedRange = response.data.updates?.updatedRange;
+      const updatedRange = response.data.updatedRange;
       logger.info(`[sheets] Successfully wrote to Google Sheets at range: ${updatedRange}`);
       break; // Success! Break out of the retry loop
     } catch (error: any) {
       attempt++;
+      stateLoaded = false; // reload true sheet state before retrying
       logger.error(`[sheets] Failed to write to Google Sheets (attempt ${attempt}/${maxRetries}): ${error.message}`);
       if (attempt >= maxRetries) {
         logger.error(`[sheets] Max retries reached. Listing could not be uploaded.`);

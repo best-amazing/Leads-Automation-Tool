@@ -38,6 +38,7 @@
     "scrape:facebook:with-comments": "node --max-old-space-size=4096 -r ./polyfill-file.js -r ts-node/register scripts/scrape-and-comment.ts",
     "session:investorlift": "node -r ts-node/register scripts/export-investorlift-session.ts",
     "scrape:adu-research": "node --max-old-space-size=4096 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/run-adu-research.ts",
+    "scrape:adu-research:cron": "node --max-old-space-size=4096 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/run-adu-research-cron.ts",
     "reprocess:il-logs": "node --max-old-space-size=4096 -r ./polyfill-file.js -r ts-node/register scripts/reprocess-il-logs.ts",
     "check:il-counts": "node --max-old-space-size=4096 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/check-il-counts.ts"
   },

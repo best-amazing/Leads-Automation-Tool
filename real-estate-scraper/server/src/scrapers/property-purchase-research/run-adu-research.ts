@@ -72,7 +72,7 @@ async function handleMatch(listing: AduResearchListing) {
   await writeAduResearchToSheets([listing]);
 }
 
-async function main(): Promise<void> {
+export async function runAduResearch(): Promise<void> {
   logger.info("═".repeat(60));
   logger.info("ADU Property Purchase Research Scraper");
   logger.info("═".repeat(60));
@@ -172,8 +172,15 @@ async function main(): Promise<void> {
     } else {
       logger.error(`ADU Research scraper failed: ${err}`);
     }
-    process.exit(1);
+    throw err;
   }
 }
 
-main();
+// ── Direct execution ────────────────────────────────────────────────────────
+// When run as `npm run scrape:adu-research`, surface failures and exit non-zero.
+// The cron scheduler imports runAduResearch() instead and keeps going on error.
+if (require.main === module) {
+  runAduResearch().catch(() => {
+    process.exit(1);
+  });
+}
