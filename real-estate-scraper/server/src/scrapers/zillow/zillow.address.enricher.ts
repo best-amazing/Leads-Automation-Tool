@@ -238,7 +238,10 @@ function oxylabsFetch(targetUrl: string, sessionId?: string): Promise<string | n
     }, REQUEST_TIMEOUT_MS);
 
     req.on("error", (err: any) => { logger.error(`[zillow-enricher] ${err.message}`); resolve(null); });
-    req.on("close", () => clearTimeout(deadline));
+
+    // Catch-all: any close (normal, reset, or half-close mid-body) settles the
+    // promise. Resolving twice is a no-op, so this is safe alongside 'end'.
+    req.on("close", () => { clearTimeout(deadline); resolve(null); });
     req.write(bodyStr);
     req.end();
   });

@@ -278,7 +278,12 @@ export function oxylabsFetch(targetUrl: string, sessionId?: string): Promise<str
       resolve(null);
     });
 
-    req.on("close", () => clearTimeout(deadline));
+    // Catch-all: any close (normal, reset, or half-close mid-body) settles the
+    // promise. Resolving twice is a no-op, so this is safe alongside 'end'.
+    req.on("close", () => {
+      clearTimeout(deadline);
+      resolve(null);
+    });
 
     req.write(bodyStr);
     req.end();
