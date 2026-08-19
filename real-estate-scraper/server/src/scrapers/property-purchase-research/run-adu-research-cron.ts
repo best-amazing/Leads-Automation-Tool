@@ -1,13 +1,16 @@
 // src/scrapers/property-purchase-research/run-adu-research-cron.ts
 // ─────────────────────────────────────────────────────────────────────────────
-// Long-lived scheduler for the ADU research scraper.
+// Long-lived watchdog for the ADU research scraper.
 //
 // Deploy as a background worker (e.g. Render worker service) — no HTTP port
-// needed. It runs the scraper immediately on boot, then again on a cron
-// schedule. All logs go to stdout so the host's log terminal shows them live.
+// needed. It runs the scraper immediately on boot, then checks every
+// ADU_CRON_SCHEDULE (default: every 10 minutes) whether a run is already in
+// progress. If idle, it starts a new run — so new listings are caught within
+// minutes and the worker stays perpetually active. All logs go to stdout so
+// the host's log terminal shows them live.
 //
 // Env:
-//   ADU_CRON_SCHEDULE  cron expression (default: every 6 hours)
+//   ADU_CRON_SCHEDULE  cron expression (default: every 10 minutes)
 //   ADU_CRON_TIMEZONE  IANA timezone       (default: Africa/Lagos)
 // ─────────────────────────────────────────────────────────────────────────────
 
