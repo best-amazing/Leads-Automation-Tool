@@ -47,6 +47,46 @@ const SESSION_FILE = fs.existsSync(SESSION_FILE_FALLBACK) && !fs.existsSync(SESS
   ? SESSION_FILE_FALLBACK
   : SESSION_FILE_DEFAULT;
 const DEBUG_DIR = path.resolve("logs");
+const SEEN_LISTINGS_FILE = path.join(DEBUG_DIR, "il_backfill_cursor.json");
+const AUDIT_FILE = path.join(DEBUG_DIR, "backfill_audit.json");
+
+// How many new listings to process per run
+const BACKFILL_BATCH_SIZE = 1000;
+
+// ── Seen-listings tracker ───────────────────────────────────────────────────
+
+interface SeenListingsData {
+  /** ISO timestamp of last successful run */
+  lastRunAt: string;
+  /** Set of InvestorLift listing IDs we have already processed */
+  seenIds: string[];
+}
+
+function loadSeenListings(): Set<string> {
+  try {
+    if (!fs.existsSync(SEEN_LISTINGS_FILE)) return new Set();
+    const data: SeenListingsData = JSON.parse(fs.readFileSync(SEEN_LISTINGS_FILE, "utf-8"));
+    logger.info(`[adu-research] Loaded ${data.seenIds.length} previously seen listing IDs (last run: ${data.lastRunAt})`);
+    return new Set(data.seenIds);
+  } catch (err) {
+    logger.warn(`[adu-research] Could not load seen listings tracker: ${err}`);
+    return new Set();
+  }
+}
+
+function saveSeenListings(ids: Set<string>): void {
+  try {
+    fs.mkdirSync(DEBUG_DIR, { recursive: true });
+    const data: SeenListingsData = {
+      lastRunAt: new Date().toISOString(),
+      seenIds: Array.from(ids),
+    };
+    fs.writeFileSync(SEEN_LISTINGS_FILE, JSON.stringify(data, null, 2), "utf-8");
+    logger.info(`[adu-research] Saved ${ids.size} seen listing IDs to tracker`);
+  } catch (err) {
+    logger.warn(`[adu-research] Could not save seen listings tracker: ${err}`);
+  }
+}
 
 // How many raw XHR payloads to save for inspection (avoids disk spam if there are many requests)
 const MAX_RAW_SAVES = 3;
@@ -264,7 +304,7 @@ export function passesAduFilter(listing: AduResearchListing): boolean {
 // ── Scraper ──────────────────────────────────────────────────────────────────
 
 export class AduResearchScraper extends BaseScraper {
-  readonly sourceName = "adu-research";
+  readonly sourceName: string = "investorlift-adu";
 
   /** Collected ADU-matching listings (extended type) */
   private aduListings: AduResearchListing[] = [];
@@ -398,31 +438,35 @@ export class AduResearchScraper extends BaseScraper {
       return undefined;
     }
 
-    let response: Response;
+    let text: string;
+    let status: number;
     try {
-      response = await fetch(ADDRESS_INQUIRY_URL, {
-        method: "POST",
-        headers: {
-          ...BASE_HEADERS,
-          "Content-Type": "text/plain;charset=UTF-8",
-          "Referer": `https://investorlift.com/marketplace/deal/${listingId}`,
-          "Cookie": cookieHeader,
-        },
-        body: JSON.stringify({ property_id: listingId, type: "address_request" }),
-      });
-    } catch (err) {
-      logger.warn(`[adu-research] Network error fetching address for ${listingId}: ${err}`);
+      const response = await axios.post(ADDRESS_INQUIRY_URL, 
+        JSON.stringify({ property_id: listingId, type: "address_request" }),
+        {
+          headers: {
+            ...BASE_HEADERS,
+            "Content-Type": "text/plain;charset=UTF-8",
+            "Referer": `https://investorlift.com/marketplace/deal/${listingId}`,
+            "Cookie": cookieHeader,
+          },
+          validateStatus: () => true // Resolve for all status codes
+        }
+      );
+      status = response.status;
+      text = response.data;
+    } catch (err: any) {
+      logger.warn(`[adu-research] Network error fetching address for ${listingId}: ${err.message}`);
       return undefined;
     }
 
-    if (!response.ok) {
+    if (status !== 200) {
       logger.warn(
-        `[adu-research] Address inquiry returned HTTP ${response.status} for ${listingId}`,
+        `[adu-research] Address inquiry returned HTTP ${status} for ${listingId}`,
       );
       return undefined;
     }
 
-    const text = await response.text();
     const address = text.trim().replace(/^"|"$/g, "");
 
     if (address.includes(ADDRESS_LIMIT_SENTINEL)) {
@@ -443,17 +487,15 @@ export class AduResearchScraper extends BaseScraper {
     if (!cookieHeader) return null;
 
     try {
-      const response = await fetch(`https://investorlift.com/marketplace/api/customer/api/properties/${listingId}`, {
+      const response = await axios.get(`https://investorlift.com/marketplace/api/customer/api/properties/${listingId}`, {
         headers: {
           ...BASE_HEADERS,
           "Cookie": cookieHeader,
         },
       });
-      if (response.ok) {
-        return await response.json();
-      }
-    } catch (err) {
-      logger.warn(`[adu-research] Network error fetching details for ${listingId}: ${err}`);
+      return response.data;
+    } catch (err: any) {
+      logger.warn(`[adu-research] Network error fetching details for ${listingId}: ${err.message}`);
     }
     return null;
   }
@@ -739,13 +781,46 @@ export class AduResearchScraper extends BaseScraper {
         const parsed = parseAduApiResponse(json, this.sourceName);
         logger.info(`[adu-research] Fetched ${parsed.length} total listings from API.`);
 
+        // ── Sort by publishedAt ascending (oldest first) ──────────────
+        parsed.sort((a, b) => {
+          const dateA = a.publishedAt ?? "";
+          const dateB = b.publishedAt ?? "";
+          return dateA.localeCompare(dateB); // ascending
+        });
+        logger.info(`[adu-research] Sorted listings oldest-first. Oldest: ${parsed[0]?.publishedAt ?? "N/A"}, Newest: ${parsed[parsed.length - 1]?.publishedAt ?? "N/A"}`);
+
+        // ── Load previously seen listing IDs ────────────────────────────
+        const previouslySeen = loadSeenListings();
+        const allSeenIds = new Set(previouslySeen); 
+
         const seenUrls: Set<string> = new Set();
         const apiListings: AduResearchListing[] = [];
         const rawStateCounts: Map<string, number> = new Map();
+        
+        let skippedAsSeen = 0;
+        let processedThisBatch = 0;
+        let oldestInBatch = "N/A";
+        let newestInBatch = "N/A";
 
         for (const listing of parsed) {
           if (!listing.url || seenUrls.has(listing.url)) continue;
           seenUrls.add(listing.url);
+
+          // Extract the listing ID from the URL
+          const listingId = extractListingId(listing.url);
+
+          // Skip if already processed in a previous backfill run
+          if (listingId && previouslySeen.has(listingId)) {
+            skippedAsSeen++;
+            continue;
+          }
+
+          if (oldestInBatch === "N/A") oldestInBatch = listing.publishedAt ?? "N/A";
+          newestInBatch = listing.publishedAt ?? "N/A";
+
+          // Process this new listing
+          processedThisBatch++;
+          if (listingId) allSeenIds.add(listingId);
 
           if (passesLocationFilter(listing)) {
             const addressUpper = (listing.address ?? "").toUpperCase();
@@ -763,16 +838,42 @@ export class AduResearchScraper extends BaseScraper {
               }
             }
           }
+
+          // Stop if we hit the batch limit
+          if (processedThisBatch >= BACKFILL_BATCH_SIZE) {
+             logger.info(`[adu-research] Reached backfill batch limit of ${BACKFILL_BATCH_SIZE}. Stopping processing.`);
+             break;
+          }
+        }
+
+        // ── Save updated tracker & audit log ────────────────────────────
+        saveSeenListings(allSeenIds);
+        
+        try {
+          const auditRecord = {
+            timestamp: new Date().toISOString(),
+            source: this.sourceName,
+            processedCount: processedThisBatch,
+            oldestDateInBatch: oldestInBatch,
+            newestDateInBatch: newestInBatch,
+          };
+          const auditLog = fs.existsSync(AUDIT_FILE) ? JSON.parse(fs.readFileSync(AUDIT_FILE, "utf-8")) : [];
+          auditLog.push(auditRecord);
+          fs.writeFileSync(AUDIT_FILE, JSON.stringify(auditLog, null, 2), "utf-8");
+          logger.info(`[adu-research] Appended backfill audit log. Batch date range: ${oldestInBatch} to ${newestInBatch}`);
+        } catch (err) {
+          logger.warn(`[adu-research] Failed to write backfill audit log: ${err}`);
         }
 
         // Log results
+        logger.info(`[adu-research] Processed ${processedThisBatch} new listings, skipped ${skippedAsSeen} already-seen`);
         if (apiListings.length > 0) {
-          logger.info(`[adu-research] ${apiListings.length} total passing ADU listings collected via API`);
+          logger.info(`[adu-research] ${apiListings.length} NEW passing ADU listings collected via API`);
           for (const [state, count] of rawStateCounts.entries()) {
             logger.info(`[adu-research] Raw listings scanned for ${state}: ${count}/${this.options.maxListings}`);
           }
         } else {
-          logger.warn("[adu-research] No matching listings collected");
+          logger.warn("[adu-research] No new matching listings collected");
         }
 
         return apiListings;

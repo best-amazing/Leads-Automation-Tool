@@ -137,10 +137,10 @@ docker-compose.yaml
 /src/generated/prisma
 
 # Session files
-*-session.json
+
 investor-session.json
 investorlift-session.json
-facebook-session.json
+
 
 # Service account keys
 amazing-properties-*.json

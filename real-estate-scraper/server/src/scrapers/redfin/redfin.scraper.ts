@@ -119,6 +119,33 @@ const DEBUG_PAGES         = 3;        // save raw GIS JSON for first N pages per
 
 const GIS_BASE            = "https://www.redfin.com/stingray/api/gis";
 const PAGE_SIZE           = 50;       // homes per request (max Redfin allows is 350)
+const SEEN_LISTINGS_FILE  = path.join(process.cwd(), "logs", "redfin_backfill_cursor.json");
+const AUDIT_FILE          = path.join(process.cwd(), "logs", "backfill_audit.json");
+const BACKFILL_BATCH_SIZE = 1000;
+
+// ── Seen-listings tracker ───────────────────────────────────────────────────
+
+function loadSeenListings(): Set<string> {
+  try {
+    if (!fs.existsSync(SEEN_LISTINGS_FILE)) return new Set();
+    const data = JSON.parse(fs.readFileSync(SEEN_LISTINGS_FILE, "utf-8"));
+    logger.info(`[redfin] Loaded ${data.seenIds.length} previously seen listing URLs`);
+    return new Set(data.seenIds);
+  } catch (err) {
+    logger.warn(`[redfin] Could not load seen listings tracker: ${err}`);
+    return new Set();
+  }
+}
+
+function saveSeenListings(ids: Set<string>): void {
+  try {
+    const data = { lastRunAt: new Date().toISOString(), seenIds: Array.from(ids) };
+    fs.writeFileSync(SEEN_LISTINGS_FILE, JSON.stringify(data, null, 2), "utf-8");
+    logger.info(`[redfin] Saved ${ids.size} seen listing URLs to tracker`);
+  } catch (err) {
+    logger.warn(`[redfin] Could not save seen listings tracker: ${err}`);
+  }
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -165,7 +192,7 @@ function buildGisUrl(
     status:           "1",
     sold_within_days: String(MAX_DAYS_OLD),
     sf:               "1,2,3,5,6,7",
-    ord:              "time-on-redfin-asc",
+    ord:              "time-on-redfin-desc", // Oldest first
   });
   return `${GIS_BASE}?${params.toString()}`;
 }
@@ -431,6 +458,11 @@ export class RedfinScraper extends BaseScraper {
       );
     }
 
+    const previouslySeen = loadSeenListings();
+    const allSeenUrls = new Set(previouslySeen);
+    let processedThisBatch = 0;
+    let skippedAsSeen = 0;
+
     // ── Phase 1: GIS API pages per market ────────────────────────────────
 
     for (const market of resolvedMarkets) {
@@ -509,18 +541,28 @@ export class RedfinScraper extends BaseScraper {
             rejected.push({ listing, reason: "no_url" });
             continue;
           }
+          
+          if (previouslySeen.has(listing.url)) {
+            skippedAsSeen++;
+            continue;
+          }
+
           if (this.visited.has(listing.url)) {
             rejected.push({ listing, reason: "duplicate" });
             continue;
           }
+          
+          processedThisBatch++;
+          allSeenUrls.add(listing.url);
 
           if (!listingMatchesMarket(listing.url, market)) {
             const urlState =
               listing.url.match(/redfin\.com\/([A-Z]{2})\//)?.[1] ?? "??";
             logger.debug(
-              `[redfin] ✗ Wrong state — expected ${market.stateAbbr}, got ${urlState}: ${listing.url}`
+              `[redfin] ✗ Location mismatch: ${market.stateAbbr} market ` +
+              `but URL contains /${urlState}/ → ${listing.url}`
             );
-            rejected.push({ listing, reason: "wrong_location" });
+            rejected.push({ listing, reason: "wrong_state" });
             continue;
           }
 

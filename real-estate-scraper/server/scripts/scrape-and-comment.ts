@@ -90,26 +90,7 @@ const HEADLESS =
 // — FB's spam filter flags those patterns aggressively.
 
 const COMMENT_TEMPLATES: Array<(l: RawListing) => string> = [
-  () => "Hi! Is this still available?",
-  () => "Is this property still on the market?",
-  () => "Hey, still available? Would love more details!",
-  () => "Hi there! Do you have more photos of the inside?",
-  () => "Is this still for sale? Interested!",
-  () => "Could you DM me more details on this one?",
-  () => "Still available? Can we schedule a showing?",
-  () => "Interested! What's the best way to reach you?",
-  () => "Hi! Any interior photos available?",
-  () => "Love this listing — is it still available?",
-  () => "Do you have more info on this property?",
-  () => "Still on the market? Please DM me!",
-  () => "Hi, is this available? I'd love to take a look",
-  () => "Any updates on this listing?",
-  () => "Interested in this one! Is it still listed?",
-  () => "Hi! Can you share more details? Still available?",
-  () => "Would love to schedule a viewing if still available!",
-  () => "Hi, is this still for sale? Please DM me details",
-  () => "Looks great! Is it still available for viewing?",
-  () => "Still on the market? I'm very interested!",
+  (l) => `We are real end buyers. Please send these details and all your other deals you may have to admin@amazingpropertiesusa.com. We will underwrite them and send you our offers.`
 ];
 
 function autoComment(listing: RawListing): string {

@@ -13,10 +13,8 @@ amazing-properties-*.json
 *.pem
 
 # Session and authentication files
-*-session.json
 investor-session.json
 investorlift-session.json
-facebook-session.json
 
 # Scraper output & debug logs
 logs/

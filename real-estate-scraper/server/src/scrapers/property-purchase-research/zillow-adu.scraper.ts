@@ -23,6 +23,35 @@ const ZILLOW_DIAG_LIMIT = 10;
 
 const DEBUG_DIR = path.resolve("logs");
 
+const SEEN_LISTINGS_FILE  = path.join(DEBUG_DIR, "zillow_backfill_cursor.json");
+const AUDIT_FILE          = path.join(DEBUG_DIR, "backfill_audit.json");
+const BACKFILL_BATCH_SIZE = 1000;
+
+// ── Seen-listings tracker ───────────────────────────────────────────────────
+
+function loadSeenListings(): Set<string> {
+  try {
+    if (!fs.existsSync(SEEN_LISTINGS_FILE)) return new Set();
+    const data = JSON.parse(fs.readFileSync(SEEN_LISTINGS_FILE, "utf-8"));
+    logger.info(`[zillow-adu] Loaded ${data.seenIds.length} previously seen listing URLs (last run: ${data.lastRunAt})`);
+    return new Set(data.seenIds);
+  } catch (err) {
+    logger.warn(`[zillow-adu] Could not load seen listings tracker: ${err}`);
+    return new Set();
+  }
+}
+
+function saveSeenListings(ids: Set<string>): void {
+  try {
+    fs.mkdirSync(DEBUG_DIR, { recursive: true });
+    const data = { lastRunAt: new Date().toISOString(), seenIds: Array.from(ids) };
+    fs.writeFileSync(SEEN_LISTINGS_FILE, JSON.stringify(data, null, 2), "utf-8");
+    logger.info(`[zillow-adu] Saved ${ids.size} seen listing URLs to tracker`);
+  } catch (err) {
+    logger.warn(`[zillow-adu] Could not save seen listings tracker: ${err}`);
+  }
+}
+
 export class ZillowAduScraper extends ZillowScraper {
   readonly sourceName = "zillow-adu";
 
@@ -39,23 +68,35 @@ export class ZillowAduScraper extends ZillowScraper {
     const { config } = await import("../../config");
     const zillowCfg = config.sources.zillow;
     const markets   = zillowCfg.markets;
-    
+
+    // Persistent backfill tracker — skips listings already processed in
+    // previous batches and lets runContinuous() advance one batch at a time.
+    const previouslySeen = loadSeenListings();
+    const allSeenUrls = new Set(previouslySeen);
+    let processedThisBatch = 0;
+    let skippedAsSeen = 0;
+
     for (const market of markets) {
+      if (processedThisBatch >= BACKFILL_BATCH_SIZE) break;
       logger.info(`[${this.sourceName}] ── Market: ${market.name} (${market.listingType}) ──`);
 
       let stopPaging = false;
       let rawScannedForMarket = 0;
 
-      for (let page = 1; page <= zillowCfg.maxPagesPerMarket; page++) {
+      // Reverse pagination (oldest first) to backfill inventory across batches
+      for (let page = zillowCfg.maxPagesPerMarket; page >= 1; page--) {
         if (stopPaging) break;
         if (rawScannedForMarket >= this.options.maxListings) break;
+        if (processedThisBatch >= BACKFILL_BATCH_SIZE) break;
 
         logger.info(`[${this.sourceName}] ${market.name} — page ${page}/${zillowCfg.maxPagesPerMarket}`);
 
         let pageListings: RawListing[] = [];
         try {
-          // Call the protected scrapeMarketPage from the parent class, bypassing price filter
-          const result = await (this as any).scrapeMarketPage(market, page, true);
+          // Call the protected scrapeMarketPage from the parent class, bypassing
+          // price filter and the 30-day freshness cutoff so we backfill the
+          // full inventory (oldest first via reverse pagination).
+          const result = await (this as any).scrapeMarketPage(market, page, true, false);
           pageListings = result.listings;
           if (result.stop) stopPaging = true;
         } catch (err) {
@@ -67,17 +108,26 @@ export class ZillowAduScraper extends ZillowScraper {
 
         for (const rawListing of pageListings) {
           if (rawScannedForMarket >= this.options.maxListings) break;
-          
+          if (processedThisBatch >= BACKFILL_BATCH_SIZE) break;
+
           rawScannedForMarket++;
 
           if (!rawListing.url || this.visited.has(rawListing.url)) {
             continue;
           }
 
+          // Skip listings already processed in a previous backfill batch
+          if (allSeenUrls.has(rawListing.url)) {
+            skippedAsSeen++;
+            continue;
+          }
+
           this.visited.add(rawListing.url);
+          allSeenUrls.add(rawListing.url);
+          processedThisBatch++;
 
           logger.info(
-            `[${this.sourceName}] [${rawScannedForMarket}/${this.options.maxListings}] Fetching description: ${rawListing.address ?? rawListing.url}`
+            `[${this.sourceName}] [${processedThisBatch}/${BACKFILL_BATCH_SIZE}] Fetching description: ${rawListing.address ?? rawListing.url}`
           );
 
           // Fetch the full description & metadata from the detail page
@@ -188,14 +238,35 @@ export class ZillowAduScraper extends ZillowScraper {
         }
 
         if (pageListings.length === 0) {
-          logger.info(`[${this.sourceName}] ${market.name} — no listings on page ${page}, stopping`);
-          break;
+          logger.info(`[${this.sourceName}] ${market.name} — no listings on page ${page}, skipping to next older page`);
+          continue; // going backwards, keep moving to older pages
         }
       }
+      if (processedThisBatch >= BACKFILL_BATCH_SIZE) break;
       if (global.gc) global.gc();
       logger.info(`[${this.sourceName}] Memory after ${market.name}: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
     }
-    
+
+    logger.info(
+      `[${this.sourceName}] Processed ${processedThisBatch} new listings, skipped ${skippedAsSeen} already-seen`
+    );
+
+    // ── Save updated tracker & audit log ────────────────────────────
+    saveSeenListings(allSeenUrls);
+    try {
+      const auditRecord = {
+        timestamp: new Date().toISOString(),
+        source: this.sourceName,
+        processedCount: processedThisBatch,
+      };
+      const auditLog = fs.existsSync(AUDIT_FILE) ? JSON.parse(fs.readFileSync(AUDIT_FILE, "utf-8")) : [];
+      auditLog.push(auditRecord);
+      fs.writeFileSync(AUDIT_FILE, JSON.stringify(auditLog, null, 2), "utf-8");
+      logger.info(`[${this.sourceName}] Appended backfill audit log.`);
+    } catch (err) {
+      logger.warn(`[${this.sourceName}] Failed to write backfill audit log: ${err}`);
+    }
+
     return this.results;
   }
 }

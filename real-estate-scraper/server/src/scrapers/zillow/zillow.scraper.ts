@@ -53,6 +53,34 @@ const BETWEEN_MARKET_MS  = 5_000;   // extra pause between markets
 const DEBUG_PAGES        = 3;       // save raw HTML/JSON for first N pages per market
 const MAX_DETAIL_SAVES   = 3;       // how many detail-page __NEXT_DATA__ files to save
 
+const SEEN_LISTINGS_FILE  = path.join(process.cwd(), "logs", "zillow_backfill_cursor.json");
+const AUDIT_FILE          = path.join(process.cwd(), "logs", "backfill_audit.json");
+const BACKFILL_BATCH_SIZE = 1000;
+
+// ── Seen-listings tracker ───────────────────────────────────────────────────
+
+function loadSeenListings(): Set<string> {
+  try {
+    if (!fs.existsSync(SEEN_LISTINGS_FILE)) return new Set();
+    const data = JSON.parse(fs.readFileSync(SEEN_LISTINGS_FILE, "utf-8"));
+    logger.info(`[zillow] Loaded ${data.seenIds.length} previously seen listing URLs`);
+    return new Set(data.seenIds);
+  } catch (err) {
+    logger.warn(`[zillow] Could not load seen listings tracker: ${err}`);
+    return new Set();
+  }
+}
+
+function saveSeenListings(ids: Set<string>): void {
+  try {
+    const data = { lastRunAt: new Date().toISOString(), seenIds: Array.from(ids) };
+    fs.writeFileSync(SEEN_LISTINGS_FILE, JSON.stringify(data, null, 2), "utf-8");
+    logger.info(`[zillow] Saved ${ids.size} seen listing URLs to tracker`);
+  } catch (err) {
+    logger.warn(`[zillow] Could not save seen listings tracker: ${err}`);
+  }
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type OffMarketType = "pre_foreclosure" | "foreclosure" | "active";
@@ -362,6 +390,11 @@ export class ZillowScraper extends BaseScraper {
 
     const rejected: Array<{ listing: RawListing; reason: string }> = [];
 
+    const previouslySeen = loadSeenListings();
+    const allSeenUrls = new Set(previouslySeen);
+    let processedThisBatch = 0;
+    let skippedAsSeen = 0;
+
     for (const market of markets) {
       if (this.results.length >= this.options.maxListings) {
         logger.info(`[${this.sourceName}] maxListings (${this.options.maxListings}) reached — stopping`);
@@ -372,7 +405,8 @@ export class ZillowScraper extends BaseScraper {
 
       let stopPaging = false;
 
-      for (let page = 1; page <= zillowCfg.maxPagesPerMarket; page++) {
+      // Reverse pagination to get oldest first (page 20 -> 1)
+      for (let page = zillowCfg.maxPagesPerMarket; page >= 1; page--) {
         if (stopPaging)                                    break;
         if (this.results.length >= this.options.maxListings) break;
 
@@ -398,9 +432,18 @@ export class ZillowScraper extends BaseScraper {
           if (!listing.url) {
             rejected.push({ listing, reason: "no_url" }); continue;
           }
+          
+          if (previouslySeen.has(listing.url)) {
+            skippedAsSeen++;
+            continue;
+          }
+
           if (this.visited.has(listing.url)) {
             rejected.push({ listing, reason: "already_seen" }); continue;
           }
+          
+          processedThisBatch++;
+          allSeenUrls.add(listing.url);
 
           // Use off-market-aware filter (tolerates missing price)
           if (!passesFilterOffMarket(listing)) {
@@ -420,15 +463,23 @@ export class ZillowScraper extends BaseScraper {
             `@ ${listing.price != null ? "$" + listing.price.toLocaleString() : "no price"} ` +
             ((listing as any).zestimate ? `| Zestimate $${(listing as any).zestimate.toLocaleString()}` : "| no Zestimate")
           );
+          
+          if (processedThisBatch >= BACKFILL_BATCH_SIZE) {
+             logger.info(`[zillow] Reached backfill batch limit of ${BACKFILL_BATCH_SIZE}. Stopping processing.`);
+             break;
+          }
         }
+        
+        if (processedThisBatch >= BACKFILL_BATCH_SIZE) break;
 
         if (pageListings.length === 0) {
-          logger.info(`[${this.sourceName}] ${market.name} — no listings on page ${page}, stopping`);
-          break;
+          logger.info(`[${this.sourceName}] ${market.name} — no listings on page ${page}, skipping to next older page`);
+          continue; // changed break to continue since we are going backwards
         }
 
         await sleep(jitter(BETWEEN_PAGE_MS));
       }
+      if (processedThisBatch >= BACKFILL_BATCH_SIZE) break;
 
       logger.info(
         `[${this.sourceName}] ${market.name} done — ` +
@@ -443,8 +494,24 @@ export class ZillowScraper extends BaseScraper {
 
     logger.info(
       `[${this.sourceName}] Finished all markets — ` +
-      `${this.results.length} accepted, ${rejected.length} rejected`
+      `${this.results.length} accepted, ${rejected.length} rejected, skipped ${skippedAsSeen} already-seen`
     );
+    
+    // ── Save updated tracker & audit log ────────────────────────────
+    saveSeenListings(allSeenUrls);
+    try {
+      const auditRecord = {
+        timestamp: new Date().toISOString(),
+        source: this.sourceName,
+        processedCount: processedThisBatch,
+      };
+      const auditLog = fs.existsSync(AUDIT_FILE) ? JSON.parse(fs.readFileSync(AUDIT_FILE, "utf-8")) : [];
+      auditLog.push(auditRecord);
+      fs.writeFileSync(AUDIT_FILE, JSON.stringify(auditLog, null, 2), "utf-8");
+      logger.info(`[zillow] Appended backfill audit log.`);
+    } catch (err) {
+      logger.warn(`[zillow] Failed to write backfill audit log: ${err}`);
+    }
 
     // Write full debug JSON
     saveFile(
@@ -469,7 +536,8 @@ export class ZillowScraper extends BaseScraper {
   protected async scrapeMarketPage(
     market:     MarketConfig,
     pageNumber: number,
-    ignorePriceFilter: boolean = false
+    ignorePriceFilter: boolean = false,
+    applyDateFilter: boolean = true
   ): Promise<{ listings: RawListing[]; stop: boolean }> {
 
     const pageUrl = buildPageUrl(market.baseUrl, market.listingType, pageNumber, ignorePriceFilter);
@@ -512,11 +580,12 @@ export class ZillowScraper extends BaseScraper {
     }
 
     const searchJson             = json?.props?.pageProps?.searchPageState ?? json;
-    const { listings, allStale } = parseZillowResults(searchJson);
+    const { listings, allStale } = parseZillowResults(searchJson, applyDateFilter);
 
     logger.info(
       `[zillow] ${market.name} page ${pageNumber}: ` +
-      `${listings.length} listing(s) within ${MAX_DAYS_OLD} days` +
+      `${listings.length} listing(s) ` +
+      (applyDateFilter ? `within ${MAX_DAYS_OLD} days` : "(no date filter — full inventory)") +
       (allStale ? " — all stale" : "")
     );
 

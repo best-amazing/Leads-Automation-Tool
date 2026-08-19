@@ -104,25 +104,45 @@ async function main(): Promise<void> {
   });
 
   try {
-    // Run sequentially to avoid OOM — each scraper holds large HTML/JSON
-    // payloads in memory, running concurrently exceeds the heap limit.
-    const ilResults     = await investorLift.run();
-    if (global.gc) global.gc();
-    logger.info(`Memory after investorLift: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
+    async function runContinuous(scraper: any): Promise<AduResearchListing[]> {
+      const sourceName = scraper.sourceName;
+      const allResults: AduResearchListing[] = [];
+      while (true) {
+        const results = await scraper.run();
+        allResults.push(...(results as AduResearchListing[]));
+        if (global.gc) global.gc();
+        logger.info(`Memory after ${sourceName}: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
 
-    const zillowResults = await zillow.run();
-    if (global.gc) global.gc();
-    logger.info(`Memory after zillow: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
+        const auditPath = path.resolve("logs/backfill_audit.json");
+        if (!fs.existsSync(auditPath)) break;
+        
+        try {
+          const auditLog = JSON.parse(fs.readFileSync(auditPath, "utf-8"));
+          const lastAudit = auditLog[auditLog.length - 1];
+          
+          if (lastAudit && lastAudit.source === sourceName && lastAudit.processedCount >= 1000) {
+            logger.info(`[runner] ${sourceName} backfill hit batch limit, immediately fetching next batch...`);
+            // Add a small 2-second sleep to prevent spamming
+            await new Promise(r => setTimeout(r, 2000));
+          } else {
+            logger.info(`[runner] ${sourceName} backfill complete or reached end of inventory.`);
+            break;
+          }
+        } catch (err) {
+          logger.warn(`[runner] Could not read audit log to check backfill state: ${err}`);
+          break;
+        }
+      }
+      return allResults;
+    }
 
-    const redfinResults = await redfin.run();
-    if (global.gc) global.gc();
-    logger.info(`Memory after redfin: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
-
+    const ilResults     = await runContinuous(investorLift);
+    const zillowResults = await runContinuous(zillow);
+    const redfinResults = await runContinuous(redfin);
     const crexiResults  = await crexi.run();
     if (global.gc) global.gc();
-    logger.info(`Memory after crexi: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
 
-    const finalResults = [...ilResults, ...zillowResults, ...redfinResults, ...crexiResults] as AduResearchListing[];
+    const finalResults = [...ilResults, ...zillowResults, ...redfinResults, ...(crexiResults as AduResearchListing[])];
 
     try {
       const DEBUG_DIR = path.resolve("logs");
