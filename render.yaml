@@ -1,0 +1,44 @@
+# Render service definitions for the ADU research cron worker.
+#
+# Deploy: connect this repo to Render and create a "Background Worker" service
+# (or use the Render dashboard "New +" → Background Worker → pick this repo).
+# This file lets you do it from code instead.
+#
+# Notes:
+#  - Background workers / cron jobs require a paid Render plan.
+#  - Logs stream to the service's log panel/terminal automatically (stdout).
+#  - Secrets (session files, Google key, API creds) are NOT in git — provide
+#    them via Render env vars / secret files (see envVars marked sync: false).
+services:
+  - type: worker
+    name: adu-research-cron
+    runtime: docker
+    rootDir: real-estate-scraper/server
+    dockerfilePath: ./dockerfile
+    # Runs the scraper immediately on boot, then on the schedule below.
+    # Overrides the Dockerfile CMD (src/server.ts) so this container only
+    # runs the ADU research cron, not the web API.
+    startCommand: npm run scrape:adu-research:cron
+    envVars:
+      # How often to run the ADU research scrape ("every 6 hours").
+      - key: ADU_CRON_SCHEDULE
+        value: 0 */6 * * *
+      # Timezone for the cron schedule.
+      - key: ADU_CRON_TIMEZONE
+        value: Africa/Lagos
+      # ── Fill these in the Render dashboard (sync: false = secret) ──
+      - key: OXYLABS_USERNAME
+        sync: false
+      - key: OXYLABS_PASSWORD
+        sync: false
+      - key: SPREADSHEET_ID
+        sync: false
+      - key: GOOGLE_SERVICE_ACCOUNT_KEY_PATH
+        sync: false
+      - key: CREXI_PROXY_URL
+        sync: false
+      # Path to the InvestorLift session file inside the container. Export it
+      # locally (npm run session:investorlift) and mount it as a Render secret
+      # file, or set this to the mounted path e.g. /etc/secrets/investorlift-session.json
+      - key: INVESTORLIFT_SESSION_FILE
+        sync: false
