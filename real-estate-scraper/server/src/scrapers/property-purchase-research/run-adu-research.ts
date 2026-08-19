@@ -9,10 +9,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import "dotenv/config";
-import { AduResearchScraper } from "./adu-research.scraper";
 import { ZillowAduScraper } from "./zillow-adu.scraper";
 import { RedfinAduScraper } from "./redfin-adu.scraper";
-import { CrexiAduScraper } from "./crexi-adu.scraper";
 
 import { logger } from "../../utils/logger";
 import { getLastBackfillStatus } from "../../utils/backfill-store";
@@ -83,23 +81,12 @@ export async function runAduResearch(): Promise<void> {
 
   const maxListings = Number(process.env.MAX_LISTINGS ?? 5000);
 
-  const investorLift = new AduResearchScraper({
-    maxPages:    1,        // InvestorLift is single-page
-    maxListings,
-    onMatch: handleMatch,
-  });
-
   const zillow = new ZillowAduScraper({
     maxListings,
     onMatch: handleMatch,
   });
 
   const redfin = new RedfinAduScraper({
-    maxListings,
-    onMatch: handleMatch,
-  });
-
-  const crexi = new CrexiAduScraper({
     maxListings,
     onMatch: handleMatch,
   });
@@ -128,13 +115,11 @@ export async function runAduResearch(): Promise<void> {
       return allResults;
     }
 
-    const ilResults     = await runContinuous(investorLift);
     const zillowResults = await runContinuous(zillow);
     const redfinResults = await runContinuous(redfin);
-    const crexiResults  = await crexi.run();
     if (global.gc) global.gc();
 
-    const finalResults = [...ilResults, ...zillowResults, ...redfinResults, ...(crexiResults as AduResearchListing[])];
+    const finalResults = [...zillowResults, ...redfinResults];
 
     try {
       const DEBUG_DIR = path.resolve("logs");
@@ -152,18 +137,7 @@ export async function runAduResearch(): Promise<void> {
     logger.info("═".repeat(60));
 
   } catch (err: any) {
-    if (err.name === "SessionExpiredError") {
-      logger.error("─".repeat(60));
-      logger.error("InvestorLift session expired or missing!");
-      logger.error("");
-      logger.error("To fix this:");
-      logger.error("  1. Log in to https://investorlift.com/marketplace/ in your browser");
-      logger.error("  2. Run:  npm run session:investorlift");
-      logger.error("  3. Re-run this script");
-      logger.error("─".repeat(60));
-    } else {
-      logger.error(`ADU Research scraper failed: ${err}`);
-    }
+    logger.error(`ADU Research scraper failed: ${err}`);
     throw err;
   }
 }
