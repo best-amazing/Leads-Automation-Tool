@@ -1,5 +1,5 @@
 import { RawListing }            from "../../types/listing";
-import { ZillowScraper }         from "../zillow/zillow.scraper";
+import { ZillowScraper, oxylabsFetch, extractNextData } from "../zillow/zillow.scraper";
 import { ScraperOptions }        from "../base.scraper";
 import { AduResearchListing }    from "./adu-research.parser";
 import {
@@ -143,9 +143,8 @@ export class ZillowAduScraper extends ZillowScraper {
           let lotSqft: number | undefined;
 
           try {
-            let html: string | null = await (this as any).oxylabsFetch?.(rawListing.url, (this as any).sessionId) || await import("../zillow/zillow.scraper").then(m => m.oxylabsFetch(rawListing.url!, (this as any).sessionId));
+            let html: string | null = await oxylabsFetch(rawListing.url!, (this as any).sessionId);
             if (html) {
-              const { extractNextData } = await import("../zillow/zillow.scraper");
               const json = extractNextData(html);
               html = null; // Release ~1-2 MB HTML string for GC
               if (json) {
