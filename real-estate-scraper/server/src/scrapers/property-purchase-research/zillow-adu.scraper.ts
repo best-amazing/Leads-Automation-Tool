@@ -1,6 +1,3 @@
-import * as fs   from "fs";
-import * as path from "path";
-
 import { RawListing }            from "../../types/listing";
 import { ZillowScraper }         from "../zillow/zillow.scraper";
 import { ScraperOptions }        from "../base.scraper";
@@ -12,6 +9,10 @@ import {
   passesPropertyCriteria,
 }                                from "./adu-research.scraper";
 import { logger }                from "../../utils/logger";
+import {
+  loadSeenListings as loadSeenFromDb,
+  saveSeenListings as saveSeenToDb,
+} from "../../utils/backfill-store";
 import { ADU_KEYWORDS, TARGET_STATES } from "./adu-keywords";
 import { sleep, jitter }         from "../../utils/browser";
 
@@ -21,36 +22,7 @@ const BETWEEN_DETAIL_MS = 2_000;
 // How many listings to log full diagnostics for
 const ZILLOW_DIAG_LIMIT = 10;
 
-const DEBUG_DIR = path.resolve("logs");
-
-const SEEN_LISTINGS_FILE  = path.join(DEBUG_DIR, "zillow_backfill_cursor.json");
-const AUDIT_FILE          = path.join(DEBUG_DIR, "backfill_audit.json");
 const BACKFILL_BATCH_SIZE = 1000;
-
-// ── Seen-listings tracker ───────────────────────────────────────────────────
-
-function loadSeenListings(): Set<string> {
-  try {
-    if (!fs.existsSync(SEEN_LISTINGS_FILE)) return new Set();
-    const data = JSON.parse(fs.readFileSync(SEEN_LISTINGS_FILE, "utf-8"));
-    logger.info(`[zillow-adu] Loaded ${data.seenIds.length} previously seen listing URLs (last run: ${data.lastRunAt})`);
-    return new Set(data.seenIds);
-  } catch (err) {
-    logger.warn(`[zillow-adu] Could not load seen listings tracker: ${err}`);
-    return new Set();
-  }
-}
-
-function saveSeenListings(ids: Set<string>): void {
-  try {
-    fs.mkdirSync(DEBUG_DIR, { recursive: true });
-    const data = { lastRunAt: new Date().toISOString(), seenIds: Array.from(ids) };
-    fs.writeFileSync(SEEN_LISTINGS_FILE, JSON.stringify(data, null, 2), "utf-8");
-    logger.info(`[zillow-adu] Saved ${ids.size} seen listing URLs to tracker`);
-  } catch (err) {
-    logger.warn(`[zillow-adu] Could not save seen listings tracker: ${err}`);
-  }
-}
 
 export class ZillowAduScraper extends ZillowScraper {
   readonly sourceName = "zillow-adu";
@@ -71,7 +43,7 @@ export class ZillowAduScraper extends ZillowScraper {
 
     // Persistent backfill tracker — skips listings already processed in
     // previous batches and lets runContinuous() advance one batch at a time.
-    const previouslySeen = loadSeenListings();
+    const previouslySeen = await loadSeenFromDb(this.sourceName);
     const allSeenUrls = new Set(previouslySeen);
     let processedThisBatch = 0;
     let skippedAsSeen = 0;
@@ -252,21 +224,8 @@ export class ZillowAduScraper extends ZillowScraper {
       `[${this.sourceName}] Processed ${processedThisBatch} new listings, skipped ${skippedAsSeen} already-seen`
     );
 
-    // ── Save updated tracker & audit log ────────────────────────────
-    saveSeenListings(allSeenUrls);
-    try {
-      const auditRecord = {
-        timestamp: new Date().toISOString(),
-        source: this.sourceName,
-        processedCount: processedThisBatch,
-      };
-      const auditLog = fs.existsSync(AUDIT_FILE) ? JSON.parse(fs.readFileSync(AUDIT_FILE, "utf-8")) : [];
-      auditLog.push(auditRecord);
-      fs.writeFileSync(AUDIT_FILE, JSON.stringify(auditLog, null, 2), "utf-8");
-      logger.info(`[${this.sourceName}] Appended backfill audit log.`);
-    } catch (err) {
-      logger.warn(`[${this.sourceName}] Failed to write backfill audit log: ${err}`);
-    }
+    // ── Save updated tracker to DB ─────────────────────────────
+    await saveSeenToDb(this.sourceName, allSeenUrls, processedThisBatch);
 
     return this.results;
   }

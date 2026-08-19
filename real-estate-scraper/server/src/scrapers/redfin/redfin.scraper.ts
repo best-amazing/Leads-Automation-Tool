@@ -94,6 +94,10 @@ import { RawListing }                   from "../../types/listing";
 import { logger }                       from "../../utils/logger";
 import { sleep, jitter }                from "../../utils/browser";
 import {
+  loadSeenListings as loadSeenFromDb,
+  saveSeenListings as saveSeenToDb,
+} from "../../utils/backfill-store";
+import {
   parseRedfinApiResponse,
   parseRedfinDetailPage,
   parseAvmHistoricalData,
@@ -119,35 +123,7 @@ const DEBUG_PAGES         = 3;        // save raw GIS JSON for first N pages per
 
 const GIS_BASE            = "https://www.redfin.com/stingray/api/gis";
 const PAGE_SIZE           = 50;       // homes per request (max Redfin allows is 350)
-const SEEN_LISTINGS_FILE  = path.join(process.cwd(), "logs", "redfin_backfill_cursor.json");
-const AUDIT_FILE          = path.join(process.cwd(), "logs", "backfill_audit.json");
 const BACKFILL_BATCH_SIZE = 1000;
-
-// ── Seen-listings tracker ───────────────────────────────────────────────────
-
-function loadSeenListings(): Set<string> {
-  try {
-    if (!fs.existsSync(SEEN_LISTINGS_FILE)) return new Set();
-    const data = JSON.parse(fs.readFileSync(SEEN_LISTINGS_FILE, "utf-8"));
-    logger.info(`[redfin] Loaded ${data.seenIds.length} previously seen listing URLs`);
-    return new Set(data.seenIds);
-  } catch (err) {
-    logger.warn(`[redfin] Could not load seen listings tracker: ${err}`);
-    return new Set();
-  }
-}
-
-function saveSeenListings(ids: Set<string>): void {
-  try {
-    const dir = path.dirname(SEEN_LISTINGS_FILE);
-    fs.mkdirSync(dir, { recursive: true });
-    const data = { lastRunAt: new Date().toISOString(), seenIds: Array.from(ids) };
-    fs.writeFileSync(SEEN_LISTINGS_FILE, JSON.stringify(data, null, 2), "utf-8");
-    logger.info(`[redfin] Saved ${ids.size} seen listing URLs to tracker`);
-  } catch (err) {
-    logger.warn(`[redfin] Could not save seen listings tracker: ${err}`);
-  }
-}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -460,7 +436,7 @@ export class RedfinScraper extends BaseScraper {
       );
     }
 
-    const previouslySeen = loadSeenListings();
+    const previouslySeen = await loadSeenFromDb(this.sourceName);
     const allSeenUrls = new Set(previouslySeen);
     let processedThisBatch = 0;
     let skippedAsSeen = 0;
@@ -824,24 +800,11 @@ export class RedfinScraper extends BaseScraper {
       );
     }
 
-    // ── Save updated tracker & audit log ────────────────────────────
+    // ── Save updated tracker to DB ─────────────────────────────
     logger.info(
       `[redfin] Processed ${processedThisBatch} new listings, skipped ${skippedAsSeen} already-seen`
     );
-    saveSeenListings(allSeenUrls);
-    try {
-      const auditRecord = {
-        timestamp: new Date().toISOString(),
-        source: this.sourceName,
-        processedCount: processedThisBatch,
-      };
-      const auditLog = fs.existsSync(AUDIT_FILE) ? JSON.parse(fs.readFileSync(AUDIT_FILE, "utf-8")) : [];
-      auditLog.push(auditRecord);
-      fs.writeFileSync(AUDIT_FILE, JSON.stringify(auditLog, null, 2), "utf-8");
-      logger.info(`[redfin] Appended backfill audit log.`);
-    } catch (err) {
-      logger.warn(`[redfin] Failed to write backfill audit log: ${err}`);
-    }
+    await saveSeenToDb(this.sourceName, allSeenUrls, processedThisBatch);
 
     // ── JSON dump ─────────────────────────────────────────────────────────
 

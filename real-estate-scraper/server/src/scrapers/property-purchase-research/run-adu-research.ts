@@ -15,6 +15,7 @@ import { RedfinAduScraper } from "./redfin-adu.scraper";
 import { CrexiAduScraper } from "./crexi-adu.scraper";
 
 import { logger } from "../../utils/logger";
+import { getLastBackfillStatus } from "../../utils/backfill-store";
 import { ADU_KEYWORDS, TARGET_STATES } from "./adu-keywords";
 import { appendAduResult, writeAduResults, writeCsvOnly } from "./adu-csv-writer";
 import { AduResearchListing } from "./adu-research.parser";
@@ -113,23 +114,14 @@ export async function runAduResearch(): Promise<void> {
         if (global.gc) global.gc();
         logger.info(`Memory after ${sourceName}: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
 
-        const auditPath = path.resolve("logs/backfill_audit.json");
-        if (!fs.existsSync(auditPath)) break;
-        
-        try {
-          const auditLog = JSON.parse(fs.readFileSync(auditPath, "utf-8"));
-          const lastAudit = auditLog[auditLog.length - 1];
-          
-          if (lastAudit && lastAudit.source === sourceName && lastAudit.processedCount >= 1000) {
-            logger.info(`[runner] ${sourceName} backfill hit batch limit, immediately fetching next batch...`);
-            // Add a small 2-second sleep to prevent spamming
-            await new Promise(r => setTimeout(r, 2000));
-          } else {
-            logger.info(`[runner] ${sourceName} backfill complete or reached end of inventory.`);
-            break;
-          }
-        } catch (err) {
-          logger.warn(`[runner] Could not read audit log to check backfill state: ${err}`);
+        const { processedCount } = await getLastBackfillStatus(sourceName);
+
+        if (processedCount >= 1000) {
+          logger.info(`[runner] ${sourceName} backfill hit batch limit, immediately fetching next batch...`);
+          // Add a small 2-second sleep to prevent spamming
+          await new Promise(r => setTimeout(r, 2000));
+        } else {
+          logger.info(`[runner] ${sourceName} backfill complete or reached end of inventory.`);
           break;
         }
       }

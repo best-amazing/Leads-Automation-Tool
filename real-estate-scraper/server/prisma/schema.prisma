@@ -243,3 +243,24 @@ model SavedFilter {
   updatedAt    DateTime @updatedAt
 
 }
+
+model BackfillCursor {
+  id            String   @id @default(cuid())
+
+  // Source-specific backfill progress, one row per scraper source.
+  // Replaces the ephemeral logs/*_backfill_cursor.json + logs/backfill_audit.json
+  // so progress survives redeploys (Render's disk is ephemeral).
+  source        String   @unique   // "investorlift" | "zillow-adu" | "redfin-adu" | "crexi-adu"
+
+  // Listing URLs/IDs already processed by the backfill walk for this source.
+  seenIds       Json
+
+  // Count processed in the most recent batch. runContinuous() reads this to
+  // decide whether to fetch the next batch (>= BACKFILL_BATCH_SIZE = continue).
+  processedCount Int     @default(0)
+
+  lastRunAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([source])
+}

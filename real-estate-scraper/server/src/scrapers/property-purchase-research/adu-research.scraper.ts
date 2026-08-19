@@ -25,6 +25,10 @@ import { BaseScraper, ScraperOptions } from "../base.scraper";
 import { BrowserHandle, sleep } from "../../utils/browser";
 import { RawListing } from "../../types/listing";
 import { logger } from "../../utils/logger";
+import {
+  loadSeenListings as loadSeenFromDb,
+  saveSeenListings as saveSeenToDb,
+} from "../../utils/backfill-store";
 import { ADU_KEYWORDS, TARGET_STATES } from "./adu-keywords";
 import {
   AduResearchListing,
@@ -49,46 +53,9 @@ const SESSION_FILE = fs.existsSync(SESSION_FILE_FALLBACK) && !fs.existsSync(SESS
   ? SESSION_FILE_FALLBACK
   : SESSION_FILE_DEFAULT;
 const DEBUG_DIR = path.resolve("logs");
-const SEEN_LISTINGS_FILE = path.join(DEBUG_DIR, "il_backfill_cursor.json");
-const AUDIT_FILE = path.join(DEBUG_DIR, "backfill_audit.json");
 
 // How many new listings to process per run
 const BACKFILL_BATCH_SIZE = 1000;
-
-// ── Seen-listings tracker ───────────────────────────────────────────────────
-
-interface SeenListingsData {
-  /** ISO timestamp of last successful run */
-  lastRunAt: string;
-  /** Set of InvestorLift listing IDs we have already processed */
-  seenIds: string[];
-}
-
-function loadSeenListings(): Set<string> {
-  try {
-    if (!fs.existsSync(SEEN_LISTINGS_FILE)) return new Set();
-    const data: SeenListingsData = JSON.parse(fs.readFileSync(SEEN_LISTINGS_FILE, "utf-8"));
-    logger.info(`[adu-research] Loaded ${data.seenIds.length} previously seen listing IDs (last run: ${data.lastRunAt})`);
-    return new Set(data.seenIds);
-  } catch (err) {
-    logger.warn(`[adu-research] Could not load seen listings tracker: ${err}`);
-    return new Set();
-  }
-}
-
-function saveSeenListings(ids: Set<string>): void {
-  try {
-    fs.mkdirSync(DEBUG_DIR, { recursive: true });
-    const data: SeenListingsData = {
-      lastRunAt: new Date().toISOString(),
-      seenIds: Array.from(ids),
-    };
-    fs.writeFileSync(SEEN_LISTINGS_FILE, JSON.stringify(data, null, 2), "utf-8");
-    logger.info(`[adu-research] Saved ${ids.size} seen listing IDs to tracker`);
-  } catch (err) {
-    logger.warn(`[adu-research] Could not save seen listings tracker: ${err}`);
-  }
-}
 
 // How many raw XHR payloads to save for inspection (avoids disk spam if there are many requests)
 const MAX_RAW_SAVES = 3;
@@ -792,7 +759,7 @@ export class AduResearchScraper extends BaseScraper {
         logger.info(`[adu-research] Sorted listings oldest-first. Oldest: ${parsed[0]?.publishedAt ?? "N/A"}, Newest: ${parsed[parsed.length - 1]?.publishedAt ?? "N/A"}`);
 
         // ── Load previously seen listing IDs ────────────────────────────
-        const previouslySeen = loadSeenListings();
+        const previouslySeen = await loadSeenFromDb(this.sourceName);
         const allSeenIds = new Set(previouslySeen); 
 
         const seenUrls: Set<string> = new Set();
@@ -848,24 +815,9 @@ export class AduResearchScraper extends BaseScraper {
           }
         }
 
-        // ── Save updated tracker & audit log ────────────────────────────
-        saveSeenListings(allSeenIds);
-        
-        try {
-          const auditRecord = {
-            timestamp: new Date().toISOString(),
-            source: this.sourceName,
-            processedCount: processedThisBatch,
-            oldestDateInBatch: oldestInBatch,
-            newestDateInBatch: newestInBatch,
-          };
-          const auditLog = fs.existsSync(AUDIT_FILE) ? JSON.parse(fs.readFileSync(AUDIT_FILE, "utf-8")) : [];
-          auditLog.push(auditRecord);
-          fs.writeFileSync(AUDIT_FILE, JSON.stringify(auditLog, null, 2), "utf-8");
-          logger.info(`[adu-research] Appended backfill audit log. Batch date range: ${oldestInBatch} to ${newestInBatch}`);
-        } catch (err) {
-          logger.warn(`[adu-research] Failed to write backfill audit log: ${err}`);
-        }
+        // ── Save updated tracker to DB ─────────────────────────────
+        await saveSeenToDb(this.sourceName, allSeenIds, processedThisBatch);
+        logger.info(`[adu-research] Batch date range: ${oldestInBatch} to ${newestInBatch}`);
 
         // Log results
         logger.info(`[adu-research] Processed ${processedThisBatch} new listings, skipped ${skippedAsSeen} already-seen`);
