@@ -24,34 +24,48 @@ const TIMEZONE = process.env.ADU_CRON_TIMEZONE || "Africa/Lagos";
 
 // Guard against overlapping runs — a single batch can take hours.
 let running = false;
+let watchdogStarted = false;
 
-const job = new CronJob(
-  SCHEDULE,
-  async () => {
-    if (running) {
-      logger.info("[adu-cron] Previous run still in progress — skipping this tick.");
-      return;
-    }
+export function startAduWatchdog(): void {
+  if (watchdogStarted) return;
+  watchdogStarted = true;
 
-    running = true;
-    const start = Date.now();
-    logger.info("[adu-cron] Starting ADU research run...");
+  const job = new CronJob(
+    SCHEDULE,
+    async () => {
+      if (running) {
+        logger.info("[adu-cron] Previous run still in progress — skipping this tick.");
+        return;
+      }
 
-    try {
-      await runAduResearch();
-      logger.info(
-        `[adu-cron] ADU research run completed in ${Math.round((Date.now() - start) / 60000)} min`
-      );
-    } catch (err) {
-      logger.error(`[adu-cron] ADU research run failed: ${err instanceof Error ? err.message : err}`);
-    } finally {
-      running = false;
-      if (global.gc) global.gc();
-    }
-  },
-  null,
-  true, // run immediately on boot, then on schedule
-  TIMEZONE
-);
+      running = true;
+      const start = Date.now();
+      logger.info("[adu-cron] Starting ADU research run...");
 
-logger.info(`[adu-cron] Scheduler started — schedule "${SCHEDULE}" (${TIMEZONE}), first run now.`);
+      try {
+        await runAduResearch();
+        logger.info(
+          `[adu-cron] ADU research run completed in ${Math.round((Date.now() - start) / 60000)} min`
+        );
+      } catch (err) {
+        logger.error(`[adu-cron] ADU research run failed: ${err instanceof Error ? err.message : err}`);
+      } finally {
+        running = false;
+        if (global.gc) global.gc();
+      }
+    },
+    null,
+    true, // run immediately on boot, then on schedule
+    TIMEZONE
+  );
+
+  logger.info(`[adu-cron] Watchdog started — schedule "${SCHEDULE}" (${TIMEZONE}), first run now.`);
+}
+
+// ── Direct execution ────────────────────────────────────────────────────────
+// When run as the cron worker entry point, start immediately. When imported by
+// the web server (src/server.ts) the watchdog runs inside that process instead
+// — this is how the free-tier Web Service hosts the cron without a paid worker.
+if (require.main === module) {
+  startAduWatchdog();
+}

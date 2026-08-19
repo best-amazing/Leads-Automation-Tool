@@ -6,6 +6,7 @@ import { cronManager } from "./utils/cronManager";
 import { initializeDailyScrapeJob } from "./jobs/daily-scrape.job";
 import { getFilter } from "./db/repository";
 import { applySavedFilter } from "./config";
+import { startAduWatchdog } from "./scrapers/property-purchase-research/run-adu-research-cron";
 
 const PORT = process.env.PORT || 3005;
 
@@ -32,6 +33,10 @@ async function startServer() {
     const server = app.listen(PORT, () => {
       logger.info(`✓ Server listening on http://localhost:${PORT}`);
       logger.info(`✓ Properties endpoint: GET http://localhost:${PORT}/api/v1/properties`);
+
+      // Start the ADU research watchdog (runs on boot, then every 10 min).
+      // Keeps the scraper perpetually active without a paid background worker.
+      startAduWatchdog();
     });
 
       // Initialize cron jobs and start cron manager

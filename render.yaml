@@ -1,50 +1,21 @@
-# Render service definitions for the ADU research cron worker.
+# Render configuration for the ADU research scraper.
 #
-# Deploy: connect this repo to Render and create a "Background Worker" service
-# (or use the Render dashboard "New +" → Background Worker → pick this repo).
-# This file lets you do it from code instead.
+# Free-tier note: Render's free plan does NOT support Background Workers or
+# built-in cron jobs, so the scraper's 10-minute watchdog runs INSIDE the Web
+# Service process (src/server.ts calls startAduWatchdog() after the API boots).
+# No worker service is defined here.
 #
-# Notes:
-#  - Background workers / cron jobs require a paid Render plan.
-#  - Logs stream to the service's log panel/terminal automatically (stdout).
-#  - Secrets (session files, Google key, API creds) are NOT in git — provide
-#    them via Render env vars / secret files (see envVars marked sync: false).
-services:
-  - type: worker
-    name: adu-research-cron
-    runtime: docker
-    rootDir: real-estate-scraper/server
-    dockerfilePath: ./dockerfile
-    # Runs the scraper immediately on boot, then on the schedule below.
-    # Overrides the Dockerfile CMD (src/server.ts) so this container only
-    # runs the ADU research cron, not the web API. Migrations run first so the
-    # BackfillCursor table exists before the scraper writes to it.
-    startCommand: npx prisma migrate deploy && npm run scrape:adu-research:cron
-    envVars:
-      # How often to check whether the scraper is running and start it if idle
-      # (watchdog: if a run is already in progress, the worker skips the tick).
-      - key: ADU_CRON_SCHEDULE
-        value: */10 * * * *
-      # Timezone for the cron schedule.
-      - key: ADU_CRON_TIMEZONE
-        value: Africa/Lagos
-      # Postgres connection for the DB-backed backfill cursor. Same value as your
-      # local server/.env DATABASE_URL (keep sslmode=require for Aiven).
-      - key: DATABASE_URL
-        sync: false
-      # ── Fill these in the Render dashboard (sync: false = secret) ──
-      - key: OXYLABS_USERNAME
-        sync: false
-      - key: OXYLABS_PASSWORD
-        sync: false
-      - key: SPREADSHEET_ID
-        sync: false
-      - key: GOOGLE_SERVICE_ACCOUNT_KEY_PATH
-        sync: false
-      - key: CREXI_PROXY_URL
-        sync: false
-      # Path to the InvestorLift session file inside the container. Export it
-      # locally (npm run session:investorlift) and mount it as a Render secret
-      # file, or set this to the mounted path e.g. /etc/secrets/investorlift-session.json
-      - key: INVESTORLIFT_SESSION_FILE
-        sync: false
+# Env vars to set on the Web Service (Render dashboard → Environment):
+#   - DATABASE_URL               (same as local server/.env, sslmode=require)
+#   - ADU_CRON_SCHEDULE          optional, default "*/10 * * * *"
+#   - ADU_CRON_TIMEZONE          optional, default "Africa/Lagos"
+#   - OXYLABS_USERNAME / OXYLABS_PASSWORD
+#   - SPREADSHEET_ID
+#   - GOOGLE_SERVICE_ACCOUNT_KEY_PATH
+#   - CREXI_PROXY_URL
+#   - INVESTORLIFT_SESSION_FILE  (path to a mounted investorlift-session.json)
+#
+# Caveat: free-tier Web Services sleep after ~15 min without traffic, which
+# pauses the cron while asleep. Add a free uptime pinger (e.g. UptimeRobot,
+# cron-job.org) hitting your primary URL every ~5 min to keep it awake.
+services: []
