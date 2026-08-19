@@ -36,7 +36,10 @@ async function startServer() {
 
       // Start the ADU research watchdog (runs on boot, then every 10 min).
       // Keeps the scraper perpetually active without a paid background worker.
-      startAduWatchdog();
+      // The first run is deferred so the web server is up and serving the
+      // health check before the heavy scraper (puppeteer/playwright) loads.
+      const WATCHDOG_BOOT_DELAY_MS = Number(process.env.WATCHDOG_BOOT_DELAY_MS ?? 60_000);
+      setTimeout(() => startAduWatchdog(), WATCHDOG_BOOT_DELAY_MS);
     });
 
       // Initialize cron jobs and start cron manager
