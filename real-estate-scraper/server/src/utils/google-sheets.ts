@@ -1,5 +1,6 @@
 import { google } from "googleapis";
 import * as fs from "fs";
+import * as os from "os";
 import { logger } from "./logger";
 import { AduResearchListing } from "../scrapers/property-purchase-research/adu-research.parser";
 
@@ -12,6 +13,24 @@ let headerWrittenThisRun = false;
 import * as path from "path";
 
 function getServiceAccountPath(): string {
+  // If the key is provided base64-encoded (e.g. on Render, where files can't
+  // be uploaded), decode it to a temp file on first use.
+  const b64 = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_B64;
+  if (b64) {
+    try {
+      const decoded = Buffer.from(b64, "base64").toString("utf-8");
+      JSON.parse(decoded); // validate it's a JSON key
+      const tempPath = path.join(os.tmpdir(), "google-service-account.json");
+      if (!fs.existsSync(tempPath) || fs.readFileSync(tempPath, "utf-8") !== decoded) {
+        fs.writeFileSync(tempPath, decoded, { mode: 0o600 });
+        logger.info("[sheets] Decoded GOOGLE_SERVICE_ACCOUNT_KEY_B64 to temp key file");
+      }
+      return tempPath;
+    } catch (err) {
+      logger.error(`[sheets] Failed to decode GOOGLE_SERVICE_ACCOUNT_KEY_B64: ${err}`);
+    }
+  }
+
   let raw = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH || "";
   if (raw.startsWith("/mnt/c/")) {
     raw = "C:\\" + raw.slice(7).replace(/\//g, "\\");
