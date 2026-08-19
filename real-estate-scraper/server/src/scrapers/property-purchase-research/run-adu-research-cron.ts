@@ -12,15 +12,40 @@
 // Env:
 //   ADU_CRON_SCHEDULE  cron expression (default: every 10 minutes)
 //   ADU_CRON_TIMEZONE  IANA timezone       (default: Africa/Lagos)
+//   ADU_ALERT_NTFY_TOPIC   ntfy.sh topic for phone push on failure (e.g. my-adu-scraper)
+//   ADU_ALERT_WEBHOOK_URL  alternative generic webhook (Slack/Discord-style)
+//   ADU_ALERT_ON_SUCCESS   "true" to also notify on successful runs (default: off)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import "dotenv/config";
 import { CronJob } from "cron";
+import axios from "axios";
 import { logger } from "../../utils/logger";
 import { runAduResearch } from "./run-adu-research";
 
 const SCHEDULE = process.env.ADU_CRON_SCHEDULE || "*/10 * * * *";
 const TIMEZONE = process.env.ADU_CRON_TIMEZONE || "Africa/Lagos";
+
+// Fire-and-forget alert so a slow/blocked notification never stalls the run.
+function sendAlert(message: string): void {
+  const ntfyTopic = process.env.ADU_ALERT_NTFY_TOPIC;
+  const webhook = process.env.ADU_ALERT_WEBHOOK_URL;
+
+  const req = ntfyTopic
+    ? axios.post(`https://ntfy.sh/${ntfyTopic}`, message, {
+        headers: { Title: "ADU Scraper" },
+        timeout: 10_000,
+      })
+    : webhook
+      ? axios.post(webhook, { text: message }, { timeout: 10_000 })
+      : null;
+
+  if (req) {
+    req.catch((err: any) => {
+      logger.warn(`[adu-cron] Failed to send alert: ${err instanceof Error ? err.message : err}`);
+    });
+  }
+}
 
 // Guard against overlapping runs — a single batch can take hours.
 let running = false;
