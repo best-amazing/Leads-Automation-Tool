@@ -16,7 +16,7 @@ import { CronJob } from "cron";
 import { logger } from "../../utils/logger";
 import { runAduResearch } from "./run-adu-research";
 
-const SCHEDULE = process.env.ADU_CRON_SCHEDULE || "0 */6 * * *";
+const SCHEDULE = process.env.ADU_CRON_SCHEDULE || "*/10 * * * *";
 const TIMEZONE = process.env.ADU_CRON_TIMEZONE || "Africa/Lagos";
 
 // Guard against overlapping runs — a single batch can take hours.

@@ -21,9 +21,10 @@ services:
     # BackfillCursor table exists before the scraper writes to it.
     startCommand: npx prisma migrate deploy && npm run scrape:adu-research:cron
     envVars:
-      # How often to run the ADU research scrape ("every 6 hours").
+      # How often to check whether the scraper is running and start it if idle
+      # (watchdog: if a run is already in progress, the worker skips the tick).
       - key: ADU_CRON_SCHEDULE
-        value: 0 */6 * * *
+        value: */10 * * * *
       # Timezone for the cron schedule.
       - key: ADU_CRON_TIMEZONE
         value: Africa/Lagos
