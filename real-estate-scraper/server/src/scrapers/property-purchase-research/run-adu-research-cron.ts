@@ -31,34 +31,34 @@ export function startAduWatchdog(): void {
   watchdogStarted = true;
 
   const job = new CronJob(
-    {
-      cronTime: SCHEDULE,
-      onTick: async () => {
-        if (running) {
-          logger.info("[adu-cron] Previous run still in progress — skipping this tick.");
-          return;
-        }
+    SCHEDULE,
+    async () => {
+      if (running) {
+        logger.info("[adu-cron] Previous run still in progress — skipping this tick.");
+        return;
+      }
 
-        running = true;
-        const start = Date.now();
-        logger.info("[adu-cron] Starting ADU research run...");
+      running = true;
+      const start = Date.now();
+      logger.info("[adu-cron] Starting ADU research run...");
 
-        try {
-          await runAduResearch();
-          logger.info(
-            `[adu-cron] ADU research run completed in ${Math.round((Date.now() - start) / 60000)} min`
-          );
-        } catch (err) {
-          logger.error(`[adu-cron] ADU research run failed: ${err instanceof Error ? err.message : err}`);
-        } finally {
-          running = false;
-          if (global.gc) global.gc();
-        }
-      },
-      start: true,
-      runOnInit: true, // run immediately on boot, then on schedule
-      timeZone: TIMEZONE,
-    }
+      try {
+        await runAduResearch();
+        logger.info(
+          `[adu-cron] ADU research run completed in ${Math.round((Date.now() - start) / 60000)} min`
+        );
+      } catch (err) {
+        logger.error(`[adu-cron] ADU research run failed: ${err instanceof Error ? err.message : err}`);
+      } finally {
+        running = false;
+        if (global.gc) global.gc();
+      }
+    },
+    null,        // onComplete
+    true,        // start immediately
+    TIMEZONE,    // timeZone
+    undefined,   // context
+    true         // runOnInit — first run now, then on schedule
   );
 
   logger.info(`[adu-cron] Watchdog started — schedule "${SCHEDULE}" (${TIMEZONE}), first run now.`);
