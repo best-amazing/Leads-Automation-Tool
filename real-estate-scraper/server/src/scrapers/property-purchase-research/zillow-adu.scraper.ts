@@ -22,7 +22,7 @@ const BETWEEN_DETAIL_MS = 2_000;
 // How many listings to log full diagnostics for
 const ZILLOW_DIAG_LIMIT = 10;
 
-const BACKFILL_BATCH_SIZE = 1000;
+const BACKFILL_BATCH_SIZE = Number(process.env.ADU_BACKFILL_BATCH_SIZE ?? 1000);
 
 export class ZillowAduScraper extends ZillowScraper {
   readonly sourceName = "zillow-adu";

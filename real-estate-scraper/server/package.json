@@ -7,7 +7,7 @@
     "build": "prisma generate && tsc",
     "dev": "ts-node index.ts",
     "start": "node dist/index.js",
-    "server": "node --max-old-space-size=384 dist/src/server.js",
+    "server": "node --max-old-space-size=384 --expose-gc dist/src/server.js",
     "dev:server": "nodemon --exec ts-node src/server.ts",
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",
