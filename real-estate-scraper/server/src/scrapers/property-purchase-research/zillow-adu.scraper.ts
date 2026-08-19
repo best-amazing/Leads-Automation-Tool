@@ -98,12 +98,43 @@ export class ZillowAduScraper extends ZillowScraper {
           allSeenUrls.add(rawListing.url);
           processedThisBatch++;
 
+          // Extract zip from address
+          let zip: string | undefined;
+          if (rawListing.address) {
+            const match = rawListing.address.match(/\b\d{5}(-\d{4})?\b/);
+            if (match) zip = match[0];
+          }
+
+          // Build a lightweight enriched listing for pre-filtering
+          // (no detail page fetch yet — just search-page data)
+          const preFilter: AduResearchListing = {
+            ...rawListing,
+            description: "",
+            source:        this.sourceName,
+            totalBedrooms: rawListing.bedrooms,
+            zip,
+            daysOnMarket: rawListing.daysOnMarket ?? rawListing.daysOnZillow,
+            status: rawListing.status,
+            lotSqft: rawListing.lotSqft,
+          } as AduResearchListing;
+
+          // ── CHEAP FILTERS FIRST (no network call) ──────────────────
+          // 1. Location filter — only Ohio
+          if (!passesLocationFilter(preFilter)) {
+            continue;
+          }
+
+          // 2. Property criteria (beds/baths/price/year)
+          if (!passesPropertyCriteria(preFilter)) {
+            continue;
+          }
+
+          // ── EXPENSIVE DETAIL FETCH (only for Ohio listings that pass criteria) ──
           logger.info(
             `[${this.sourceName}] [${processedThisBatch}/${BACKFILL_BATCH_SIZE}] Fetching description: ${rawListing.address ?? rawListing.url} ` +
             `(daysOnZillow=${rawListing.daysOnZillow ?? "?"})`
           );
 
-          // Fetch the full description & metadata from the detail page
           let description = "";
           let units: number | undefined;
           let yearBuilt: number | undefined;
@@ -159,39 +190,17 @@ export class ZillowAduScraper extends ZillowScraper {
             logger.warn(`[${this.sourceName}] Failed to fetch detail for ${rawListing.url}: ${err}`);
           }
 
-          // Extract zip from address
-          let zip: string | undefined;
-          if (rawListing.address) {
-            const match = rawListing.address.match(/\b\d{5}(-\d{4})?\b/);
-            if (match) zip = match[0];
-          }
-
           const enriched: AduResearchListing = {
-            ...rawListing,
+            ...preFilter,
             description,
-            source:        this.sourceName,
-            totalBedrooms: rawListing.bedrooms, // Fallback to main bed count
             units,
-            yearBuilt,
+            yearBuilt: yearBuilt ?? preFilter.yearBuilt,
             schoolRating,
-            zip,
-            daysOnMarket: rawListing.daysOnMarket ?? rawListing.daysOnZillow,
-            status: status ?? rawListing.status,
-            lotSqft: lotSqft ?? rawListing.lotSqft
+            status: status ?? preFilter.status,
+            lotSqft: lotSqft ?? preFilter.lotSqft,
           } as AduResearchListing;
 
-          // Apply location filter — only Ohio
-          if (!passesLocationFilter(enriched)) {
-             logger.debug(`[${this.sourceName}] ✗ Location filter: ${enriched.address}`);
-             continue;
-          }
-
-          // Apply strict criteria
-          if (!passesPropertyCriteria(enriched)) {
-             continue;
-          }
-
-          // Now filter by keywords
+          // Now filter by keywords (requires description from detail page)
           const haystack = [enriched.title, enriched.description, enriched.address].join(" ").toLowerCase();
           const matchedKeyword = ADU_KEYWORDS.find((kw) => {
             const regex = new RegExp(`\\b${kw}\\b`, 'i');
