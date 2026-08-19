@@ -139,6 +139,8 @@ function loadSeenListings(): Set<string> {
 
 function saveSeenListings(ids: Set<string>): void {
   try {
+    const dir = path.dirname(SEEN_LISTINGS_FILE);
+    fs.mkdirSync(dir, { recursive: true });
     const data = { lastRunAt: new Date().toISOString(), seenIds: Array.from(ids) };
     fs.writeFileSync(SEEN_LISTINGS_FILE, JSON.stringify(data, null, 2), "utf-8");
     logger.info(`[redfin] Saved ${ids.size} seen listing URLs to tracker`);
@@ -466,6 +468,10 @@ export class RedfinScraper extends BaseScraper {
     // ── Phase 1: GIS API pages per market ────────────────────────────────
 
     for (const market of resolvedMarkets) {
+      if (processedThisBatch >= BACKFILL_BATCH_SIZE) {
+        logger.info(`[redfin] Reached backfill batch limit of ${BACKFILL_BATCH_SIZE}. Stopping processing.`);
+        break;
+      }
       if (this.results.length >= this.options.maxListings) {
         logger.info(`[redfin] maxListings reached — skipping remaining markets`);
         break;
@@ -536,6 +542,7 @@ export class RedfinScraper extends BaseScraper {
 
         for (const listing of listings) {
           if (this.results.length >= this.options.maxListings) break;
+          if (processedThisBatch >= BACKFILL_BATCH_SIZE) break;
 
           if (!listing.url) {
             rejected.push({ listing, reason: "no_url" });
@@ -588,6 +595,11 @@ export class RedfinScraper extends BaseScraper {
         if (page + 1 < this.options.maxPages) {
           await sleep(jitter(BETWEEN_PAGE_MS));
         }
+      }
+
+      if (processedThisBatch >= BACKFILL_BATCH_SIZE) {
+        logger.info(`[redfin] Reached backfill batch limit of ${BACKFILL_BATCH_SIZE}. Stopping processing.`);
+        break;
       }
     }
 
@@ -810,6 +822,25 @@ export class RedfinScraper extends BaseScraper {
       logger.info(
         `[redfin] Phase 2 done — AVM coverage: ${withEst}/${this.results.length}`
       );
+    }
+
+    // ── Save updated tracker & audit log ────────────────────────────
+    logger.info(
+      `[redfin] Processed ${processedThisBatch} new listings, skipped ${skippedAsSeen} already-seen`
+    );
+    saveSeenListings(allSeenUrls);
+    try {
+      const auditRecord = {
+        timestamp: new Date().toISOString(),
+        source: this.sourceName,
+        processedCount: processedThisBatch,
+      };
+      const auditLog = fs.existsSync(AUDIT_FILE) ? JSON.parse(fs.readFileSync(AUDIT_FILE, "utf-8")) : [];
+      auditLog.push(auditRecord);
+      fs.writeFileSync(AUDIT_FILE, JSON.stringify(auditLog, null, 2), "utf-8");
+      logger.info(`[redfin] Appended backfill audit log.`);
+    } catch (err) {
+      logger.warn(`[redfin] Failed to write backfill audit log: ${err}`);
     }
 
     // ── JSON dump ─────────────────────────────────────────────────────────
