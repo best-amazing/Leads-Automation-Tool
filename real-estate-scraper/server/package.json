@@ -4,7 +4,7 @@
   "description": "Off-market real estate leads automation system",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "prisma generate && tsc",
     "dev": "ts-node index.ts",
     "start": "node dist/index.js",
     "server": "node --max-old-space-size=4096 -r ts-node/register src/server.ts",
