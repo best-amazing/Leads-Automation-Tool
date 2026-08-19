@@ -44,11 +44,15 @@ export function startAduWatchdog(): void {
 
       try {
         await runAduResearch();
-        logger.info(
-          `[adu-cron] ADU research run completed in ${Math.round((Date.now() - start) / 60000)} min`
-        );
+        const mins = Math.round((Date.now() - start) / 60000);
+        logger.info(`[adu-cron] ADU research run completed in ${mins} min`);
+        if (process.env.ADU_ALERT_ON_SUCCESS === "true") {
+          sendAlert(`ADU research run completed in ${mins} min`);
+        }
       } catch (err) {
-        logger.error(`[adu-cron] ADU research run failed: ${err instanceof Error ? err.message : err}`);
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(`[adu-cron] ADU research run failed: ${msg}`);
+        sendAlert(`ADU research run FAILED: ${msg}`);
       } finally {
         running = false;
         if (global.gc) global.gc();

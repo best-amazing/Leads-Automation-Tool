@@ -266,10 +266,19 @@ export function oxylabsFetch(targetUrl: string, sessionId?: string): Promise<str
       req.destroy(); resolve(null);
     });
 
+    // Hard wall-clock deadline: guarantees the promise resolves even if the
+    // socket idle timer keeps resetting because the server trickles bytes.
+    const deadline = setTimeout(() => {
+      logger.warn(`[zillow] Oxylabs deadline exceeded (${REQUEST_TIMEOUT_MS / 1_000}s) — aborting`);
+      req.destroy(); resolve(null);
+    }, REQUEST_TIMEOUT_MS);
+
     req.on("error", (err: any) => {
       logger.error(`[zillow] Request error: [${err.code ?? "?"}] ${err.message}`);
       resolve(null);
     });
+
+    req.on("close", () => clearTimeout(deadline));
 
     req.write(bodyStr);
     req.end();
