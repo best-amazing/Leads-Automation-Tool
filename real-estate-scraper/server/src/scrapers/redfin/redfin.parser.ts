@@ -83,7 +83,7 @@
 //     /Redfin Estimate[^$]*\$([\d,]+)/i
 
 import * as cheerio from "cheerio";
-import { RawListing } from "../../types/listing";
+import { RawListing, PropertyType } from "../../types/listing";
 import { logger }     from "../../utils/logger";
 
 export const MAX_DAYS_OLD = 30;
@@ -271,6 +271,187 @@ export function parseRedfinApiResponse(
   const allStale = itemsWithAge > 0 && staleCount >= itemsWithAge;
 
   return { listings: results, totalCount, allStale };
+}
+
+// ── GIS CSV response parser ───────────────────────────────────────────────────
+//
+// The JSON /stingray/api/gis endpoint ignores `status` and `sold_within_days`
+// and always returns Active/for-sale listings.  The CSV endpoint
+// /stingray/api/gis-csv honors them:
+//
+//   status=1                    → Active only
+//   status=2                    → Contingent only
+//   status=3 (1|2) + sp=true    → Active + Contingent
+//   sold_within_days=N          → Sold (status param becomes a no-op)
+//
+// CSV columns (verified live, Aug 2026):
+//   SALE TYPE,SOLD DATE,PROPERTY TYPE,ADDRESS,CITY,STATE OR PROVINCE,
+//   ZIP OR POSTAL CODE,PRICE,BEDS,BATHS,LOCATION,SQUARE FEET,LOT SIZE,
+//   YEAR BUILT,DAYS ON MARKET,$/SQUARE FEET,HOA/MONTH,STATUS,
+//   NEXT OPEN HOUSE START TIME,NEXT OPEN HOUSE END TIME,
+//   URL (SEE ... FOR INFO ON PRICING),SOURCE,MLS#,FAVORITE,INTERESTED,
+//   LATITUDE,LONGITUDE
+//
+// Note: the first data row is a disclaimer notice ("In accordance with local
+// MLS rules...") that must be skipped.
+
+function parseCsvRow(line: string): string[] {
+  const fields: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') { current += '"'; i++; }
+        else inQuotes = false;
+      } else current += ch;
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      fields.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  fields.push(current);
+  return fields;
+}
+
+function toNum(raw: string): number | undefined {
+  const s = raw.replace(/[,$\s]/g, "");
+  if (!s) return undefined;
+  const n = Number(s);
+  return isNaN(n) ? undefined : n;
+}
+
+// Map the CSV "STATUS" column to our canonical status string
+function mapCsvStatus(raw: string): string | undefined {
+  const s = raw.trim().toLowerCase();
+  if (!s) return undefined;
+  if (s.includes("active")) return "active";
+  if (s.includes("contingent")) return "contingent";
+  if (s.includes("sold")) return "sold";
+  if (s.includes("pending")) return "pending";
+  if (s.includes("coming soon")) return "coming_soon";
+  return s;
+}
+
+function mapCsvPropertyType(raw: string): PropertyType {
+  const s = raw.toLowerCase();
+  if (s.includes("single family")) return "single_family";
+  if (s.includes("multi-family") || s.includes("multi family") || s.includes("duplex")) {
+    return "multi_family";
+  }
+  if (s.includes("condo")) return "condo";
+  if (s.includes("townhouse") || s.includes("town home")) return "townhouse";
+  return "unknown";
+}
+
+export function parseRedfinCsvResponse(
+  raw: string,
+  marketName: string
+): RedfinApiResult {
+  const lines = raw.split(/\r?\n/).filter(l => l.trim().length > 0);
+  if (lines.length < 2) {
+    logger.debug(`[redfin-parser] Empty CSV for "${marketName}"`);
+    return { listings: [], totalCount: 0, allStale: false };
+  }
+
+  const header = parseCsvRow(lines[0]);
+  const colIndex = (name: string): number => {
+    const idx = header.findIndex(h => h.trim().toUpperCase() === name.toUpperCase());
+    if (idx >= 0) return idx;
+    // Header name has a long "(SEE ...)" suffix on the URL column
+    return header.findIndex(h => h.trim().toUpperCase().startsWith(name.toUpperCase()));
+  };
+
+  const I = {
+    saleType: colIndex("SALE TYPE"),
+    soldDate: colIndex("SOLD DATE"),
+    propType: colIndex("PROPERTY TYPE"),
+    address:  colIndex("ADDRESS"),
+    city:     colIndex("CITY"),
+    state:    colIndex("STATE OR PROVINCE"),
+    zip:      colIndex("ZIP OR POSTAL CODE"),
+    price:    colIndex("PRICE"),
+    beds:     colIndex("BEDS"),
+    baths:    colIndex("BATHS"),
+    sqft:     colIndex("SQUARE FEET"),
+    lotSize:  colIndex("LOT SIZE"),
+    yearBuilt:colIndex("YEAR BUILT"),
+    dom:      colIndex("DAYS ON MARKET"),
+    status:   colIndex("STATUS"),
+    url:      colIndex("URL"),
+    lat:      colIndex("LATITUDE"),
+    lng:      colIndex("LONGITUDE"),
+  };
+
+  const results: RawListing[] = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const row = parseCsvRow(lines[i]);
+    const get = (idx: number): string => (idx >= 0 && idx < row.length ? row[idx].trim() : "");
+
+    const urlRaw = get(I.url);
+    if (!urlRaw) continue; // disclaimer row / malformed
+
+    const saleType = get(I.saleType).toLowerCase();
+    const isSold = saleType.includes("past sale") || get(I.status).toLowerCase().includes("sold");
+    const status = mapCsvStatus(get(I.status)) ?? (isSold ? "sold" : undefined);
+
+    const street = get(I.address);
+    const city = get(I.city);
+    const state = get(I.state);
+    const zip = get(I.zip);
+    const address = street
+      ? [street, city, state, zip].filter(Boolean).join(", ")
+      : urlRaw;
+
+    const price = toNum(get(I.price));
+
+    const listing: RawListing & { _redfinPropertyId?: number } = {
+      url: urlRaw.startsWith("http") ? urlRaw : `https://www.redfin.com${urlRaw}`,
+      source: "redfin",
+      title: address,
+      address,
+      city: city || undefined,
+      state: state || undefined,
+      price,
+      bedrooms: toNum(get(I.beds)),
+      bathrooms: toNum(get(I.baths)),
+      squareFeet: toNum(get(I.sqft)),
+      lotSqft: toNum(get(I.lotSize)),
+      yearBuilt: toNum(get(I.yearBuilt)),
+      daysOnMarket: toNum(get(I.dom)),
+      propertyType: mapCsvPropertyType(get(I.propType)),
+      description: "",
+      status,
+      soldDate: get(I.soldDate) || undefined,
+      latitude: toNum(get(I.lat)),
+      longitude: toNum(get(I.lng)),
+    };
+
+    // Sold rows often carry no useful days-on-market
+    if (isSold && listing.daysOnMarket == null) {
+      const sold = listing.soldDate;
+      if (sold) {
+        const parsed = new Date(sold);
+        if (!isNaN(parsed.getTime())) {
+          listing.daysOnMarket = Math.floor((Date.now() - parsed.getTime()) / 86_400_000);
+        }
+      }
+    }
+
+    const pid = urlRaw.match(/\/home\/(\d+)/)?.[1];
+    if (pid) listing._redfinPropertyId = Number(pid);
+
+    results.push(listing);
+  }
+
+  logger.debug(`[redfin-parser] "${marketName}": ${results.length} CSV listings parsed`);
+  return { listings: results, totalCount: 0, allStale: false };
 }
 
 // ── AVM API URL builders ──────────────────────────────────────────────────────

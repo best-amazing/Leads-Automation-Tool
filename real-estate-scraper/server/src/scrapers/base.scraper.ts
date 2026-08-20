@@ -25,6 +25,8 @@ export interface ScraperOptions {
   onMatch?: (listing: any) => Promise<void>;
   /** Skip the Redfin Phase 2 AVM enrichment + with-estimate return filter */
   skipAvmEnrichment?: boolean;
+  /** Redfin only: fetch all listing statuses (active, contingent, sold) via the GIS CSV endpoint */
+  allListings?: boolean;
 }
 
 export abstract class BaseScraper {
@@ -43,6 +45,7 @@ export abstract class BaseScraper {
       headless: options.headless !== undefined ? options.headless : true,
       onMatch: options.onMatch,
       skipAvmEnrichment: options.skipAvmEnrichment ?? false,
+      allListings: options.allListings ?? false,
     } as Required<ScraperOptions>;
   }
 

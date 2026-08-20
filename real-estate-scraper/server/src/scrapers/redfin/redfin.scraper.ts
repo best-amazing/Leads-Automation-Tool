@@ -99,6 +99,7 @@ import {
 } from "../../utils/backfill-store";
 import {
   parseRedfinApiResponse,
+  parseRedfinCsvResponse,
   parseRedfinDetailPage,
   parseAvmHistoricalData,
   parseBelowTheFold,
@@ -122,8 +123,11 @@ const BETWEEN_DETAIL_MS   = 2_000;    // delay for HTML fallback (if ever used)
 const DEBUG_PAGES         = 3;        // save raw GIS JSON for first N pages per market
 
 const GIS_BASE            = "https://www.redfin.com/stingray/api/gis";
+const GIS_CSV_BASE        = "https://www.redfin.com/stingray/api/gis-csv";
 const PAGE_SIZE           = 50;       // homes per request (max Redfin allows is 350)
 const BACKFILL_BATCH_SIZE = 1000;
+// Sold listings fetched when allListings is enabled — 730 days ≈ 2 years back
+const SOLD_WITHIN_DAYS    = 730;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -175,6 +179,45 @@ function buildGisUrl(
     ord:              "price-desc",
   });
   return `${GIS_BASE}?${params.toString()}`;
+}
+
+/**
+ * Builds a GIS CSV URL. The CSV endpoint is the only one that honors the
+ * `status` and `sold_within_days` params (the JSON endpoint ignores them):
+ *
+ *   status=3 + sp=true      → Active + Contingent
+ *   sold_within_days=N      → Sold (status becomes a no-op)
+ *
+ * Used when options.allListings is enabled so we can pull contingent and sold
+ * listings in addition to the active ones the JSON endpoint always returns.
+ */
+function buildGisCsvUrl(
+  market:          ResolvedMarket,
+  uipt:            number[],
+  maxPrice:        number,
+  start:           number,
+  pageSize:        number,
+  status:          string,   // "3" for active+contingent
+  soldWithinDays?: number    // set to switch to sold mode
+): string {
+  const params = new URLSearchParams({
+    al:               "1",
+    region_id:        String(market.regionId),
+    region_type:      String(market.regionType),
+    uipt:             uipt.join(","),
+    max_price:        String(maxPrice),
+    num_homes:        String(pageSize),
+    start:            String(start),
+    status:           status,
+    sp:               "true",
+    sf:               "1,2,3,5,6,7",
+    ord:              "price-desc",
+    v:                "8",
+  });
+  if (soldWithinDays != null) {
+    params.set("sold_within_days", String(soldWithinDays));
+  }
+  return `${GIS_CSV_BASE}?${params.toString()}`;
 }
 
 // ── Location validator ────────────────────────────────────────────────────────
@@ -440,13 +483,12 @@ export class RedfinScraper extends BaseScraper {
 
     const previouslySeen = await loadSeenFromDb(this.sourceName);
     const allSeenUrls = new Set(previouslySeen);
-    let processedThisBatch = 0;
-    let skippedAsSeen = 0;
+    const ctx = { processedThisBatch: 0, skippedAsSeen: 0 };
 
     // ── Phase 1: GIS API pages per market ────────────────────────────────
 
     for (const market of resolvedMarkets) {
-      if (processedThisBatch >= BACKFILL_BATCH_SIZE) {
+      if (ctx.processedThisBatch >= BACKFILL_BATCH_SIZE) {
         logger.info(`[redfin] Reached backfill batch limit of ${BACKFILL_BATCH_SIZE}. Stopping processing.`);
         break;
       }
@@ -504,8 +546,10 @@ export class RedfinScraper extends BaseScraper {
           saveFile(`redfin_gis_${slug}_p${page + 1}.json`, raw);
         }
 
+        // When allListings is on we keep every age (JSON endpoint returns
+        // Active regardless of status, so no 30-day staleness cut-off).
         const { listings, totalCount: tc, allStale } =
-          parseRedfinApiResponse(raw, market.name);
+          parseRedfinApiResponse(raw, market.name, !this.options.allListings);
 
         if (isFinite(tc) && tc > 0) totalCount = tc;
 
@@ -517,56 +561,7 @@ export class RedfinScraper extends BaseScraper {
         );
 
         this.allListings.push(...listings);
-
-        for (const listing of listings) {
-          if (this.results.length >= this.options.maxListings) break;
-          if (processedThisBatch >= BACKFILL_BATCH_SIZE) break;
-
-          if (!listing.url) {
-            rejected.push({ listing, reason: "no_url" });
-            continue;
-          }
-          
-          if (previouslySeen.has(listing.url)) {
-            skippedAsSeen++;
-            continue;
-          }
-
-          if (this.visited.has(listing.url)) {
-            rejected.push({ listing, reason: "duplicate" });
-            continue;
-          }
-          
-          processedThisBatch++;
-          allSeenUrls.add(listing.url);
-
-          if (!listingMatchesMarket(listing.url, market)) {
-            const urlState =
-              listing.url.match(/redfin\.com\/([A-Z]{2})\//)?.[1] ?? "??";
-            logger.debug(
-              `[redfin] ✗ Location mismatch: ${market.stateAbbr} market ` +
-              `but URL contains /${urlState}/ → ${listing.url}`
-            );
-            rejected.push({ listing, reason: "wrong_state" });
-            continue;
-          }
-
-          if (!this.passesFilter(listing)) {
-            rejected.push({ listing, reason: "filtered" });
-            logger.debug(`[redfin] ✗ ${listing.address} @ ${listing.price}`);
-            continue;
-          }
-
-          this.visited.add(listing.url);
-          this.results.push(listing);
-          logger.info(
-            `[redfin] ✓ [${this.results.length}/${this.options.maxListings}] ` +
-            `${listing.address} @ $${listing.price?.toLocaleString()}` +
-            (listing.zestimate
-              ? ` | AVM $${listing.zestimate.toLocaleString()}`
-              : "")
-          );
-        }
+        this.ingestListings(listings, market, rejected, previouslySeen, allSeenUrls, ctx);
 
         if (listings.length === 0 || allStale) break;
 
@@ -575,7 +570,33 @@ export class RedfinScraper extends BaseScraper {
         }
       }
 
-      if (processedThisBatch >= BACKFILL_BATCH_SIZE) {
+      // ── Phase 1b: CSV endpoint for non-active statuses (allListings only) ─
+      //
+      // The JSON endpoint ignores `status`/`sold_within_days` and only ever
+      // returns Active listings.  The CSV endpoint honors both, so when
+      // allListings is enabled we pull Contingent (status=2) and Sold
+      // (sold_within_days=SOLD_WITHIN_DAYS) via /stingray/api/gis-csv.
+
+      if (this.options.allListings) {
+        await this.scrapeCsvStatuses(
+          market,
+          maxPrice,
+          "3",
+          undefined,
+          "active+contingent",
+          rejected, previouslySeen, allSeenUrls, ctx
+        );
+        await this.scrapeCsvStatuses(
+          market,
+          maxPrice,
+          "1",
+          SOLD_WITHIN_DAYS,
+          "sold",
+          rejected, previouslySeen, allSeenUrls, ctx
+        );
+      }
+
+      if (ctx.processedThisBatch >= BACKFILL_BATCH_SIZE) {
         logger.info(`[redfin] Reached backfill batch limit of ${BACKFILL_BATCH_SIZE}. Stopping processing.`);
         break;
       }
@@ -603,6 +624,9 @@ export class RedfinScraper extends BaseScraper {
       ? []
       : (this.results as ListingWithPid[])
           .filter(l => l.zestimate == null)
+          // In allListings mode non-active statuses (contingent/sold) come from
+          // the CSV endpoint and carry no propertyId — skip AVM lookups for them.
+          .filter(l => !this.options.allListings || l.status == null || l.status === "active")
           .slice(0, this.detailFetchLimit);
 
     if (needsEstimate.length > 0) {
@@ -806,9 +830,9 @@ export class RedfinScraper extends BaseScraper {
 
     // ── Save updated tracker to DB ─────────────────────────────
     logger.info(
-      `[redfin] Processed ${processedThisBatch} new listings, skipped ${skippedAsSeen} already-seen`
+      `[redfin] Processed ${ctx.processedThisBatch} new listings, skipped ${ctx.skippedAsSeen} already-seen`
     );
-    await saveSeenToDb(this.sourceName, allSeenUrls, processedThisBatch);
+    await saveSeenToDb(this.sourceName, allSeenUrls, ctx.processedThisBatch);
 
     // ── JSON dump ─────────────────────────────────────────────────────────
 
@@ -854,6 +878,161 @@ export class RedfinScraper extends BaseScraper {
 
     logger.info(`[redfin] Finished — ${withEstimate.length} listings with estimates`);
     return withEstimate;
+  }
+
+  // ── Listing ingest pipeline (shared by JSON + CSV paths) ──────────────────
+
+  private ingestListings(
+    listings: RawListing[],
+    market: ResolvedMarket,
+    rejected: Array<{ listing: RawListing; reason: string }>,
+    previouslySeen: Set<string>,
+    allSeenUrls: Set<string>,
+    ctx: { processedThisBatch: number; skippedAsSeen: number }
+  ): void {
+    for (const listing of listings) {
+      if (this.results.length >= this.options.maxListings) break;
+      if (ctx.processedThisBatch >= BACKFILL_BATCH_SIZE) break;
+
+      if (!listing.url) {
+        rejected.push({ listing, reason: "no_url" });
+        continue;
+      }
+
+      if (previouslySeen.has(listing.url)) {
+        ctx.skippedAsSeen++;
+        continue;
+      }
+
+      if (this.visited.has(listing.url)) {
+        rejected.push({ listing, reason: "duplicate" });
+        continue;
+      }
+
+      ctx.processedThisBatch++;
+      allSeenUrls.add(listing.url);
+
+      if (!listingMatchesMarket(listing.url, market)) {
+        const urlState =
+          listing.url.match(/redfin\.com\/([A-Z]{2})\//)?.[1] ?? "??";
+        logger.debug(
+          `[redfin] ✗ Location mismatch: ${market.stateAbbr} market ` +
+          `but URL contains /${urlState}/ → ${listing.url}`
+        );
+        rejected.push({ listing, reason: "wrong_state" });
+        continue;
+      }
+
+      if (!this.passesFilter(listing)) {
+        rejected.push({ listing, reason: "filtered" });
+        logger.debug(`[redfin] ✗ ${listing.address} @ ${listing.price}`);
+        continue;
+      }
+
+      this.visited.add(listing.url);
+      this.results.push(listing);
+      logger.info(
+        `[redfin] ✓ [${this.results.length}/${this.options.maxListings}] ` +
+        `${listing.address} @ $${listing.price?.toLocaleString()}` +
+        (listing.status ? ` | ${listing.status}` : "") +
+        (listing.zestimate
+          ? ` | AVM $${listing.zestimate.toLocaleString()}`
+          : "")
+      );
+    }
+  }
+
+  // ── GIS CSV status fetcher (allListings mode) ──────────────────────────────
+
+  /**
+   * Fetches listings via the GIS CSV endpoint for a given status bitmask
+   * (and optional sold window), parsing them into RawListing[] and feeding
+   * them through the same ingest pipeline as the JSON path.
+   *
+   * @param status        CSV status bitmask ("1"=active, "2"=contingent, "3"=both)
+   * @param soldWithinDays Set to switch into sold mode (status becomes no-op)
+   * @param label         Human label for logs
+   */
+  private async scrapeCsvStatuses(
+    market: ResolvedMarket,
+    maxPrice: number,
+    status: string,
+    soldWithinDays: number | undefined,
+    label: string,
+    rejected: Array<{ listing: RawListing; reason: string }>,
+    previouslySeen: Set<string>,
+    allSeenUrls: Set<string>,
+    ctx: { processedThisBatch: number; skippedAsSeen: number }
+  ): Promise<void> {
+    let totalCount = Infinity;
+    let fetchedAny = false;
+
+    for (let page = 0; page < this.options.maxPages; page++) {
+      if (this.results.length >= this.options.maxListings) break;
+
+      const start = page * this.pageSize;
+      if (start >= totalCount) break;
+
+      const csvUrl = buildGisCsvUrl(
+        market,
+        [...this.uipt],
+        maxPrice,
+        start,
+        this.pageSize,
+        status,
+        soldWithinDays
+      );
+
+      logger.info(
+        `[redfin] ${market.name} CSV ${label} page ${page + 1}/${this.options.maxPages} ` +
+        `(start=${start}) → ${csvUrl}`
+      );
+
+      let raw: string | null = null;
+      try {
+        raw = await oxylabsFetch(csvUrl, false);
+      } catch (err: any) {
+        if (err?.message === "OXYLABS_AUTH_FAILED") {
+          logger.error("[redfin] Auth failed — aborting CSV status fetch");
+          return;
+        }
+        logger.error(`[redfin] CSV ${label} fetch error: ${err}`);
+      }
+
+      if (!raw) {
+        logger.warn(`[redfin] No CSV response for ${market.name} ${label} page ${page + 1}`);
+        return;
+      }
+
+      if (page < DEBUG_PAGES) {
+        const slug = market.name.replace(/\s+/g, "_").toLowerCase();
+        saveFile(`redfin_gis_${slug}_${label}_p${page + 1}.csv`, raw);
+      }
+
+      const { listings, totalCount: tc } = parseRedfinCsvResponse(raw, market.name);
+
+      if (isFinite(tc) && tc > 0) totalCount = tc;
+      fetchedAny = fetchedAny || listings.length > 0;
+
+      logger.info(
+        `[redfin] ${market.name} CSV ${label} p${page + 1}: ` +
+        `${listings.length} listing(s)`
+      );
+
+      this.allListings.push(...listings);
+      this.ingestListings(listings, market, rejected, previouslySeen, allSeenUrls, ctx);
+
+      // CSV gives no totalCount — stop when a page comes back empty or short
+      if (listings.length < this.pageSize) break;
+
+      if (page + 1 < this.options.maxPages) {
+        await sleep(jitter(BETWEEN_PAGE_MS));
+      }
+    }
+
+    if (!fetchedAny) {
+      logger.warn(`[redfin] ${market.name} CSV ${label}: no listings returned`);
+    }
   }
 
   protected async scrapePage(_h: any, _p: number): Promise<RawListing[]> {

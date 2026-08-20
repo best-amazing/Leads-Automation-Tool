@@ -14,7 +14,10 @@ export class RedfinAduScraper extends RedfinScraper {
     // estimates. belowTheFold is 403-blocked and the HTML fallback is
     // WAF-blocked (405), so Phase 2 would burn ~3 slow Oxylabs calls per
     // listing for no ADU value. Skip it entirely.
-    options = { ...options, skipAvmEnrichment: true };
+    //
+    // allListings: the JSON GIS endpoint only ever returns Active listings,
+    // so pull the rest (Contingent + Sold) via the GIS CSV endpoint too.
+    options = { ...options, skipAvmEnrichment: true, allListings: true };
     super(options);
   }
 

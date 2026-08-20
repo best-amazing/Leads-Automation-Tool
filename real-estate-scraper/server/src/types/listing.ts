@@ -74,8 +74,15 @@ export interface RawListing {
 
   // Optional metadata
   imgSrc?: string;
-  status?: string;                   // "for_sale", "pending", etc.
+  status?: string;                   // "for_sale", "pending", "sold", etc.
   priceReduced?: boolean;
+
+  // Geography (from sources that expose it, e.g. Redfin CSV)
+  latitude?: number;
+  longitude?: number;
+
+  // Sold listings only — date the property closed (e.g. "January-29-2026")
+  soldDate?: string;
 }
 
 /** 
