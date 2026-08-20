@@ -10,6 +10,11 @@ export class RedfinAduScraper extends RedfinScraper {
   readonly sourceName: string = "redfin-adu";
 
   constructor(options: ScraperOptions = {}) {
+    // The ADU pipeline filters on listing.price (from GIS Phase 1), not AVM
+    // estimates. belowTheFold is 403-blocked and the HTML fallback is
+    // WAF-blocked (405), so Phase 2 would burn ~3 slow Oxylabs calls per
+    // listing for no ADU value. Skip it entirely.
+    options = { ...options, skipAvmEnrichment: true };
     super(options);
   }
 

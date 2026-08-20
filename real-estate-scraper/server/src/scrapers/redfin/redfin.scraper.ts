@@ -599,9 +599,11 @@ export class RedfinScraper extends BaseScraper {
     // estimate was found.  This lets you inspect the actual payload structure
     // when debugging a new market or a listing that returns no estimate.
 
-    const needsEstimate = (this.results as ListingWithPid[])
-      .filter(l => l.zestimate == null)
-      .slice(0, this.detailFetchLimit);
+    const needsEstimate = this.options.skipAvmEnrichment
+      ? []
+      : (this.results as ListingWithPid[])
+          .filter(l => l.zestimate == null)
+          .slice(0, this.detailFetchLimit);
 
     if (needsEstimate.length > 0) {
       logger.info(
@@ -825,6 +827,13 @@ export class RedfinScraper extends BaseScraper {
     );
 
     // ── Filter: Only return listings with zestimate (AVM estimate) ────────────
+
+    if (this.options.skipAvmEnrichment) {
+      logger.info(
+        `[redfin] Finished — returning all ${this.results.length} accepted listings (skipAvmEnrichment)`
+      );
+      return this.results;
+    }
 
     const withEstimate = this.results.filter(l => l.zestimate != null);
     const withoutEstimate = this.results.filter(l => l.zestimate == null);

@@ -23,6 +23,8 @@ export interface ScraperOptions {
   headless?: boolean;
   /** Callback fired immediately when a match is found (for incremental writing) */
   onMatch?: (listing: any) => Promise<void>;
+  /** Skip the Redfin Phase 2 AVM enrichment + with-estimate return filter */
+  skipAvmEnrichment?: boolean;
 }
 
 export abstract class BaseScraper {
@@ -40,6 +42,7 @@ export abstract class BaseScraper {
       proxyUrl: options.proxyUrl !== undefined ? options.proxyUrl : null,
       headless: options.headless !== undefined ? options.headless : true,
       onMatch: options.onMatch,
+      skipAvmEnrichment: options.skipAvmEnrichment ?? false,
     } as Required<ScraperOptions>;
   }
 
