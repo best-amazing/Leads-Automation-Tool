@@ -106,11 +106,11 @@ export async function saveResumeCursor(
         source,
         seenIds: [],
         processedCount: 0,
-        resumeCursor: cursor as unknown as Prisma.JsonValue,
+        resumeCursor: cursor as unknown as Prisma.InputJsonValue,
         lastRunAt: new Date(),
       },
       update: {
-        resumeCursor: cursor as unknown as Prisma.JsonValue,
+        resumeCursor: cursor as unknown as Prisma.InputJsonValue,
         lastRunAt: new Date(),
       },
     });
