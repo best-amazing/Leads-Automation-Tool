@@ -178,6 +178,7 @@ export class ZillowAduScraper extends ZillowScraper {
               FETCH_TIMEOUT_MS,
               `detail fetch ${rawListing.url}`
             );
+            logger.debug(`[${this.sourceName}] [#${processedThisBatch}] fetched, html=${html ? html.length : 0} chars`);
             if (html) {
               const json = extractNextData(html);
               html = null; // Release ~1-2 MB HTML string for GC
@@ -222,6 +223,8 @@ export class ZillowAduScraper extends ZillowScraper {
           } catch (err) {
             logger.warn(`[${this.sourceName}] ${rawListing.url}: ${err instanceof Error ? err.message : err}`);
           }
+
+          logger.debug(`[${this.sourceName}] [#${processedThisBatch}] parsed, desc=${description.length} chars`);
 
           const enriched: AduResearchListing = {
             ...preFilter,
