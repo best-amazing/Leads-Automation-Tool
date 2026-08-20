@@ -127,7 +127,7 @@ export class ZillowAduScraper extends ZillowScraper {
 
           this.visited.add(rawListing.url);
           allSeenUrls.add(rawListing.url);
-          processedThisBatch++;
+          processedThisBatch++ ;
 
           // Extract zip from address
           let zip: string | undefined;
