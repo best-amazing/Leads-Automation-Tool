@@ -35,6 +35,20 @@ export class ZillowAduScraper extends ZillowScraper {
     logger.info(`[${this.sourceName}] Starting ADU research scrape via Zillow`);
     this.visited.clear();
     this.results = [];
+
+    // Progress + memory watchdog: logs once a minute; warns loudly if no
+    // listing has completed in 4+ minutes (stuck fetch/OOM climb).
+    let lastProgressAt = Date.now();
+    const watchdog = setInterval(() => {
+      const idleSec = Math.round((Date.now() - lastProgressAt) / 1000);
+      const rssMB = Math.round(process.memoryUsage().rss / 1024 / 1024);
+      const heapMB = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+      if (idleSec > 240) {
+        logger.warn(`[${this.sourceName}] STALLED — no listing completed in ${idleSec}s (RSS ${rssMB}MB, heap ${heapMB}MB)`);
+      } else {
+        logger.info(`[${this.sourceName}] watchdog — idle ${idleSec}s, RSS ${rssMB}MB, heap ${heapMB}MB`);
+      }
+    }, 60_000);
     
     // We import config from base to read markets
     const { config } = await import("../../config");
@@ -216,6 +230,7 @@ export class ZillowAduScraper extends ZillowScraper {
           }
 
           await sleep(jitter(BETWEEN_DETAIL_MS));
+          lastProgressAt = Date.now();
         }
 
         if (pageListings.length === 0) {
@@ -235,6 +250,7 @@ export class ZillowAduScraper extends ZillowScraper {
     // ── Save updated tracker to DB ─────────────────────────────
     await saveSeenToDb(this.sourceName, allSeenUrls, processedThisBatch);
 
+    clearInterval(watchdog);
     return this.results;
   }
 }
