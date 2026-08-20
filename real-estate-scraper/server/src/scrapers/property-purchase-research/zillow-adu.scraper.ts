@@ -24,6 +24,21 @@ const ZILLOW_DIAG_LIMIT = 10;
 
 const BACKFILL_BATCH_SIZE = Number(process.env.ADU_BACKFILL_BATCH_SIZE ?? 1000);
 
+// Hard per-step deadline: guarantees a stuck call can never freeze the whole
+// run. Logs which listing/step hung, then the loop moves on.
+function raceTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`[hang] ${label} did not finish in ${Math.round(ms / 1000)}s`)),
+      ms
+    );
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); }
+    );
+  });
+}
+
 export class ZillowAduScraper extends ZillowScraper {
   readonly sourceName = "zillow-adu";
 
@@ -157,7 +172,12 @@ export class ZillowAduScraper extends ZillowScraper {
           let lotSqft: number | undefined;
 
           try {
-            let html: string | null = await oxylabsFetch(rawListing.url!, (this as any).sessionId);
+            const FETCH_TIMEOUT_MS = Number(process.env.ADU_FETCH_TIMEOUT_MS ?? 180_000);
+            let html: string | null = await raceTimeout(
+              oxylabsFetch(rawListing.url!, (this as any).sessionId),
+              FETCH_TIMEOUT_MS,
+              `detail fetch ${rawListing.url}`
+            );
             if (html) {
               const json = extractNextData(html);
               html = null; // Release ~1-2 MB HTML string for GC
@@ -200,7 +220,7 @@ export class ZillowAduScraper extends ZillowScraper {
               }
             }
           } catch (err) {
-            logger.warn(`[${this.sourceName}] Failed to fetch detail for ${rawListing.url}: ${err}`);
+            logger.warn(`[${this.sourceName}] ${rawListing.url}: ${err instanceof Error ? err.message : err}`);
           }
 
           const enriched: AduResearchListing = {
@@ -225,7 +245,16 @@ export class ZillowAduScraper extends ZillowScraper {
              this.results.push(enriched);
              logger.info(`[${this.sourceName}] ✓ MATCHED ADU KEYWORD: ${matchedKeyword}`);
              if (this.options.onMatch) {
-               await this.options.onMatch(enriched);
+               try {
+                 const MATCH_TIMEOUT_MS = Number(process.env.ADU_MATCH_TIMEOUT_MS ?? 300_000);
+                 await raceTimeout(
+                   this.options.onMatch(enriched),
+                   MATCH_TIMEOUT_MS,
+                   `onMatch ${rawListing.url}`
+                 );
+               } catch (err) {
+                 logger.warn(`[${this.sourceName}] ${rawListing.url}: ${err instanceof Error ? err.message : err}`);
+               }
              }
           }
 
