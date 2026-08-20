@@ -12,6 +12,11 @@ const PORT = process.env.PORT || 3005;
 
 async function startServer() {
   try {
+    logger.info(
+      `[boot] pid=${process.pid} instance=${process.env.RENDER_INSTANCE_ID ?? "n/a"} ` +
+      `commit=${process.env.RENDER_GIT_COMMIT ?? "local"}`
+    );
+
     // Test database connection
     await prisma.$queryRaw`SELECT 1`;
     logger.info("✓ Database connected");

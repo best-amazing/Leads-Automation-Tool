@@ -9,6 +9,7 @@ import {
   passesPropertyCriteria,
 }                                from "./adu-research.scraper";
 import { logger }                from "../../utils/logger";
+import { aduRunState }           from "./adu-run-state";
 import {
   loadSeenListings as loadSeenFromDb,
   saveSeenListings as saveSeenToDb,
@@ -120,6 +121,7 @@ export class ZillowAduScraper extends ZillowScraper {
           // Skip listings already processed in a previous backfill batch
           if (allSeenUrls.has(rawListing.url)) {
             skippedAsSeen++;
+            aduRunState.skippedSeen = skippedAsSeen;
             continue;
           }
 
@@ -150,11 +152,13 @@ export class ZillowAduScraper extends ZillowScraper {
           // ── CHEAP FILTERS FIRST (no network call) ──────────────────
           // 1. Location filter — only Ohio
           if (!passesLocationFilter(preFilter)) {
+            logger.debug(`[${this.sourceName}] [#${processedThisBatch}] skipped — location filter`);
             continue;
           }
 
           // 2. Property criteria (beds/baths/price/year)
           if (!passesPropertyCriteria(preFilter)) {
+            logger.debug(`[${this.sourceName}] [#${processedThisBatch}] skipped — property criteria`);
             continue;
           }
 
@@ -246,6 +250,7 @@ export class ZillowAduScraper extends ZillowScraper {
           if (matchedKeyword) {
              enriched.matchedKeyword = matchedKeyword;
              this.results.push(enriched);
+             aduRunState.matched = this.results.length;
              logger.info(`[${this.sourceName}] ✓ MATCHED ADU KEYWORD: ${matchedKeyword}`);
              if (this.options.onMatch) {
                try {
@@ -266,6 +271,10 @@ export class ZillowAduScraper extends ZillowScraper {
           await sleep(jitter(BETWEEN_DETAIL_MS));
           logger.debug(`[${this.sourceName}] [#${processedThisBatch}] done`);
           lastProgressAt = Date.now();
+          aduRunState.lastProgressAt = lastProgressAt;
+          aduRunState.listingsProcessed = processedThisBatch;
+          aduRunState.rssMB = Math.round(process.memoryUsage().rss / 1024 / 1024);
+          aduRunState.heapMB = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
         }
 
         if (pageListings.length === 0) {

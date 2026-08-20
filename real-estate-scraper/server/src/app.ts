@@ -1,5 +1,6 @@
 import express, { Express, Request, Response, NextFunction } from "express";
 import { logger } from "./utils/logger";
+import { aduRunState } from "./scrapers/property-purchase-research/adu-run-state";
 
 const app: Express = express();
 
@@ -49,9 +50,20 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 
-// Health check
+// Health check — also surfaces ADU research run state as an out-of-band
+// heartbeat so liveness/progress is visible even if the log viewer wedges.
 app.get("/api/healthcheck", (req: Request, res: Response) => {
-  res.status(200).json({ status: "ok", message: "Server is running" });
+  const idleSec = aduRunState.lastProgressAt
+    ? Math.round((Date.now() - aduRunState.lastProgressAt) / 1000)
+    : 0;
+  res.status(200).json({
+    status: "ok",
+    message: "Server is running",
+    adu: {
+      ...aduRunState,
+      idleSec,
+    },
+  });
 });
 
 // API v1 routes

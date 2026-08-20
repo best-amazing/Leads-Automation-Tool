@@ -22,6 +22,7 @@ import { CronJob } from "cron";
 import axios from "axios";
 import { logger } from "../../utils/logger";
 import { runAduResearch } from "./run-adu-research";
+import { aduRunState } from "./adu-run-state";
 
 const SCHEDULE = process.env.ADU_CRON_SCHEDULE || "*/10 * * * *";
 const TIMEZONE = process.env.ADU_CRON_TIMEZONE || "Africa/Lagos";
@@ -64,6 +65,12 @@ export function startAduWatchdog(): void {
       }
 
       running = true;
+      aduRunState.running = true;
+      aduRunState.startedAt = Date.now();
+      aduRunState.lastProgressAt = Date.now();
+      aduRunState.listingsProcessed = 0;
+      aduRunState.skippedSeen = 0;
+      aduRunState.matched = 0;
       const start = Date.now();
       logger.info("[adu-cron] Starting ADU research run...");
 
@@ -80,6 +87,7 @@ export function startAduWatchdog(): void {
         sendAlert(`ADU research run FAILED: ${msg}`);
       } finally {
         running = false;
+        aduRunState.running = false;
         if (global.gc) global.gc();
       }
     },

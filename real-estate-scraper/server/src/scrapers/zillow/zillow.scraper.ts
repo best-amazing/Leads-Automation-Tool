@@ -211,6 +211,10 @@ export function oxylabsFetch(targetUrl: string, sessionId?: string): Promise<str
       },
       (res: http.IncomingMessage) => {
         const enc    = (res.headers["content-encoding"] ?? "").toLowerCase();
+        logger.debug(
+          `[zillow] [sock] response headers — status=${res.statusCode ?? 0} ` +
+          `enc=${enc || "identity"} content-length=${res.headers["content-length"] ?? "?"}`
+        );
         const chunks: Buffer[] = [];
         const stream =
           enc === "gzip"    ? res.pipe(zlib.createGunzip())           :
@@ -218,8 +222,18 @@ export function oxylabsFetch(targetUrl: string, sessionId?: string): Promise<str
           enc === "br"      ? res.pipe(zlib.createBrotliDecompress()) :
           res as any;
 
-        (stream as NodeJS.ReadableStream).on("data", (c: Buffer) => chunks.push(c));
+        let chunkCount = 0;
+        let totalBytes = 0;
+        (stream as NodeJS.ReadableStream).on("data", (c: Buffer) => {
+          chunks.push(c);
+          chunkCount++;
+          totalBytes += c.length;
+          if (chunkCount === 1 || chunkCount % 100 === 0) {
+            logger.debug(`[zillow] [sock] chunk #${chunkCount} (+${c.length} B, total ${totalBytes} B)`);
+          }
+        });
         (stream as NodeJS.ReadableStream).on("end", () => {
+          logger.debug(`[zillow] [sock] end — total ${totalBytes} B`);
           const raw    = Buffer.concat(chunks).toString("utf-8");
           const status = res.statusCode ?? 0;
 
@@ -282,11 +296,13 @@ export function oxylabsFetch(targetUrl: string, sessionId?: string): Promise<str
     // promise. Resolving twice is a no-op, so this is safe alongside 'end'.
     req.on("close", () => {
       clearTimeout(deadline);
+      logger.debug("[zillow] [sock] close");
       resolve(null);
     });
 
     req.write(bodyStr);
     req.end();
+    logger.debug(`[zillow] [sock] request sent — ${targetUrl}`);
   });
 }
 
