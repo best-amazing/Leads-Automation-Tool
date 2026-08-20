@@ -74,6 +74,14 @@ export function startAduWatchdog(): void {
       const start = Date.now();
       logger.info("[adu-cron] Starting ADU research run...");
 
+      // Self-ping to prevent Render hibernation during long runs
+      const selfPing = setInterval(() => {
+        const pingUrl = process.env.RENDER_EXTERNAL_URL 
+          ? `${process.env.RENDER_EXTERNAL_URL}/api/healthcheck` 
+          : "http://localhost:10000/api/healthcheck";
+        axios.get(pingUrl).catch(() => {});
+      }, 5 * 60 * 1000); // Ping every 5 minutes
+
       try {
         await runAduResearch();
         const mins = Math.round((Date.now() - start) / 60000);
@@ -86,6 +94,7 @@ export function startAduWatchdog(): void {
         logger.error(`[adu-cron] ADU research run failed: ${msg}`);
         sendAlert(`ADU research run FAILED: ${msg}`);
       } finally {
+        clearInterval(selfPing);
         running = false;
         aduRunState.running = false;
         if (global.gc) global.gc();
