@@ -578,18 +578,20 @@ export class RedfinScraper extends BaseScraper {
       // (sold_within_days=SOLD_WITHIN_DAYS) via /stingray/api/gis-csv.
 
       if (this.options.allListings) {
+        // status=2 → Contingent only (actives already come from the JSON endpoint)
         await this.scrapeCsvStatuses(
           market,
           maxPrice,
-          "3",
+          "2",
           undefined,
-          "active+contingent",
+          "contingent",
           rejected, previouslySeen, allSeenUrls, ctx
         );
+        // sold_within_days → Sold (status param becomes a no-op)
         await this.scrapeCsvStatuses(
           market,
           maxPrice,
-          "1",
+          "2",
           SOLD_WITHIN_DAYS,
           "sold",
           rejected, previouslySeen, allSeenUrls, ctx
