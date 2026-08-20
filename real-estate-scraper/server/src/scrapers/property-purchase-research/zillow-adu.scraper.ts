@@ -99,7 +99,7 @@ export class ZillowAduScraper extends ZillowScraper {
           // price filter and the 30-day freshness cutoff so we backfill the
           // full inventory (oldest first via reverse pagination).
           const PAGE_TIMEOUT_MS = Number(process.env.ADU_PAGE_TIMEOUT_MS ?? 180_000);
-          const result = await raceTimeout(
+          const result = await raceTimeout<{ listings: RawListing[]; stop: boolean }>(
             (this as any).scrapeMarketPage(market, page, true, false),
             PAGE_TIMEOUT_MS,
             `scrapeMarketPage ${market.name} p${page}`
