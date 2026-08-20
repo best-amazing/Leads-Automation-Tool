@@ -259,9 +259,12 @@ export class ZillowAduScraper extends ZillowScraper {
                  logger.warn(`[${this.sourceName}] ${rawListing.url}: ${err instanceof Error ? err.message : err}`);
                }
              }
+          } else {
+            logger.debug(`[${this.sourceName}] [#${processedThisBatch}] no keyword match`);
           }
 
           await sleep(jitter(BETWEEN_DETAIL_MS));
+          logger.debug(`[${this.sourceName}] [#${processedThisBatch}] done`);
           lastProgressAt = Date.now();
         }
 
