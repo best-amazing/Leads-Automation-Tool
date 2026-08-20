@@ -170,7 +170,9 @@ function buildGisUrl(
     status:           "1",
     sold_within_days: String(MAX_DAYS_OLD),
     sf:               "1,2,3,5,6,7",
-    ord:              "time-on-redfin-desc", // Oldest first
+    // Redfin's GIS API rejects "time-on-redfin-*" and "days-on-market-*"
+    // with "Invalid arguments"; use a stable, valid ordering instead.
+    ord:              "price-desc",
   });
   return `${GIS_BASE}?${params.toString()}`;
 }
