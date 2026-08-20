@@ -185,6 +185,15 @@ export function oxylabsFetch(targetUrl: string, sessionId?: string): Promise<str
       return;
     }
 
+    // Guard: once the Promise is settled, no timer/event should call resolve again.
+    let settled = false;
+    function settle(value: string | null) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      resolve(value);
+    }
+
     const payload: OxylabsPayload = {
       source:          "universal",
       url:             targetUrl,
@@ -196,6 +205,16 @@ export function oxylabsFetch(targetUrl: string, sessionId?: string): Promise<str
 
     const bodyStr = JSON.stringify(payload);
     const authStr = Buffer.from(`${OXYLABS_USERNAME}:${OXYLABS_PASSWORD}`).toString("base64");
+
+    // Hard wall-clock deadline — the ONLY timer that can cancel everything.
+    // Set to 150s (30s more than socket idle) so socket timeout fires first
+    // in normal cases, and this acts as the absolute last resort.
+    const DEADLINE_MS = REQUEST_TIMEOUT_MS + 30_000;
+    const deadline = setTimeout(() => {
+      logger.warn(`[zillow] Oxylabs deadline exceeded (${DEADLINE_MS / 1_000}s) — aborting`);
+      try { req.destroy(); } catch {}
+      settle(null);
+    }, DEADLINE_MS);
 
     const req = https.request(
       {
@@ -237,18 +256,18 @@ export function oxylabsFetch(targetUrl: string, sessionId?: string): Promise<str
           const raw    = Buffer.concat(chunks).toString("utf-8");
           const status = res.statusCode ?? 0;
 
-          if (status === 401) { logger.error("[zillow] Oxylabs 401 — bad credentials"); resolve(null); return; }
-          if (status === 429) { logger.warn("[zillow] Oxylabs 429 — rate limited");      resolve(null); return; }
+          if (status === 401) { logger.error("[zillow] Oxylabs 401 — bad credentials"); settle(null); return; }
+          if (status === 429) { logger.warn("[zillow] Oxylabs 429 — rate limited");      settle(null); return; }
           if (status !== 200) {
             logger.warn(`[zillow] Oxylabs HTTP ${status}`);
             logger.debug(`[zillow] Body snippet: ${raw.slice(0, 300)}`);
-            resolve(null); return;
+            settle(null); return;
           }
 
           let parsed: OxylabsResponse;
           try { parsed = JSON.parse(raw); } catch {
             logger.warn("[zillow] Could not parse Oxylabs envelope");
-            resolve(null); return;
+            settle(null); return;
           }
 
           const result      = parsed?.results?.[0];
@@ -257,47 +276,41 @@ export function oxylabsFetch(targetUrl: string, sessionId?: string): Promise<str
 
           if (innerStatus === 403 || innerStatus === 429) {
             logger.warn(`[zillow] Zillow HTTP ${innerStatus} via Oxylabs`);
-            resolve(null); return;
+            settle(null); return;
           }
           if (!content || content.length < 5_000) {
             logger.warn(`[zillow] Short content (${content.length} chars) — possible block`);
-            resolve(null); return;
+            settle(null); return;
           }
 
           logger.debug(`[zillow] Oxylabs OK — ${content.length} chars, inner ${innerStatus}`);
-          resolve(content);
+          settle(content);
         });
 
         (stream as NodeJS.ReadableStream).on("error", (err: any) => {
           logger.warn(`[zillow] Stream error: ${err.message}`);
-          resolve(null);
+          settle(null);
         });
       }
     );
 
     req.setTimeout(REQUEST_TIMEOUT_MS, () => {
       logger.warn(`[zillow] Oxylabs timed out after ${REQUEST_TIMEOUT_MS / 1_000}s`);
-      req.destroy(); resolve(null);
+      try { req.destroy(); } catch {}
+      settle(null);
     });
-
-    // Hard wall-clock deadline: guarantees the promise resolves even if the
-    // socket idle timer keeps resetting because the server trickles bytes.
-    const deadline = setTimeout(() => {
-      logger.warn(`[zillow] Oxylabs deadline exceeded (${REQUEST_TIMEOUT_MS / 1_000}s) — aborting`);
-      req.destroy(); resolve(null);
-    }, REQUEST_TIMEOUT_MS);
 
     req.on("error", (err: any) => {
       logger.error(`[zillow] Request error: [${err.code ?? "?"}] ${err.message}`);
-      resolve(null);
+      settle(null);
     });
 
-    // Catch-all: any close (normal, reset, or half-close mid-body) settles the
-    // promise. Resolving twice is a no-op, so this is safe alongside 'end'.
+    // Catch-all: any close settles with null. The deadline timer is only
+    // cleared by settle() after the Promise has already resolved — never
+    // before, so a premature 'close' event can never disarm the deadline.
     req.on("close", () => {
-      clearTimeout(deadline);
       logger.debug("[zillow] [sock] close");
-      resolve(null);
+      settle(null);
     });
 
     req.write(bodyStr);
