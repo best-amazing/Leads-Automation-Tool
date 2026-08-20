@@ -7,8 +7,7 @@ import { AduResearchListing } from "../scrapers/property-purchase-research/adu-r
 let cachedExistingLinks: Set<string> | null = null;
 let stateLoaded = false;
 let cachedLastRow = 0;
-let cachedLastRowIsHeader = false;
-let headerWrittenThisRun = false;
+let cachedHasTodayData = false;
 
 import * as path from "path";
 
@@ -177,8 +176,7 @@ export async function writeAduResearchToSheets(
         stateLoaded = true;
         cachedExistingLinks = new Set<string>();
         cachedLastRow = 0;
-        cachedLastRowIsHeader = false;
-        headerWrittenThisRun = false;
+        cachedHasTodayData = false;
 
         try {
           const getRes = await sheets.spreadsheets.values.get({
@@ -188,8 +186,6 @@ export async function writeAduResearchToSheets(
 
           const existingRows = getRes.data.values || [];
           cachedLastRow = existingRows.length;
-          cachedLastRowIsHeader =
-            cachedLastRow > 0 && existingRows[cachedLastRow - 1]?.[0] === "Date Found";
 
           if (cachedLastRow > 0) {
             const headerRow = existingRows[0];
@@ -202,11 +198,31 @@ export async function writeAduResearchToSheets(
                 cachedExistingLinks.add(row[linkIndex]);
               }
             }
+
+            // A header block is written once per day. Determine whether today's
+            // block already exists: find the last header row, then check whether
+            // any data rows after it are dated today. This is restart-proof —
+            // Render recycles the instance between runs, so the decision must
+            // come from the sheet itself, not process memory.
+            const todayStr = new Date().toLocaleDateString();
+            let lastHeaderIdx = -1;
+            for (let i = existingRows.length - 1; i >= 0; i--) {
+              if (existingRows[i]?.[0] === "Date Found") {
+                lastHeaderIdx = i;
+                break;
+              }
+            }
+            for (let i = lastHeaderIdx + 1; i < existingRows.length; i++) {
+              if (existingRows[i]?.[0] === todayStr) {
+                cachedHasTodayData = true;
+                break;
+              }
+            }
           }
         } catch (err) {
           // If sheet doesn't exist yet, get() might throw, which is fine
           cachedLastRow = 0;
-          cachedLastRowIsHeader = false;
+          cachedHasTodayData = false;
         }
       }
 
@@ -225,9 +241,10 @@ export async function writeAduResearchToSheets(
 
       let nextRow = cachedLastRow + 1;
 
-      // Write a bold header at the top of this run's block when the sheet is
-      // empty or the last row isn't already the header (daily runs).
-      if (!headerWrittenThisRun && !cachedLastRowIsHeader && sheetId !== undefined) {
+      // Write a bold header at the top of today's block, but only once per day.
+      // Restart-proof: the decision comes from the sheet state (no data rows
+      // dated today exist yet), not process memory.
+      if (!cachedHasTodayData && sheetId !== undefined) {
         logger.info(`[sheets] Writing bold header row at row ${nextRow}...`);
         await sheets.spreadsheets.batchUpdate({
           spreadsheetId,
@@ -255,8 +272,7 @@ export async function writeAduResearchToSheets(
             ],
           },
         });
-        headerWrittenThisRun = true;
-        cachedLastRowIsHeader = true;
+        cachedHasTodayData = true;
         nextRow += 1;
         cachedLastRow += 1;
       }
