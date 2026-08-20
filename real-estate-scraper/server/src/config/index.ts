@@ -122,11 +122,6 @@ export const config = {
           baseUrl:     "https://www.zillow.com/oh/",
           listingType: "active" as const,
         },
-        {
-          name:        "Wisconsin - Active",
-          baseUrl:     "https://www.zillow.com/wi/",
-          listingType: "active" as const,
-        },
       ] as Array<{
         name:        string;
         baseUrl:     string;
@@ -153,7 +148,6 @@ export const config = {
         { name: "Cleveland, OH",  regionId: 4145,  regionType: 6 },
         { name: "Columbus, OH",   regionId: 4664,  regionType: 6 },
         { name: "Toledo, OH",     regionId: 19458, regionType: 6 },
-        { name: "Milwaukee, WI",  regionId: 35759, regionType: 6 },
       ] as Array<{ name: string; regionId: number; regionType: number }>,
 
       uipt: [1, 4] as number[],
