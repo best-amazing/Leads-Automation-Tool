@@ -17,7 +17,11 @@ export class RedfinAduScraper extends RedfinScraper {
     //
     // allListings: the JSON GIS endpoint only ever returns Active listings,
     // so pull the rest (Contingent + Sold) via the GIS CSV endpoint too.
-    options = { ...options, skipAvmEnrichment: true, allListings: true };
+    //
+    // persistOffset: resume from the stored {marketIndex, phaseIndex, start}
+    // cursor each run() so the backfill walk continues past the 500-listing
+    // depth cap and eventually sweeps the full served result set.
+    options = { ...options, skipAvmEnrichment: true, allListings: true, persistOffset: true };
     super(options);
   }
 
@@ -50,6 +54,18 @@ export class RedfinAduScraper extends RedfinScraper {
         zip,
       } as AduResearchListing;
     });
+
+    // Option A — newest-first post-sort: prioritize freshly listed homes
+    // (lowest daysOnMarket) so the deed lookup / sheets emission order leads
+    // with fresh leads each run. Listings without a DOM are sorted last.
+    // Note: the base run() still walks Redfin's served price-desc order — the
+    // persisted offset (persistOffset) guarantees full-depth coverage, and this
+    // client-side sort only reorders emission within each fetched batch.
+    aduListings.sort(
+      (a, b) =>
+        (a.daysOnMarket ?? Number.MAX_SAFE_INTEGER) -
+        (b.daysOnMarket ?? Number.MAX_SAFE_INTEGER)
+    );
 
     const filtered = aduListings.filter(l => 
       passesLocationFilter(l) && 

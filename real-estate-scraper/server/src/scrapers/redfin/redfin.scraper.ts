@@ -96,6 +96,8 @@ import { sleep, jitter }                from "../../utils/browser";
 import {
   loadSeenListings as loadSeenFromDb,
   saveSeenListings as saveSeenToDb,
+  loadResumeCursor as loadCursorFromDb,
+  saveResumeCursor as saveCursorToDb,
 } from "../../utils/backfill-store";
 import {
   parseRedfinApiResponse,
@@ -146,6 +148,23 @@ interface ResolvedMarket extends Market {
 // Extended listing type that carries the Redfin propertyId through Phase 1
 // so Phase 2 AVM lookups can use the JSON API instead of the HTML page.
 type ListingWithPid = RawListing & { _redfinPropertyId?: number };
+
+// ── Resume-cursor types (persistOffset mode) ─────────────────────────────────
+
+type PhaseKey = "active" | "contingent" | "sold";
+
+interface PhaseWalkOutcome {
+  /** The current market+phase result set was fully walked. */
+  finished: boolean;
+  /** Hit BACKFILL_BATCH_SIZE — pause the walk and save the cursor. */
+  batchLimitHit: boolean;
+  /** Hit maxListings — pause the walk and save the cursor. */
+  maxListingsHit: boolean;
+  /** Fatal error (auth) — stop everything, do NOT mark the sweep complete. */
+  aborted: boolean;
+  /** Offset to resume at when the walk paused mid-phase. */
+  nextOffset: number;
+}
 
 // ── State abbreviation extractor ──────────────────────────────────────────────
 
@@ -486,121 +505,88 @@ export class RedfinScraper extends BaseScraper {
     const ctx = { processedThisBatch: 0, skippedAsSeen: 0 };
 
     // ── Phase 1: GIS API pages per market ────────────────────────────────
+    //
+    // Two modes:
+    //   • persistOffset=false (default / generic redfin): page-bounded walk
+    //     per market, restarting at page 0 every run — legacy behavior.
+    //   • persistOffset=true (redfin-adu): resume from the persisted cursor
+    //     ({marketIndex, phaseIndex, start}) so each run() continues where the
+    //     last batch stopped, walking the FULL result set (no maxPages depth
+    //     cap) over multiple runs. When the full sweep completes, the cursor
+    //     is reset so the next run re-sweeps from the top to catch fresh homes.
 
-    for (const market of resolvedMarkets) {
-      if (ctx.processedThisBatch >= BACKFILL_BATCH_SIZE) {
-        logger.info(`[redfin] Reached backfill batch limit of ${BACKFILL_BATCH_SIZE}. Stopping processing.`);
-        break;
-      }
-      if (this.results.length >= this.options.maxListings) {
-        logger.info(`[redfin] maxListings reached — skipping remaining markets`);
-        break;
-      }
-
-      logger.info(
-        `[redfin] Scraping market: ${market.name} ` +
-        `(region_id=${market.regionId}, state=${market.stateAbbr})`
+    if (this.options.persistOffset) {
+      await this.runPhase1WithCursor(
+        resolvedMarkets,
+        maxPrice,
+        rejected,
+        previouslySeen,
+        allSeenUrls,
+        ctx
       );
-      let totalCount = Infinity;
-
-      for (let page = 0; page < this.options.maxPages; page++) {
-        if (this.results.length >= this.options.maxListings) break;
-
-        const start = page * this.pageSize;
-        if (start >= totalCount) {
-          logger.info(`[redfin] ${market.name}: all ${totalCount} results fetched`);
+    } else {
+      for (const market of resolvedMarkets) {
+        if (ctx.processedThisBatch >= BACKFILL_BATCH_SIZE) {
+          logger.info(`[redfin] Reached backfill batch limit of ${BACKFILL_BATCH_SIZE}. Stopping processing.`);
+          break;
+        }
+        if (this.results.length >= this.options.maxListings) {
+          logger.info(`[redfin] maxListings reached — skipping remaining markets`);
           break;
         }
 
-        const gisUrl = buildGisUrl(
-          market,
-          [...this.uipt],
-          maxPrice,
-          start,
-          this.pageSize
-        );
-
         logger.info(
-          `[redfin] ${market.name} page ${page + 1}/${this.options.maxPages} ` +
-          `(start=${start}) → ${gisUrl}`
+          `[redfin] Scraping market: ${market.name} ` +
+          `(region_id=${market.regionId}, state=${market.stateAbbr})`
         );
 
-        let raw: string | null = null;
-        try {
-          raw = await oxylabsFetch(gisUrl, false);
-        } catch (err: any) {
-          if (err?.message === "OXYLABS_AUTH_FAILED") {
-            logger.error("[redfin] Auth failed — aborting run");
-            return this.results;
-          }
-          logger.error(`[redfin] GIS fetch error: ${err}`);
+        const active = await this.walkActivePages(
+          market,
+          maxPrice,
+          0,
+          this.options.maxPages,
+          rejected, previouslySeen, allSeenUrls, ctx
+        );
+        if (active.aborted) return this.results;
+
+        // ── Phase 1b: CSV endpoint for non-active statuses (allListings only) ─
+        //
+        // The JSON endpoint ignores `status`/`sold_within_days` and only ever
+        // returns Active listings.  The CSV endpoint honors both, so when
+        // allListings is enabled we pull Contingent (status=2) and Sold
+        // (sold_within_days=SOLD_WITHIN_DAYS) via /stingray/api/gis-csv.
+
+        if (this.options.allListings) {
+          // status=2 → Contingent only (actives already come from the JSON endpoint)
+          const contingent = await this.walkCsvStatuses(
+            market,
+            maxPrice,
+            "2",
+            undefined,
+            "contingent",
+            0,
+            this.options.maxPages,
+            rejected, previouslySeen, allSeenUrls, ctx
+          );
+          if (contingent.aborted) return this.results;
+          // sold_within_days → Sold (status param becomes a no-op)
+          const sold = await this.walkCsvStatuses(
+            market,
+            maxPrice,
+            "2",
+            SOLD_WITHIN_DAYS,
+            "sold",
+            0,
+            this.options.maxPages,
+            rejected, previouslySeen, allSeenUrls, ctx
+          );
+          if (sold.aborted) return this.results;
         }
 
-        if (!raw) {
-          logger.warn(`[redfin] No response for ${market.name} page ${page + 1}`);
+        if (ctx.processedThisBatch >= BACKFILL_BATCH_SIZE) {
+          logger.info(`[redfin] Reached backfill batch limit of ${BACKFILL_BATCH_SIZE}. Stopping processing.`);
           break;
         }
-
-        if (page < DEBUG_PAGES) {
-          const slug = market.name.replace(/\s+/g, "_").toLowerCase();
-          saveFile(`redfin_gis_${slug}_p${page + 1}.json`, raw);
-        }
-
-        // When allListings is on we keep every age (JSON endpoint returns
-        // Active regardless of status, so no 30-day staleness cut-off).
-        const { listings, totalCount: tc, allStale } =
-          parseRedfinApiResponse(raw, market.name, !this.options.allListings);
-
-        if (isFinite(tc) && tc > 0) totalCount = tc;
-
-        logger.info(
-          `[redfin] ${market.name} p${page + 1}: ` +
-          `${listings.length} listing(s) ≤ ${MAX_DAYS_OLD}d | ` +
-          `totalCount=${tc}` +
-          (allStale ? " — all stale" : "")
-        );
-
-        this.allListings.push(...listings);
-        this.ingestListings(listings, market, rejected, previouslySeen, allSeenUrls, ctx);
-
-        if (listings.length === 0 || allStale) break;
-
-        if (page + 1 < this.options.maxPages) {
-          await sleep(jitter(BETWEEN_PAGE_MS));
-        }
-      }
-
-      // ── Phase 1b: CSV endpoint for non-active statuses (allListings only) ─
-      //
-      // The JSON endpoint ignores `status`/`sold_within_days` and only ever
-      // returns Active listings.  The CSV endpoint honors both, so when
-      // allListings is enabled we pull Contingent (status=2) and Sold
-      // (sold_within_days=SOLD_WITHIN_DAYS) via /stingray/api/gis-csv.
-
-      if (this.options.allListings) {
-        // status=2 → Contingent only (actives already come from the JSON endpoint)
-        await this.scrapeCsvStatuses(
-          market,
-          maxPrice,
-          "2",
-          undefined,
-          "contingent",
-          rejected, previouslySeen, allSeenUrls, ctx
-        );
-        // sold_within_days → Sold (status param becomes a no-op)
-        await this.scrapeCsvStatuses(
-          market,
-          maxPrice,
-          "2",
-          SOLD_WITHIN_DAYS,
-          "sold",
-          rejected, previouslySeen, allSeenUrls, ctx
-        );
-      }
-
-      if (ctx.processedThisBatch >= BACKFILL_BATCH_SIZE) {
-        logger.info(`[redfin] Reached backfill batch limit of ${BACKFILL_BATCH_SIZE}. Stopping processing.`);
-        break;
       }
     }
 
@@ -882,6 +868,229 @@ export class RedfinScraper extends BaseScraper {
     return withEstimate;
   }
 
+  // ── Phase 1 walkers (shared by bounded + cursor modes) ────────────────────
+
+  /**
+   * Walks the GIS JSON endpoint for one market starting at `startOffset`,
+   * fetching up to `maxPagesToFetch` pages (Infinity = unbounded, cursor
+   * mode). Feeds every page through the shared ingest pipeline and returns
+   * how the walk stopped so the caller can either advance to the next phase
+   * or persist a resume cursor.
+   */
+  private async walkActivePages(
+    market: ResolvedMarket,
+    maxPrice: number,
+    startOffset: number,
+    maxPagesToFetch: number,
+    rejected: Array<{ listing: RawListing; reason: string }>,
+    previouslySeen: Set<string>,
+    allSeenUrls: Set<string>,
+    ctx: { processedThisBatch: number; skippedAsSeen: number }
+  ): Promise<PhaseWalkOutcome> {
+    let totalCount = Infinity;
+    let page = startOffset / this.pageSize;
+    let pagesFetched = 0;
+
+    for (; pagesFetched < maxPagesToFetch; page++, pagesFetched++) {
+      if (this.results.length >= this.options.maxListings) break;
+
+      const start = page * this.pageSize;
+      if (start >= totalCount) {
+        logger.info(`[redfin] ${market.name}: all ${totalCount} results fetched`);
+        break;
+      }
+
+      const gisUrl = buildGisUrl(
+        market,
+        [...this.uipt],
+        maxPrice,
+        start,
+        this.pageSize
+      );
+
+      logger.info(
+        `[redfin] ${market.name} page ${page + 1} ` +
+        `(start=${start}) → ${gisUrl}`
+      );
+
+      let raw: string | null = null;
+      try {
+        raw = await oxylabsFetch(gisUrl, false);
+      } catch (err: any) {
+        if (err?.message === "OXYLABS_AUTH_FAILED") {
+          logger.error("[redfin] Auth failed — aborting run");
+          return {
+            finished: false,
+            batchLimitHit: false,
+            maxListingsHit: false,
+            aborted: true,
+            nextOffset: start,
+          };
+        }
+        logger.error(`[redfin] GIS fetch error: ${err}`);
+      }
+
+      if (!raw) {
+        logger.warn(`[redfin] No response for ${market.name} page ${page + 1}`);
+        break;
+      }
+
+      if (page < DEBUG_PAGES) {
+        const slug = market.name.replace(/\s+/g, "_").toLowerCase();
+        saveFile(`redfin_gis_${slug}_p${page + 1}.json`, raw);
+      }
+
+      // When allListings is on we keep every age (JSON endpoint returns
+      // Active regardless of status, so no 30-day staleness cut-off).
+      const { listings, totalCount: tc, allStale } =
+        parseRedfinApiResponse(raw, market.name, !this.options.allListings);
+
+      if (isFinite(tc) && tc > 0) totalCount = tc;
+
+      logger.info(
+        `[redfin] ${market.name} p${page + 1}: ` +
+        `${listings.length} listing(s) ≤ ${MAX_DAYS_OLD}d | ` +
+        `totalCount=${tc}` +
+        (allStale ? " — all stale" : "")
+      );
+
+      this.allListings.push(...listings);
+      this.ingestListings(listings, market, rejected, previouslySeen, allSeenUrls, ctx);
+
+      const nextOffset = (page + 1) * this.pageSize;
+
+      if (ctx.processedThisBatch >= BACKFILL_BATCH_SIZE) {
+        logger.info(`[redfin] Reached backfill batch limit of ${BACKFILL_BATCH_SIZE}. Pausing walk.`);
+        return { finished: false, batchLimitHit: true, maxListingsHit: false, aborted: false, nextOffset };
+      }
+      if (this.results.length >= this.options.maxListings) {
+        logger.info(`[redfin] maxListings reached — pausing walk.`);
+        return { finished: false, batchLimitHit: false, maxListingsHit: true, aborted: false, nextOffset };
+      }
+      if (listings.length === 0 || allStale) break;
+
+      if (pagesFetched + 1 < maxPagesToFetch) {
+        await sleep(jitter(BETWEEN_PAGE_MS));
+      }
+    }
+
+    return {
+      finished: true,
+      batchLimitHit: false,
+      maxListingsHit: false,
+      aborted: false,
+      nextOffset: page * this.pageSize,
+    };
+  }
+
+  /**
+   * Cursor-driven Phase 1 (persistOffset mode). Resumes from the persisted
+   * resume cursor, walks the FULL result set (no maxPages depth cap) across
+   * markets/phases, pausing on the backfill batch limit. When the full sweep
+   * completes, the cursor is reset to the top so the next run re-sweeps and
+   * picks up newly listed homes.
+   */
+  private async runPhase1WithCursor(
+    resolvedMarkets: ResolvedMarket[],
+    maxPrice: number,
+    rejected: Array<{ listing: RawListing; reason: string }>,
+    previouslySeen: Set<string>,
+    allSeenUrls: Set<string>,
+    ctx: { processedThisBatch: number; skippedAsSeen: number }
+  ): Promise<void> {
+    const phases: Array<{ key: PhaseKey }> = this.options.allListings
+      ? [{ key: "active" }, { key: "contingent" }, { key: "sold" }]
+      : [{ key: "active" }];
+
+    const cursor = await loadCursorFromDb(this.sourceName);
+    let marketIndex = 0;
+    let phaseIndex = 0;
+    let startOffset = 0;
+
+    if (cursor && !cursor.complete) {
+      marketIndex = Math.min(cursor.marketIndex, resolvedMarkets.length - 1);
+      phaseIndex = cursor.phaseIndex;
+      startOffset = cursor.start;
+      if (phaseIndex >= phases.length) {
+        phaseIndex = 0;
+        startOffset = 0;
+      }
+      logger.info(
+        `[redfin] Resuming backfill sweep: ` +
+        `market=${marketIndex}/${resolvedMarkets.length - 1}, ` +
+        `phase=${phases[phaseIndex]?.key}, start=${startOffset}`
+      );
+    }
+
+    let paused = false;
+    let aborted = false;
+
+    while (marketIndex < resolvedMarkets.length && !paused && !aborted) {
+      const market = resolvedMarkets[marketIndex];
+      logger.info(
+        `[redfin] Scraping market: ${market.name} ` +
+        `(region_id=${market.regionId}, state=${market.stateAbbr})`
+      );
+
+      while (phaseIndex < phases.length && !paused && !aborted) {
+        const phase = phases[phaseIndex];
+        let outcome: PhaseWalkOutcome;
+
+        if (phase.key === "active") {
+          outcome = await this.walkActivePages(
+            market, maxPrice, startOffset, Infinity,
+            rejected, previouslySeen, allSeenUrls, ctx
+          );
+        } else if (phase.key === "contingent") {
+          outcome = await this.walkCsvStatuses(
+            market, maxPrice, "2", undefined, "contingent", startOffset, Infinity,
+            rejected, previouslySeen, allSeenUrls, ctx
+          );
+        } else {
+          outcome = await this.walkCsvStatuses(
+            market, maxPrice, "2", SOLD_WITHIN_DAYS, "sold", startOffset, Infinity,
+            rejected, previouslySeen, allSeenUrls, ctx
+          );
+        }
+
+        if (outcome.aborted) {
+          aborted = true;
+          break;
+        }
+        if (outcome.batchLimitHit || outcome.maxListingsHit) {
+          await saveCursorToDb(this.sourceName, {
+            marketIndex,
+            phaseIndex,
+            start: outcome.nextOffset,
+            complete: false,
+          });
+          paused = true;
+          break;
+        }
+
+        phaseIndex++;
+        startOffset = 0;
+      }
+
+      if (paused || aborted) break;
+      phaseIndex = 0;
+      startOffset = 0;
+      marketIndex++;
+    }
+
+    if (!paused && !aborted) {
+      logger.info(
+        `[redfin] Full backfill sweep complete — resetting cursor so the next run restarts at the top`
+      );
+      await saveCursorToDb(this.sourceName, {
+        marketIndex: 0,
+        phaseIndex: 0,
+        start: 0,
+        complete: true,
+      });
+    }
+  }
+
   // ── Listing ingest pipeline (shared by JSON + CSV paths) ──────────────────
 
   private ingestListings(
@@ -944,32 +1153,38 @@ export class RedfinScraper extends BaseScraper {
     }
   }
 
-  // ── GIS CSV status fetcher (allListings mode) ──────────────────────────────
+  // ── GIS CSV status walker (allListings mode) ─────────────────────────────
 
   /**
    * Fetches listings via the GIS CSV endpoint for a given status bitmask
    * (and optional sold window), parsing them into RawListing[] and feeding
    * them through the same ingest pipeline as the JSON path.
    *
-   * @param status        CSV status bitmask ("1"=active, "2"=contingent, "3"=both)
+   * @param status         CSV status bitmask ("1"=active, "2"=contingent, "3"=both)
    * @param soldWithinDays Set to switch into sold mode (status becomes no-op)
-   * @param label         Human label for logs
+   * @param label          Human label for logs
+   * @param startOffset    Offset to begin walking at (0 = start of the phase)
+   * @param maxPagesToFetch Page budget (Infinity = unbounded cursor mode)
    */
-  private async scrapeCsvStatuses(
+  private async walkCsvStatuses(
     market: ResolvedMarket,
     maxPrice: number,
     status: string,
     soldWithinDays: number | undefined,
     label: string,
+    startOffset: number,
+    maxPagesToFetch: number,
     rejected: Array<{ listing: RawListing; reason: string }>,
     previouslySeen: Set<string>,
     allSeenUrls: Set<string>,
     ctx: { processedThisBatch: number; skippedAsSeen: number }
-  ): Promise<void> {
+  ): Promise<PhaseWalkOutcome> {
     let totalCount = Infinity;
     let fetchedAny = false;
+    let page = startOffset / this.pageSize;
+    let pagesFetched = 0;
 
-    for (let page = 0; page < this.options.maxPages; page++) {
+    for (; pagesFetched < maxPagesToFetch; page++, pagesFetched++) {
       if (this.results.length >= this.options.maxListings) break;
 
       const start = page * this.pageSize;
@@ -986,7 +1201,7 @@ export class RedfinScraper extends BaseScraper {
       );
 
       logger.info(
-        `[redfin] ${market.name} CSV ${label} page ${page + 1}/${this.options.maxPages} ` +
+        `[redfin] ${market.name} CSV ${label} page ${page + 1} ` +
         `(start=${start}) → ${csvUrl}`
       );
 
@@ -996,14 +1211,20 @@ export class RedfinScraper extends BaseScraper {
       } catch (err: any) {
         if (err?.message === "OXYLABS_AUTH_FAILED") {
           logger.error("[redfin] Auth failed — aborting CSV status fetch");
-          return;
+          return {
+            finished: false,
+            batchLimitHit: false,
+            maxListingsHit: false,
+            aborted: true,
+            nextOffset: start,
+          };
         }
         logger.error(`[redfin] CSV ${label} fetch error: ${err}`);
       }
 
       if (!raw) {
         logger.warn(`[redfin] No CSV response for ${market.name} ${label} page ${page + 1}`);
-        return;
+        break;
       }
 
       if (page < DEBUG_PAGES) {
@@ -1024,10 +1245,21 @@ export class RedfinScraper extends BaseScraper {
       this.allListings.push(...listings);
       this.ingestListings(listings, market, rejected, previouslySeen, allSeenUrls, ctx);
 
+      const nextOffset = (page + 1) * this.pageSize;
+
+      if (ctx.processedThisBatch >= BACKFILL_BATCH_SIZE) {
+        logger.info(`[redfin] Reached backfill batch limit of ${BACKFILL_BATCH_SIZE}. Pausing walk.`);
+        return { finished: false, batchLimitHit: true, maxListingsHit: false, aborted: false, nextOffset };
+      }
+      if (this.results.length >= this.options.maxListings) {
+        logger.info(`[redfin] maxListings reached — pausing walk.`);
+        return { finished: false, batchLimitHit: false, maxListingsHit: true, aborted: false, nextOffset };
+      }
+
       // CSV gives no totalCount — stop when a page comes back empty or short
       if (listings.length < this.pageSize) break;
 
-      if (page + 1 < this.options.maxPages) {
+      if (pagesFetched + 1 < maxPagesToFetch) {
         await sleep(jitter(BETWEEN_PAGE_MS));
       }
     }
@@ -1035,6 +1267,14 @@ export class RedfinScraper extends BaseScraper {
     if (!fetchedAny) {
       logger.warn(`[redfin] ${market.name} CSV ${label}: no listings returned`);
     }
+
+    return {
+      finished: true,
+      batchLimitHit: false,
+      maxListingsHit: false,
+      aborted: false,
+      nextOffset: page * this.pageSize,
+    };
   }
 
   protected async scrapePage(_h: any, _p: number): Promise<RawListing[]> {

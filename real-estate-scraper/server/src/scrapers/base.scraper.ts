@@ -27,6 +27,10 @@ export interface ScraperOptions {
   skipAvmEnrichment?: boolean;
   /** Redfin only: fetch all listing statuses (active, contingent, sold) via the GIS CSV endpoint */
   allListings?: boolean;
+  /** Redfin only: persist the pagination resume cursor per source (backfill-store),
+   *  so each run() continues from where the last batch stopped instead of
+   *  restarting at page 0 — walks the full result set over multiple runs. */
+  persistOffset?: boolean;
 }
 
 export abstract class BaseScraper {
@@ -46,6 +50,7 @@ export abstract class BaseScraper {
       onMatch: options.onMatch,
       skipAvmEnrichment: options.skipAvmEnrichment ?? false,
       allListings: options.allListings ?? false,
+      persistOffset: options.persistOffset ?? false,
     } as Required<ScraperOptions>;
   }
 

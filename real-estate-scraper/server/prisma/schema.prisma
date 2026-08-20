@@ -259,6 +259,13 @@ model BackfillCursor {
   // decide whether to fetch the next batch (>= BACKFILL_BATCH_SIZE = continue).
   processedCount Int     @default(0)
 
+  // Resume position for the offset-based backfill walk (per source, per phase).
+  // { marketIndex, phaseIndex, start, complete } — null means start a fresh
+  // sweep from the top. Used by the Redfin ADU scraper (persistOffset option)
+  // so each run() continues where the last batch stopped instead of restarting
+  // at page 0, letting it walk the full result set over multiple runs.
+  resumeCursor  Json?
+
   lastRunAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
