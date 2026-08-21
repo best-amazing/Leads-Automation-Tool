@@ -15,13 +15,13 @@ export class RedfinAduScraper extends RedfinScraper {
     // WAF-blocked (405), so Phase 2 would burn ~3 slow Oxylabs calls per
     // listing for no ADU value. Skip it entirely.
     //
-    // allListings: the JSON GIS endpoint only ever returns Active listings,
-    // so pull the rest (Contingent + Sold) via the GIS CSV endpoint too.
+    // allListings is false: the JSON GIS endpoint only ever returns Active listings.
+    // We intentionally skip the GIS CSV endpoint so we do not fetch Contingent or Sold.
     //
     // persistOffset: resume from the stored {marketIndex, phaseIndex, start}
     // cursor each run() so the backfill walk continues past the 500-listing
     // depth cap and eventually sweeps the full served result set.
-    options = { ...options, skipAvmEnrichment: true, allListings: true, persistOffset: true };
+    options = { ...options, skipAvmEnrichment: true, allListings: false, persistOffset: true };
     super(options);
   }
 
