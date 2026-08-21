@@ -305,6 +305,12 @@ export class ColdwellBankerScraper extends BaseScraper {
   /**
    * Fetch one listing's structured data.
    * Chain: _next/data JSON → buildId refresh retry → direct HTML → Oxylabs.
+   *
+   * Returns:
+   *   RawListing       — ACTIVE listing parsed successfully
+   *   null             — definitive no-data (non-ACTIVE status or missing payload)
+   *   throws Error     — transport failure across all methods; callers must NOT
+   *                      mark the listing as seen so it is retried next run.
    */
   async fetchListingDetail(url: string): Promise<RawListing | null> {
     // 1. Fast path: Next.js data route (pure JSON, no rendering)
@@ -338,18 +344,18 @@ export class ColdwellBankerScraper extends BaseScraper {
     }
 
     // 3. Last resort: Oxylabs (costs credits — keep rare)
-    try {
-      const { oxylabsFetch } = await import("../zillow/zillow.scraper");
-      const html = await oxylabsFetch(url);
-      if (html) {
-        const pageProps = extractNextDataJson(html);
-        return parseCbProperty(pageProps ?? {}, url);
-      }
-    } catch (err) {
-      logger.warn(`[coldwellbanker] Oxylabs fallback failed for ${url}: ${err}`);
+    const { oxylabsFetch } = await import("../zillow/zillow.scraper");
+    const html = await oxylabsFetch(url);
+    if (html) {
+      const pageProps = extractNextDataJson(html);
+      return parseCbProperty(pageProps ?? {}, url);
     }
 
-    return null;
+    // Every method failed to even retrieve the page — surface as an error so
+    // the caller leaves this listing out of the seen-set and retries next run.
+    throw new Error(
+      `all fetch methods failed for ${extractLid(url)}`
+    );
   }
 
   // BaseScraper abstract members — unused: this source is sitemap-driven,

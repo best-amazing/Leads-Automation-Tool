@@ -61,7 +61,7 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
 
     const mode = (process.env.CB_INVENTORY_MODE as CbInventoryMode) || "new-day";
     const previouslySeen = await loadSeenFromDb(this.sourceName);
-    const allSeenLids = new Set(previouslySeen);
+    const reservedLids = new Set(previouslySeen); // intra-run double-processing guard
 
     // ── Discover + subtract seen BEFORE any expensive fetch ──────────────
     const discovered = await discoverOhioListingUrls(mode);
@@ -69,21 +69,27 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
     let skippedAsSeen = 0;
     for (const url of discovered) {
       const lid = extractLid(url);
-      if (allSeenLids.has(lid)) {
+      if (reservedLids.has(lid)) {
         skippedAsSeen++;
         continue;
       }
-      allSeenLids.add(lid); // reserve now so concurrent workers can't double-process
+      reservedLids.add(lid); // reserve now so concurrent workers can't double-process
       queue.push(url);
     }
     logger.info(
       `[${this.sourceName}] ${discovered.length} discovered, ` +
         `${skippedAsSeen} already seen, ${queue.length} to process ` +
-        `(batch cap ${BACKFILL_BATCH_SIZE})`
+        `(batch cap ${Math.min(BACKFILL_BATCH_SIZE, this.options.maxListings)})`
     );
 
     const work = queue.slice(0, Math.min(BACKFILL_BATCH_SIZE, this.options.maxListings));
     let processedThisBatch = 0;
+
+    // Only lids whose fetch attempt COMPLETED (listing parsed, or definitive
+    // no-data such as non-ACTIVE status) may be persisted as seen. Transport
+    // failures throw and stay out of this set, so the listing is retried on
+    // the next run instead of being burned as "seen" unprocessed.
+    const completedLids = new Set<string>();
 
     // ── Concurrent detail fetch with polite pacing ────────────────────────
     let cursor = 0;
@@ -92,6 +98,7 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
         const url = work[cursor++];
         try {
           const listing = await this.fetchListingDetail(url);
+          completedLids.add(extractLid(url));
           if (listing) {
             await this.ingestAduListing(listing as AduResearchListing);
           }
@@ -119,8 +126,10 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
         `skipped ${skippedAsSeen} already-seen, matched ${this.results.length}`
     );
 
-    // ── Persist updated tracker ───────────────────────────────────────────
-    await saveSeenToDb(this.sourceName, allSeenLids, processedThisBatch);
+    // ── Persist updated tracker: previously seen + actually completed only ──
+    const persistedSeen = new Set(previouslySeen);
+    for (const lid of completedLids) persistedSeen.add(lid);
+    await saveSeenToDb(this.sourceName, persistedSeen, processedThisBatch);
 
     return this.results;
   }
