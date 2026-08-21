@@ -11,6 +11,7 @@
 import "dotenv/config";
 import { ZillowAduScraper } from "./zillow-adu.scraper";
 import { RedfinAduScraper } from "./redfin-adu.scraper";
+import { ColdwellBankerAduScraper } from "./coldwellbanker-adu.scraper";
 
 import { logger } from "../../utils/logger";
 import { getLastBackfillStatus } from "../../utils/backfill-store";
@@ -81,6 +82,13 @@ export async function runAduResearch(): Promise<void> {
 
   const maxListings = Number(process.env.MAX_LISTINGS ?? 5000);
 
+  // Coldwell Banker runs first: sitemap-driven, direct HTTP (no Oxylabs
+  // credits), and dedup happens at discovery time so it finishes fast.
+  const coldwell = new ColdwellBankerAduScraper({
+    maxListings,
+    onMatch: handleMatch,
+  });
+
   const zillow = new ZillowAduScraper({
     maxListings,
     onMatch: handleMatch,
@@ -115,11 +123,12 @@ export async function runAduResearch(): Promise<void> {
       return allResults;
     }
 
+    const coldwellResults = await runContinuous(coldwell);
     const zillowResults = await runContinuous(zillow);
     const redfinResults = await runContinuous(redfin);
     if (global.gc) global.gc();
 
-    const finalResults = [...zillowResults, ...redfinResults];
+    const finalResults = [...coldwellResults, ...zillowResults, ...redfinResults];
 
     try {
       const DEBUG_DIR = path.resolve("logs");
