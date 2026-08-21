@@ -68,13 +68,24 @@ function mapRow(listing: AduResearchListing): string {
   }).join(",");
 }
 
-function extractKeywordContext(description: string | undefined, keyword: string | undefined): string {
+export function extractKeywordContext(description: string | undefined, keyword: string | undefined): string {
   if (!description || !keyword) return "";
-  const lines = description.split("\n");
-  const matched = lines.filter((line) =>
-    line.toLowerCase().includes(keyword.toLowerCase())
-  );
-  return matched.length > 0 ? matched.join("\n") : "";
+  
+  const lowerDesc = description.toLowerCase();
+  const lowerKw = keyword.toLowerCase();
+  const idx = lowerDesc.indexOf(lowerKw);
+  
+  if (idx === -1) return "";
+  
+  // Grab ~80 chars before and ~120 chars after for context
+  const start = Math.max(0, idx - 80);
+  const end = Math.min(description.length, idx + keyword.length + 120);
+  
+  let snippet = description.substring(start, end).trim();
+  if (start > 0) snippet = "..." + snippet;
+  if (end < description.length) snippet = snippet + "...";
+  
+  return snippet;
 }
 
 function today(): string {

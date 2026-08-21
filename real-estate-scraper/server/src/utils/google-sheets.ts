@@ -1,5 +1,6 @@
 import { google } from "googleapis";
 import * as fs from "fs";
+import { extractKeywordContext } from "../scrapers/property-purchase-research/adu-csv-writer";
 import * as os from "os";
 import { logger } from "./logger";
 import { AduResearchListing } from "../scrapers/property-purchase-research/adu-research.parser";
@@ -166,7 +167,7 @@ export async function writeAduResearchToSheets(
           (l as any).deedTransferDate || "", // Deed Transfer Date (resolved via ATTOM / OGRIP)
           matchedKw,
           l.url || "",
-          l.description ? l.description.replace(/\n/g, " ") : "",
+          extractKeywordContext(l.description, matchedKw).replace(/\n/g, " "),
         ];
       });
 
