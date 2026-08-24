@@ -42,14 +42,18 @@ function csvEscape(val: unknown): string {
 
 /**
  * Address shown in CSV / sheet output. When the source exposes no street
- * address but has coordinates (craigslist pins), fall back to a "lat, lon"
- * locator so the row is still mappable — clearly formatted as coordinates,
- * never mistaken for a real street address by downstream address consumers.
+ * address (craigslist hides them behind .mapaddress), fall back to the
+ * listing title so every row carries human-readable context. Map-pin
+ * coordinates are the last resort only (no title either). This is purely a
+ * display transform — listing.address stays untouched internally, so dedup
+ * keys remain URL-based and deed lookups don't fire on headline text.
  */
 export function displayAddress(
-  listing: Pick<AduResearchListing, "address" | "latitude" | "longitude">
+  listing: Pick<AduResearchListing, "address" | "latitude" | "longitude" | "title">
 ): string {
   if (listing.address) return listing.address;
+  const title = listing.title?.trim();
+  if (title) return title;
   if (listing.latitude != null && listing.longitude != null) {
     return `${listing.latitude.toFixed(6)}, ${listing.longitude.toFixed(6)}`;
   }
