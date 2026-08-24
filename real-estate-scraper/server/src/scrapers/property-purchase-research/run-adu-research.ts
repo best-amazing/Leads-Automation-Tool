@@ -12,6 +12,7 @@ import "dotenv/config";
 import { ZillowAduScraper } from "./zillow-adu.scraper";
 import { RedfinAduScraper } from "./redfin-adu.scraper";
 import { ColdwellBankerAduScraper } from "./coldwellbanker-adu.scraper";
+import { CraigslistAduScraper } from "./craigslist-adu.scraper";
 
 import { logger } from "../../utils/logger";
 import { getLastBackfillStatus } from "../../utils/backfill-store";
@@ -99,6 +100,11 @@ export async function runAduResearch(): Promise<void> {
     onMatch: handleMatch,
   });
 
+  const craigslist = new CraigslistAduScraper({
+    maxListings,
+    onMatch: handleMatch,
+  });
+
   try {
     async function runContinuous(scraper: any): Promise<AduResearchListing[]> {
       const sourceName = scraper.sourceName;
@@ -126,9 +132,10 @@ export async function runAduResearch(): Promise<void> {
     const coldwellResults = await runContinuous(coldwell);
     const zillowResults = await runContinuous(zillow);
     const redfinResults = await runContinuous(redfin);
+    const craigslistResults = await runContinuous(craigslist);
     if (global.gc) global.gc();
 
-    const finalResults = [...coldwellResults, ...zillowResults, ...redfinResults];
+    const finalResults = [...coldwellResults, ...zillowResults, ...redfinResults, ...craigslistResults];
 
     try {
       const DEBUG_DIR = path.resolve("logs");
