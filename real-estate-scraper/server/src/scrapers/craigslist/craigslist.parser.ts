@@ -284,9 +284,39 @@ export function parseCraigslistSearchPage(
 
 // ── Detail page ────────────────────────────────────────────────────────────
 
+/**
+ * Best-effort street-address extraction from the posting body text.
+ * Craigslist rarely shows an exact address block (`.mapaddress` is usually
+ * empty on 2025+ pages), but sellers frequently type the address into the
+ * description. Requires a house number followed by <=6 words and a street
+ * suffix to keep false positives low.
+ */
+function extractStreetAddressFromText(text: string): string | undefined {
+  if (!text) return undefined;
+  // Collapse whitespace so multi-line bodies match as one string.
+  const flat = text.replace(/\s+/g, " ");
+  const m = flat.match(
+    /\b(\d{1,6}(?:\s*[A-Z])?)\s+((?:[A-Za-z0-9.'#-]+\s+){0,5}[A-Za-z0-9.'#-]+?)\s+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Lane|Ln|Boulevard|Blvd|Way|Court|Ct|Place|Pl|Terrace|Ter|Circle|Cir|Parkway|Pkwy|Highway|Hwy)\b\.?(?=\s|$|,)/i
+  );
+  // Full match keeps the street suffix; strip any stray trailing punctuation.
+  return m ? m[0].replace(/[.,;]+$/, "").replace(/\s+/g, " ").trim() : undefined;
+}
+
+/** Pull a 5-digit ZIP out of text, preferring one adjacent to the address. */
+function extractZipFromText(text: string): string | undefined {
+  if (!text) return undefined;
+  const nearAddress = text.match(/(?:OH|Ohio)?\s*(\d{5})(?:-\d{4})?\b\s*$/i);
+  if (nearAddress) return nearAddress[1];
+  const any = text.match(/\b(4[3-4]\d{3})\b/); // Ohio zips start 43x-44x
+  return any ? any[1] : undefined;
+}
+
 export interface CraigslistDetail {
   description?: string;
   address?: string;
+  zip?: string;
+  latitude?: number;
+  longitude?: number;
   bedrooms?: number;
   bathrooms?: number;
   squareFeet?: number;
@@ -317,10 +347,29 @@ export function parseCraigslistDetailPage(html: string): CraigslistDetail {
   const description = bodyEl.text().trim() || undefined;
   const bodyText = description ?? "";
 
-  // ── Address ───────────────────────────────────────────────────────────────
+  // ── Address / coordinates ─────────────────────────────────────────────────
+  // 2025+ pages usually render an EMPTY .mapaddress and only expose the pin
+  // via #map data attributes, plus whatever the seller typed in the body.
   const address =
     $("div.mapaddress, .postingtitletext .mapaddress").first().text().trim() ||
+    extractStreetAddressFromText(bodyText) ||
     undefined;
+
+  const zip = extractZipFromText(
+    `${$("div.mapaddress").first().text().trim()} ${bodyText}`
+  );
+
+  let latitude: number | undefined;
+  let longitude: number | undefined;
+  const mapEl = $("#map[data-latitude][data-longitude]").first();
+  if (mapEl.length > 0) {
+    const lat = parseFloat(mapEl.attr("data-latitude")!);
+    const lon = parseFloat(mapEl.attr("data-longitude")!);
+    if (!isNaN(lat) && !isNaN(lon)) {
+      latitude = lat;
+      longitude = lon;
+    }
+  }
 
   // ── Beds / baths / sqft + property type from attr groups ─────────────────
   let bedrooms: number | undefined;
@@ -366,6 +415,9 @@ export function parseCraigslistDetailPage(html: string): CraigslistDetail {
   return {
     description,
     address,
+    zip,
+    latitude,
+    longitude,
     bedrooms,
     bathrooms,
     squareFeet,

@@ -47,6 +47,9 @@ async function handleMatch(listing: AduResearchListing) {
   logger.info(`[runner] Match #${capturedCount}: ${listing.address || listing.url}`);
 
   // ── Inline deed transfer date lookup ──────────────────────────────────
+  // Requires a real street address: craigslist pins are frequently just the
+  // city-default location, and resolving those against the parcel service
+  // would attach a stranger's deed date to this lead.
   if (listing.address) {
     try {
       logger.info(`[runner] Looking up deed transfer date for: ${listing.address}`);

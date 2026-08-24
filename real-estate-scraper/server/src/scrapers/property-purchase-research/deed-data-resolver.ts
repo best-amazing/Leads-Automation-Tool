@@ -33,7 +33,8 @@ interface AttomSaleResponse {
 }
 
 export interface DeedLookupInput {
-  address: string;
+  /** Street address. Optional when latitude/longitude are provided. */
+  address?: string;
   city?: string;
   state?: string;
   zip?: string;
@@ -169,6 +170,20 @@ export async function fetchDeedTransferDate(
   input: DeedLookupInput,
 ): Promise<string | null> {
   const collapseWs = (s: string) => s.replace(/\s+/g, " ").trim();
+
+  // Coordinates-only path (no address): skip geocoding + ATTOM, go straight
+  // to the parcel service (craigslist 2025+ exposes a pin but no address).
+  if (!input.address) {
+    if (input.latitude != null && input.longitude != null) {
+      const ogripDate = await getFromOgrip(input.latitude, input.longitude);
+      if (ogripDate) {
+        logger.info(`[deed-resolver] ✓ OGRIP matched (lat/lon): ${ogripDate}`);
+        return ogripDate;
+      }
+    }
+    logger.debug(`[deed-resolver] Neither address nor usable coordinates — skipping lookup`);
+    return null;
+  }
 
   // Build a full address string for geocoding + ATTOM
   const addressParts = input.address.split(",").map((p) => p.trim());

@@ -1,6 +1,6 @@
 import { google } from "googleapis";
 import * as fs from "fs";
-import { extractKeywordContext } from "../scrapers/property-purchase-research/adu-csv-writer";
+import { extractKeywordContext, displayAddress } from "../scrapers/property-purchase-research/adu-csv-writer";
 import * as os from "os";
 import { logger } from "./logger";
 import { AduResearchListing } from "../scrapers/property-purchase-research/adu-research.parser";
@@ -51,6 +51,68 @@ function getServiceAccountPath(): string {
   }
 
   return raw;
+}
+
+export const ADU_SHEET_HEADERS = [
+  "Date Found",
+  "Owner",
+  "Source",
+  "Listing Status",
+  "Days on Market",
+  "Address",
+  "Zip",
+  "Price",
+  "Beds",
+  "Baths",
+  "SqFt",
+  "Lot Size (acres)",
+  "Property Owner",
+  "Phone Number",
+  "Email address",
+  "Units",
+  "Total Bedrooms",
+  "Year Built",
+  "School Rating",
+  "Deed Transfer Date",
+  "Matched Keyword",
+  "Link",
+  "Description Preview",
+];
+
+/**
+ * Maps a listing to the exact sheet row order of ADU_SHEET_HEADERS.
+ * Exported so the column mapping can be unit-checked offline without
+ * touching the live spreadsheet.
+ */
+export function buildAduSheetRow(l: AduResearchListing): any[] {
+  // safely extract keyword text if it's an object or string
+  const matchedKw = typeof l.matchedKeyword === "string" ? l.matchedKeyword : (l.matchedKeyword as any)?.name || "";
+
+  return [
+    new Date().toLocaleDateString(),
+    "Eddy Ephraim",
+    l.source || "",
+    l.status || "",
+    l.daysOnMarket != null ? l.daysOnMarket.toString() : "",
+    displayAddress(l),
+    l.zip || "",
+    l.price ? `$${l.price.toLocaleString()}` : "",
+    l.bedrooms || "",
+    l.bathrooms != null ? l.bathrooms : "",
+    l.squareFeet || "",
+    l.lotSqft != null ? (l.lotSqft / 43560).toFixed(2) : "",
+    l.ownerName || "",
+    l.ownerPhone || "",
+    l.ownerEmail || "",
+    l.units || "",
+    l.totalBedrooms || "",
+    l.yearBuilt || "",
+    l.schoolRating || "",
+    l.deedTransferDate || "", // resolved via ATTOM / OGRIP
+    matchedKw,
+    l.url || "",
+    extractKeywordContext(l.description, matchedKw).replace(/\n/g, " "),
+  ];
 }
 
 export async function writeAduResearchToSheets(
@@ -114,62 +176,9 @@ export async function writeAduResearchToSheets(
         sheetId = createRes.data.replies?.[0]?.addSheet?.properties?.sheetId ?? undefined;
       }
 
-      const headers = [
-        "Date Found",
-        "Owner",
-        "Source",
-        "Listing Status",
-        "Days on Market",
-        "Address",
-        "Zip",
-        "Price",
-        "Beds",
-        "Baths",
-        "SqFt",
-        "Lot Size (acres)",
-        "Property Owner",
-        "Phone Number",
-        "Email address",
-        "Units",
-        "Total Bedrooms",
-        "Year Built",
-        "School Rating",
-        "Deed Transfer Date",
-        "Matched Keyword",
-        "Link",
-        "Description Preview",
-      ];
+      const headers = ADU_SHEET_HEADERS;
 
-      const rows = listings.map((l) => {
-        // safely extract keyword text if it's an object or string
-        const matchedKw = typeof l.matchedKeyword === "string" ? l.matchedKeyword : (l.matchedKeyword as any)?.name || "";
-        
-        return [
-          new Date().toLocaleDateString(),
-          "Eddy Ephraim",
-          l.source || "",
-          l.status || "",
-          l.daysOnMarket != null ? l.daysOnMarket.toString() : "",
-          l.address || "",
-          l.zip || "",
-          l.price ? `$${l.price.toLocaleString()}` : "",
-          l.bedrooms || "",
-          l.bathrooms || "",
-          l.squareFeet || "",
-          l.lotSqft != null ? (l.lotSqft / 43560).toFixed(2) : "",
-          l.ownerName || "",
-          l.ownerPhone || "",
-          l.ownerEmail || "",
-          l.units || "",
-          l.totalBedrooms || "",
-          l.yearBuilt || "",
-          l.schoolRating || "",
-          (l as any).deedTransferDate || "", // Deed Transfer Date (resolved via ATTOM / OGRIP)
-          matchedKw,
-          l.url || "",
-          extractKeywordContext(l.description, matchedKw).replace(/\n/g, " "),
-        ];
-      });
+      const rows = listings.map(buildAduSheetRow);
 
       // Load the current state of the sheet once per process so we always know
       // the exact last row (no table-detection guessing).

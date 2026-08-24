@@ -40,6 +40,22 @@ function csvEscape(val: unknown): string {
   return str;
 }
 
+/**
+ * Address shown in CSV / sheet output. When the source exposes no street
+ * address but has coordinates (craigslist pins), fall back to a "lat, lon"
+ * locator so the row is still mappable — clearly formatted as coordinates,
+ * never mistaken for a real street address by downstream address consumers.
+ */
+export function displayAddress(
+  listing: Pick<AduResearchListing, "address" | "latitude" | "longitude">
+): string {
+  if (listing.address) return listing.address;
+  if (listing.latitude != null && listing.longitude != null) {
+    return `${listing.latitude.toFixed(6)}, ${listing.longitude.toFixed(6)}`;
+  }
+  return "";
+}
+
 function mapRow(listing: AduResearchListing): string {
   return CSV_COLUMNS.map((col) => {
     if (col.field === "description") {
@@ -48,6 +64,9 @@ function mapRow(listing: AduResearchListing): string {
     }
     if (col.field === "price") {
       return listing.price != null ? `$${listing.price.toLocaleString()}` : "";
+    }
+    if (col.field === "address") {
+      return csvEscape(displayAddress(listing));
     }
     if (col.field === "dateFound") {
       return new Date().toLocaleDateString();
@@ -113,7 +132,7 @@ export function writeAduResults(
     generatedAt: new Date().toISOString(),
     totalMatches: listings.length,
     listings: listings.map((l) => ({
-      address:        l.address,
+      address:        displayAddress(l),
       price:          l.price,
       units:          l.units,
       bedrooms:       l.bedrooms,
@@ -172,7 +191,7 @@ export function appendAduResult(
   }
 
   jsonPayload.listings.push({
-    address:        listing.address,
+    address:        displayAddress(listing),
     price:          listing.price,
     units:          listing.units,
     bedrooms:       listing.bedrooms,
