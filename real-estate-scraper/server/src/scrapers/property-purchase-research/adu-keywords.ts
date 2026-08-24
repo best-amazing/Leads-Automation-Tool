@@ -8,45 +8,54 @@
  * Keywords that indicate a listing may have an ADU, guest house,
  * multi-generational layout, or multiple structures on one lot.
  *
+ * ORDER MATTERS: matching uses Array.find() (first hit wins), so the
+ * strongest signals come first and get attributed in the sheet's
+ * "Matched Keyword" column. Generic fallbacks ("unit", "package") sit last.
+ *
  * Matched case-insensitively against title + description + address.
 */
 
 export const ADU_KEYWORDS = [
-  "main residence",
-  "main house",
-  "main home",
-  "two homes",
-  "two houses",
-  "second home",
-  "second house",
-  "package",
-  "unit",
+  // ── Priority tier 1–20 (strongest ADU signals) ────────────────────────────
   "ADU",
   "add-on unit",
-  "both homes",
-  "both house",
-  "both residence",
+  "add on unit",
+  "add on units",
+  "in-law",
+  "in-laws",
+  "in law",
+  "in laws",
+  "guest house",
+  "guest home",
+  "guest residence",
   "multi-generational living",
   "multi generational living",
   "multi-generation",
   "multi generation",
+  "two homes",
+  "two houses",
+  "both homes",
+  "both house",
   "multiple structures",
+
+  // ── Secondary signals ─────────────────────────────────────────────────────
+  "main residence",
+  "main house",
+  "main home",
+  "second home",
+  "second house",
+  "both residence",
   "multiple house",
   "multiple home",
-  "guest house",
-  "guest home",
-  "guest residence",
+
+  // ── Weak / generic fallbacks ──────────────────────────────────────────────
   "private entrance",
   "same lot",
   "in one lot",
   "in one parcel",
   "carriage",
-  "in law",
-  "in laws",
-  "in-law",
-  "in-laws",
-  "add on unit",
-  "add on units",
+  "package",
+  "unit",
 ];
 
 /**
