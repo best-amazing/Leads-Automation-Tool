@@ -255,6 +255,9 @@ export function parseRedfinApiResponse(
       (propertyId ? ` | pid=${propertyId}` : "")
     );
 
+    // ── Listing remarks (full description — included free in GIS payload) ──
+    const remarks = (home.listingRemarks as string | undefined)?.trim();
+
     const listing: RawListing & { _redfinPropertyId?: number } = {
       url,
       source:       "redfin",
@@ -266,7 +269,7 @@ export function parseRedfinApiResponse(
       bathrooms,
       squareFeet,
       propertyType: propertyType as any,
-      description:  "",
+      description:  remarks ?? "",
       listedAt,
       daysOnMarket: daysOnMarket,
     };

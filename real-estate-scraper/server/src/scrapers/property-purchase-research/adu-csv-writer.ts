@@ -89,12 +89,17 @@ function mapRow(listing: AduResearchListing): string {
 
 export function extractKeywordContext(description: string | undefined, keyword: string | undefined): string {
   if (!description || !keyword) return "";
-  
+
   const lowerDesc = description.toLowerCase();
   const lowerKw = keyword.toLowerCase();
   const idx = lowerDesc.indexOf(lowerKw);
-  
-  if (idx === -1) return "";
+
+  if (idx === -1) {
+    // Keyword matched on title/address rather than in the body. Still emit
+    // the opening of the description so the sheet column carries listing copy.
+    const snippet = description.slice(0, 200).trim();
+    return snippet.length < description.trim().length ? snippet + "..." : snippet;
+  }
   
   // Grab ~80 chars before and ~120 chars after for context
   const start = Math.max(0, idx - 80);
