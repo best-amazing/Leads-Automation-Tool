@@ -89,14 +89,50 @@ function extractOwnerName(
   return contactMatch ? contactMatch[1] : undefined;
 }
 
+/**
+ * Parse Craigslist's posted-date text into an absolute Date.
+ * Handles relative ("4h ago", "3d ago") and absolute ("8/19") formats.
+ * Returns undefined when unparseable.
+ */
+function parsePostedDateText(raw: string | undefined): Date | undefined {
+  if (!raw) return undefined;
+  const text = raw.trim();
+
+  // Relative: "4h ago", "3d ago", "12m ago"
+  const rel = text.match(/^(\d+)\s*(min|m|h|hr|d|w)\b/i);
+  if (rel) {
+    const n = parseInt(rel[1], 10);
+    const unit = rel[2].toLowerCase();
+    const msPerUnit: Record<string, number> = {
+      min: 60_000, m: 60_000,
+      h: 3_600_000, hr: 3_600_000,
+      d: 86_400_000,
+      w: 7 * 86_400_000,
+    };
+    return new Date(Date.now() - n * msPerUnit[unit]);
+  }
+
+  // Absolute month/day: "8/19" (current year; roll back one year if in future)
+  const abs = text.match(/^(\d{1,2})\/(\d{1,2})$/);
+  if (abs) {
+    const now = new Date();
+    const d = new Date(now.getFullYear(), parseInt(abs[1], 10) - 1, parseInt(abs[2], 10));
+    if (d > now) d.setFullYear(d.getFullYear() - 1);
+    return d;
+  }
+
+  return undefined;
+}
+
 // ── Search results page ────────────────────────────────────────────────────
 
 /**
  * Parse a Craigslist real-estate search results page.
- * Handles all three known layouts:
- *   1. Static (li.cl-static-search-result)  — served via proxies / no JS
- *   2. New 2023+ (li[data-pid])
- *   3. Classic (li.result-row)
+ * Handles all four known layouts:
+ *   1. New 2025+ (div[data-pid].cl-search-result / .gallery-card)
+ *   2. Static (li.cl-static-search-result)  — served via proxies / no JS
+ *   3. New 2023+ (li[data-pid])
+ *   4. Classic (li.result-row)
  *
  * Note: owner name/phone are only available on the detail page, not search results.
  */
@@ -107,7 +143,57 @@ export function parseCraigslistSearchPage(
   const $ = cheerio.load(html);
   const results: Omit<RawListing, "source">[] = [];
 
-  // ── Layout 1: static ──────────────────────────────────────────────────────
+  // ── Layout 1: 2025+ gallery cards (div.cl-search-result) ─────────────────
+  const galleryItems = $("div.cl-search-result[data-pid]");
+  if (galleryItems.length > 0) {
+    logger.debug(`[cl-parser] 2025 layout: ${galleryItems.length} items`);
+    galleryItems.each((_, el) => {
+      const anchor = $(el).find("a.posting-title").first();
+      const href = anchor.attr("href");
+      if (!href) return;
+
+      const titleText =
+        anchor.find(".label").text().trim() ||
+        anchor.text().trim() ||
+        $(el).attr("title")?.trim() ||
+        "";
+
+      // Targeted extraction — combining the whole .meta blob into one regex
+      // haystack misfires (house numbers like "213 Brice Rd" parse as "213br").
+      const bedroomsText = $(el).find(".post-bedrooms").text();
+      const sqftText = $(el).find(".post-sqft").text();
+      const bedrooms = bedroomsText.match(/(\d+)\s*br/i)
+        ? parseInt(bedroomsText.match(/(\d+)\s*br/i)![1], 10)
+        : undefined;
+      const squareFeet = sqftText.match(/(\d[\d,]*)\s*ft/i)
+        ? parseInt(sqftText.match(/(\d[\d,]*)\s*ft/i)![1].replace(/,/g, ""), 10)
+        : undefined;
+      const metaText = $(el).find(".meta").text();
+
+      results.push({
+        url: href.startsWith("http") ? href : new URL(href, baseUrl).toString(),
+        title: titleText || undefined,
+        price: parsePrice($(el).find(".priceinfo").first().text()),
+        location:
+          $(el)
+            .find(".result-location")
+            .text()
+            .trim()
+            .replace(/[()]/g, "")
+            .trim() || undefined,
+        postedDate: parsePostedDateText(
+          $(el).find(".result-posted-date").text(),
+        ),
+        propertyType: detectPropertyType(`${titleText} ${metaText}`),
+        bedrooms,
+        bathrooms: undefined,
+        squareFeet,
+      });
+    });
+    return results;
+  }
+
+  // ── Layout 2: static ──────────────────────────────────────────────────────
   const staticItems = $("li.cl-static-search-result");
   if (staticItems.length > 0) {
     logger.debug(`[cl-parser] static layout: ${staticItems.length} items`);
@@ -128,7 +214,7 @@ export function parseCraigslistSearchPage(
     return results;
   }
 
-  // ── Layout 2: new (data-pid) ───────────────────────────────────────────────
+  // ── Layout 3: new (data-pid) ───────────────────────────────────────────────
   const newItems = $("li[data-pid]");
   if (newItems.length > 0) {
     logger.debug(`[cl-parser] new layout: ${newItems.length} items`);
@@ -163,7 +249,7 @@ export function parseCraigslistSearchPage(
     return results;
   }
 
-  // ── Layout 3: classic (result-row) ────────────────────────────────────────
+  // ── Layout 4: classic (result-row) ────────────────────────────────────────
   const classicItems = $("li.result-row");
   logger.debug(`[cl-parser] classic layout: ${classicItems.length} items`);
   classicItems.each((_, el) => {

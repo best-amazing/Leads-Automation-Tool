@@ -13,13 +13,23 @@ import {
   loadSeenListings as loadSeenFromDb,
   saveSeenListings as saveSeenToDb,
 } from "../../utils/backfill-store";
-import { ADU_KEYWORDS } from "./adu-keywords";
+import { ADU_KEYWORDS, TARGET_STATES } from "./adu-keywords";
 import { sleep, jitter }         from "../../utils/browser";
 import { config } from "../../config";
 
 const BETWEEN_DETAIL_MS = 2_000;
 const BACKFILL_BATCH_SIZE = Number(process.env.ADU_BACKFILL_BATCH_SIZE ?? 1000);
 const DAYS_TO_LOOK_BACK = 30;
+
+// Craigslist subdomain → US state. Needed because search results only carry a
+// neighborhood string ("West Bend area"), never a state, and
+// passesLocationFilter requires listing.state to match TARGET_STATES.
+const CITY_TO_STATE: Record<string, string> = {
+  milwaukee: "WI",
+  columbus: "OH",
+  cleveland: "OH",
+  toledo: "OH",
+};
 
 function raceTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -61,7 +71,13 @@ export class CraigslistAduScraper {
 
     for (const [cityName, baseUrl] of Object.entries(craigslistSources)) {
       if (typeof baseUrl !== "string") continue; // guard in case of other properties
-      
+
+      const cityState = CITY_TO_STATE[cityName];
+      if (cityState && !TARGET_STATES.includes(cityState)) {
+        logger.info(`[${this.sourceName}] ${cityName} → ${cityState} not in target states (${TARGET_STATES.join(", ")}), skipping city`);
+        continue;
+      }
+
       if (processedThisBatch >= BACKFILL_BATCH_SIZE) break;
       logger.info(`[${this.sourceName}] ── City: ${cityName} ──`);
 
@@ -127,6 +143,7 @@ export class CraigslistAduScraper {
             description: "",
             source: this.sourceName,
             totalBedrooms: rawListing.bedrooms,
+            state: CITY_TO_STATE[cityName] ?? rawListing.state,
           } as AduResearchListing;
 
           if (!passesLocationFilter(preFilter)) {
