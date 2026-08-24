@@ -942,15 +942,17 @@ export class RedfinScraper extends BaseScraper {
 
       // When allListings is on we keep every age (JSON endpoint returns
       // Active regardless of status, so no 30-day staleness cut-off).
-      const { listings, totalCount: tc, allStale } =
+      const { listings, totalCount: tc, rawHomesCount, allStale } =
         parseRedfinApiResponse(raw, market.name, !this.options.allListings);
 
-      if (isFinite(tc) && tc > 0) totalCount = tc;
+      // totalCount is optional now — the GIS API stopped sending it. When
+      // absent we keep totalCount=Infinity and rely on page-fullness below.
+      if (tc != null && isFinite(tc) && tc > 0) totalCount = tc;
 
       logger.info(
         `[redfin] ${market.name} p${page + 1}: ` +
         `${listings.length} listing(s) ≤ ${MAX_DAYS_OLD}d | ` +
-        `totalCount=${tc}` +
+        `totalCount=${tc ?? "?"} | rawHomes=${rawHomesCount}` +
         (allStale ? " — all stale" : "")
       );
 
@@ -968,6 +970,9 @@ export class RedfinScraper extends BaseScraper {
         return { finished: false, batchLimitHit: false, maxListingsHit: true, aborted: false, nextOffset };
       }
       if (listings.length === 0 || allStale) break;
+      // Short raw page = reached the end of the served result set
+      // (staleness filtering may shrink `listings`, so use the raw count).
+      if (rawHomesCount < this.pageSize) break;
 
       if (pagesFetched + 1 < maxPagesToFetch) {
         await sleep(jitter(BETWEEN_PAGE_MS));
@@ -1234,7 +1239,7 @@ export class RedfinScraper extends BaseScraper {
 
       const { listings, totalCount: tc } = parseRedfinCsvResponse(raw, market.name);
 
-      if (isFinite(tc) && tc > 0) totalCount = tc;
+      if (tc != null && isFinite(tc) && tc > 0) totalCount = tc;
       fetchedAny = fetchedAny || listings.length > 0;
 
       logger.info(

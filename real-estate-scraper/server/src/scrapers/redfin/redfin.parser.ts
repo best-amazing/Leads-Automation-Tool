@@ -135,7 +135,14 @@ export function stripXSSI(raw: string): string {
 
 export interface RedfinApiResult {
   listings:   RawListing[];
-  totalCount: number;
+  /**
+   * Total result count as reported by Redfin — undefined when the payload
+   * omits it. The GIS API stopped returning totalCount (Aug 2026), so
+   * callers must fall back to page-fullness detection via rawHomesCount.
+   */
+  totalCount: number | undefined;
+  /** Number of homes in the raw payload, before staleness filtering. */
+  rawHomesCount: number;
   allStale:   boolean;
 }
 
@@ -150,7 +157,7 @@ export function parseRedfinApiResponse(
   } catch (err) {
     logger.warn(`[redfin-parser] Failed to parse JSON for "${marketName}": ${err}`);
     logger.debug(`[redfin-parser] Raw snippet: ${raw.slice(0, 200)}`);
-    return { listings: [], totalCount: 0, allStale: true };
+    return { listings: [], totalCount: undefined, rawHomesCount: 0, allStale: true };
   }
 
   if (json?.errorMessage && json.errorMessage !== "Success") {
@@ -159,13 +166,19 @@ export function parseRedfinApiResponse(
 
   const payload      = json?.payload ?? json;
   const homes: any[] = payload?.homes ?? [];
-  const totalCount: number = payload?.totalCount ?? homes.length;
+  // NOTE: do NOT fall back to homes.length here — that equals the page size,
+  // which made walkers believe the whole market fit on one page and stop
+  // paginating after the first fetch.
+  const totalCount: number | undefined =
+    typeof payload?.totalCount === "number" ? payload.totalCount : undefined;
 
-  logger.debug(`[redfin-parser] "${marketName}": ${homes.length} homes, totalCount=${totalCount}`);
+  logger.debug(
+    `[redfin-parser] "${marketName}": ${homes.length} homes, totalCount=${totalCount ?? "(not provided)"}`
+  );
 
   if (homes.length === 0) {
     logger.debug(`[redfin-parser] No homes in payload for "${marketName}"`);
-    return { listings: [], totalCount: 0, allStale: true };
+    return { listings: [], totalCount: totalCount, rawHomesCount: 0, allStale: true };
   }
 
   logger.debug(`[redfin-parser] First home keys: ${Object.keys(homes[0]).join(", ")}`);
@@ -270,7 +283,7 @@ export function parseRedfinApiResponse(
   ).length;
   const allStale = itemsWithAge > 0 && staleCount >= itemsWithAge;
 
-  return { listings: results, totalCount, allStale };
+  return { listings: results, totalCount, rawHomesCount: homes.length, allStale };
 }
 
 // ── GIS CSV response parser ───────────────────────────────────────────────────
@@ -356,7 +369,7 @@ export function parseRedfinCsvResponse(
   const lines = raw.split(/\r?\n/).filter(l => l.trim().length > 0);
   if (lines.length < 2) {
     logger.debug(`[redfin-parser] Empty CSV for "${marketName}"`);
-    return { listings: [], totalCount: 0, allStale: false };
+    return { listings: [], totalCount: 0, rawHomesCount: 0, allStale: false };
   }
 
   const header = parseCsvRow(lines[0]);
@@ -451,7 +464,7 @@ export function parseRedfinCsvResponse(
   }
 
   logger.debug(`[redfin-parser] "${marketName}": ${results.length} CSV listings parsed`);
-  return { listings: results, totalCount: 0, allStale: false };
+  return { listings: results, totalCount: 0, rawHomesCount: results.length, allStale: false };
 }
 
 // ── AVM API URL builders ──────────────────────────────────────────────────────
