@@ -53,9 +53,8 @@ export const ADU_KEYWORDS = [
   "same lot",
   "in one lot",
   "in one parcel",
-  "carriage",
-  "package",
-  "unit",
+  "carriage house",
+  "carriage home",
 ];
 
 /**

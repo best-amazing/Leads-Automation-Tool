@@ -216,8 +216,10 @@ export function passesPropertyCriteria(listing: AduResearchListing): boolean {
   else {
     const haystack = [listing.title, listing.description, listing.address].join(" ").toLowerCase();
 
-    // Property Type constraint (Single Family Home or Multi-Family only) -> exclude condo/townhouse/mobile/land
-    if (haystack.includes("condo") || haystack.includes("townhouse") || haystack.includes("townhome") || haystack.includes("mobile") || haystack.includes("manufactured") || haystack.includes("land") || haystack.includes("lot")) {
+    // Property Type constraint (Single Family Home or Multi-Family only) -> exclude condo/townhouse/mobile/land/lot
+    // Use word boundaries so "Woodland" or "1 acre lot" don't false-positive
+    const propertyTypeRe = /\b(condo|townhouse|townhome|mobile home|manufactured|mobile|vacant land|bare land|lot only)\b/i;
+    if (propertyTypeRe.test(haystack)) {
       passed = false;
       failReason = "property type (not SFH/Multi)";
     }

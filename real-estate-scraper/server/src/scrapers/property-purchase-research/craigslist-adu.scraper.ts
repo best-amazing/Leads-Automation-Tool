@@ -183,6 +183,12 @@ export class CraigslistAduScraper {
             description,
           } as AduResearchListing;
 
+          // Re-check property criteria now that description is available
+          // (the pre-detail check only had title + address)
+          if (!passesPropertyCriteria(enriched)) {
+            continue;
+          }
+
           // Keyword check
           const haystack = [enriched.title, enriched.description, enriched.address].join(" ").toLowerCase();
           const matchedKeyword = ADU_KEYWORDS.find((kw) => {
