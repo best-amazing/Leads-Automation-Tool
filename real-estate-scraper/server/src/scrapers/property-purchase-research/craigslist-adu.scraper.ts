@@ -17,7 +17,7 @@ import { ADU_KEYWORDS, TARGET_STATES } from "./adu-keywords";
 import { sleep, jitter }         from "../../utils/browser";
 import { config } from "../../config";
 
-const BETWEEN_DETAIL_MS = 2_000;
+const BETWEEN_DETAIL_MS = 1_000;
 const BACKFILL_BATCH_SIZE = Number(process.env.ADU_BACKFILL_BATCH_SIZE ?? 1000);
 const DAYS_TO_LOOK_BACK = 30;
 

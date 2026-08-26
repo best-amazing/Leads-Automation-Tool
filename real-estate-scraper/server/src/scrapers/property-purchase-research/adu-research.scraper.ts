@@ -150,7 +150,8 @@ export function passesLocationFilter(listing: AduResearchListing): boolean {
  * Stage 2: Check if a listing contains at least one ADU_KEYWORD
  * in title/description/address.
  * Logs diagnostic details for the first N listings.
- */
+*/
+
 export function passesKeywordFilter(listing: AduResearchListing): boolean {
   const titlePart = listing.title ?? "";
   const descriptionPart = listing.description ?? "";
@@ -187,7 +188,8 @@ export function passesKeywordFilter(listing: AduResearchListing): boolean {
 
 /**
  * Stage 3: Check strict property criteria (Price, Beds, Baths, Year, HOA, etc.)
- */
+*/
+
 export function passesPropertyCriteria(listing: AduResearchListing): boolean {
   let passed = true;
   let failReason = "";

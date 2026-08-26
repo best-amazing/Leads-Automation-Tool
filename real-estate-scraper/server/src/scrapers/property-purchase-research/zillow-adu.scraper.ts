@@ -18,7 +18,7 @@ import { ADU_KEYWORDS, TARGET_STATES } from "./adu-keywords";
 import { sleep, jitter }         from "../../utils/browser";
 
 // Pause between detail-page fetches to avoid hammering Oxylabs
-const BETWEEN_DETAIL_MS = 2_000;
+const BETWEEN_DETAIL_MS = 1_000;
 
 // How many listings to log full diagnostics for
 const ZILLOW_DIAG_LIMIT = 10;
