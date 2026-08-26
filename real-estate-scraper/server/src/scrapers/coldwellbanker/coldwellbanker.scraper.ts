@@ -37,8 +37,8 @@ const SITEMAP_INDEX: Record<CbInventoryMode, string> = {
 
 export type CbInventoryMode = "new-day" | "new-week" | "full";
 
-export const DEFAULT_CB_DELAY_MS = Number(process.env.CB_DELAY_MS ?? 1_000);
-export const CB_CONCURRENCY = Math.max(1, Number(process.env.CB_CONCURRENCY ?? 3));
+export const DEFAULT_CB_DELAY_MS = Number(process.env.CB_DELAY_MS ?? 500);
+export const CB_CONCURRENCY = Math.max(1, Number(process.env.CB_CONCURRENCY ?? 2));
 const FETCH_TIMEOUT_MS = Number(process.env.CB_FETCH_TIMEOUT_MS ?? 60_000);
 
 // ── Low-level HTTP GET (no proxy — CB serves sitemaps/details openly) ───────

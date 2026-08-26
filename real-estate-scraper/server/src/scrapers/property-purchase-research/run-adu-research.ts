@@ -112,6 +112,7 @@ export async function runAduResearch(): Promise<void> {
     async function runContinuous(scraper: any): Promise<AduResearchListing[]> {
       const sourceName = scraper.sourceName;
       const allResults: AduResearchListing[] = [];
+      const batchThreshold = Number(process.env.ADU_BACKFILL_BATCH_SIZE ?? 500);
       while (true) {
         const results = await scraper.run();
         allResults.push(...(results as AduResearchListing[]));
@@ -120,10 +121,10 @@ export async function runAduResearch(): Promise<void> {
 
         const { processedCount } = await getLastBackfillStatus(sourceName);
 
-        if (processedCount >= 1000) {
+        if (processedCount >= batchThreshold) {
           logger.info(`[runner] ${sourceName} backfill hit batch limit, immediately fetching next batch...`);
-          // Add a small 2-second sleep to prevent spamming
-          await new Promise(r => setTimeout(r, 2000));
+          // Small 500ms sleep to avoid hammering the DB
+          await new Promise(r => setTimeout(r, 500));
         } else {
           logger.info(`[runner] ${sourceName} backfill complete or reached end of inventory.`);
           break;

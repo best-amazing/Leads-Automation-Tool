@@ -45,7 +45,8 @@ import {
 } from "../../utils/backfill-store";
 import { ADU_KEYWORDS } from "./adu-keywords";
 
-const BACKFILL_BATCH_SIZE = Number(process.env.CB_BACKFILL_BATCH_SIZE ?? 1000);
+const BACKFILL_BATCH_SIZE = Number(process.env.CB_BACKFILL_BATCH_SIZE ?? 500);
+const CB_LOOKBACK_DAYS = Number(process.env.CB_LOOKBACK_DAYS ?? 90);
 
 export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
   readonly sourceName: string = "coldwellbanker-adu";
@@ -59,7 +60,8 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
     this.visited.clear();
     this.results = [];
 
-    const mode = (process.env.CB_INVENTORY_MODE as CbInventoryMode) || "new-day";
+    const mode = (process.env.CB_INVENTORY_MODE as CbInventoryMode) || "full";
+    logger.info(`[${this.sourceName}] Inventory mode: ${mode}, lookback: ${CB_LOOKBACK_DAYS} days`);
     const previouslySeen = await loadSeenFromDb(this.sourceName);
     const reservedLids = new Set(previouslySeen); // intra-run double-processing guard
 
@@ -138,6 +140,14 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
   private async ingestAduListing(listing: AduResearchListing): Promise<void> {
     listing.source = this.sourceName;
     listing.totalBedrooms = listing.bedrooms;
+
+    // Stage 0: 90-day lookback — skip listings older than CB_LOOKBACK_DAYS
+    if (listing.daysOnMarket != null && listing.daysOnMarket > CB_LOOKBACK_DAYS) {
+      logger.debug(
+        `[${this.sourceName}] Skipping — ${listing.daysOnMarket} days on market > ${CB_LOOKBACK_DAYS}d limit: ${listing.address}`
+      );
+      return;
+    }
 
     // Stage 1: location (OH) — URLs are /oh/-scoped but verify parsed state
     if (!passesLocationFilter(listing)) return;

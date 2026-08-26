@@ -18,8 +18,8 @@ import { sleep, jitter }         from "../../utils/browser";
 import { config } from "../../config";
 
 const BETWEEN_DETAIL_MS = 1_000;
-const BACKFILL_BATCH_SIZE = Number(process.env.ADU_BACKFILL_BATCH_SIZE ?? 1000);
-const DAYS_TO_LOOK_BACK = 30;
+const BACKFILL_BATCH_SIZE = Number(process.env.ADU_BACKFILL_BATCH_SIZE ?? 500);
+const DAYS_TO_LOOK_BACK = Number(process.env.CL_LOOKBACK_DAYS ?? 90);
 
 // Micro-concurrency: fetch this many detail pages at the same time.
 // Kept at 2 to stay within Render's 512 MB RAM (each HTML page is ~1-2 MB).

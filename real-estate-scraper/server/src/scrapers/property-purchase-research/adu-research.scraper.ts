@@ -55,7 +55,8 @@ const SESSION_FILE = fs.existsSync(SESSION_FILE_FALLBACK) && !fs.existsSync(SESS
 const DEBUG_DIR = path.resolve("logs");
 
 // How many new listings to process per run
-const BACKFILL_BATCH_SIZE = 1000;
+const BACKFILL_BATCH_SIZE = Number(process.env.IL_BACKFILL_BATCH_SIZE ?? 500);
+const IL_LOOKBACK_DAYS = Number(process.env.IL_LOOKBACK_DAYS ?? 90);
 
 // How many raw XHR payloads to save for inspection (avoids disk spam if there are many requests)
 const MAX_RAW_SAVES = 3;
@@ -786,6 +787,17 @@ export class AduResearchScraper extends BaseScraper {
           if (listingId && previouslySeen.has(listingId)) {
             skippedAsSeen++;
             continue;
+          }
+
+          // Skip listings older than IL_LOOKBACK_DAYS
+          if (listing.publishedAt) {
+            const publishedDate = new Date(listing.publishedAt);
+            const cutoffDate = new Date();
+            cutoffDate.setDate(cutoffDate.getDate() - IL_LOOKBACK_DAYS);
+            if (publishedDate < cutoffDate) {
+              skippedAsSeen++;
+              continue;
+            }
           }
 
           if (oldestInBatch === "N/A") oldestInBatch = listing.publishedAt ?? "N/A";

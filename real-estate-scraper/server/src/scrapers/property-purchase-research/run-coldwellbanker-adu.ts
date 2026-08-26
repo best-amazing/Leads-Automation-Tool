@@ -101,9 +101,9 @@ export async function runColdwellBankerAduResearch(): Promise<void> {
       );
 
       const { processedCount } = await getLastBackfillStatus(coldwell.sourceName);
-      if (processedCount >= Number(process.env.CB_BACKFILL_BATCH_SIZE ?? 1000)) {
+      if (processedCount >= Number(process.env.CB_BACKFILL_BATCH_SIZE ?? 500)) {
         logger.info(`[runner] coldwellbanker-adu hit batch limit, immediately fetching next batch...`);
-        await new Promise((r) => setTimeout(r, 2000));
+        await new Promise((r) => setTimeout(r, 500));
       } else {
         logger.info(`[runner] coldwellbanker-adu backfill complete or reached end of inventory.`);
         break;

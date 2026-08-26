@@ -23,7 +23,7 @@ const BETWEEN_DETAIL_MS = 1_000;
 // How many listings to log full diagnostics for
 const ZILLOW_DIAG_LIMIT = 10;
 
-const BACKFILL_BATCH_SIZE = Number(process.env.ADU_BACKFILL_BATCH_SIZE ?? 1000);
+const BACKFILL_BATCH_SIZE = Number(process.env.ADU_BACKFILL_BATCH_SIZE ?? 500);
 
 // Micro-concurrency: fetch this many detail pages at the same time.
 // Kept at 2 to stay within Render's 512 MB RAM (each HTML page is ~1-2 MB).
