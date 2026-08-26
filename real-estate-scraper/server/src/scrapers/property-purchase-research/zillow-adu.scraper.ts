@@ -25,6 +25,10 @@ const ZILLOW_DIAG_LIMIT = 10;
 
 const BACKFILL_BATCH_SIZE = Number(process.env.ADU_BACKFILL_BATCH_SIZE ?? 1000);
 
+// Micro-concurrency: fetch this many detail pages at the same time.
+// Kept at 2 to stay within Render's 512 MB RAM (each HTML page is ~1-2 MB).
+const DETAIL_CONCURRENCY = Number(process.env.ADU_DETAIL_CONCURRENCY ?? 2);
+
 // Hard per-step deadline: guarantees a stuck call can never freeze the whole
 // run. Logs which listing/step hung, then the loop moves on.
 function raceTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -40,6 +44,24 @@ function raceTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
+// ── Promise pool: run tasks N-at-a-time ─────────────────────────────────────
+// Processes an array of async task functions with a concurrency limit.
+// Returns when all tasks have settled (resolved or rejected).
+async function runPool(tasks: Array<() => Promise<void>>, concurrency: number): Promise<void> {
+  let idx = 0;
+  const workers = Array.from({ length: Math.min(concurrency, tasks.length) }, async () => {
+    while (idx < tasks.length) {
+      const taskIndex = idx++;
+      try {
+        await tasks[taskIndex]();
+      } catch (err) {
+        logger.warn(`[zillow-adu] Pool task ${taskIndex} failed: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+  });
+  await Promise.all(workers);
+}
+
 export class ZillowAduScraper extends ZillowScraper {
   readonly sourceName = "zillow-adu";
 
@@ -48,7 +70,7 @@ export class ZillowAduScraper extends ZillowScraper {
   }
 
   async run(): Promise<RawListing[]> {
-    logger.info(`[${this.sourceName}] Starting ADU research scrape via Zillow`);
+    logger.info(`[${this.sourceName}] Starting ADU research scrape via Zillow (concurrency=${DETAIL_CONCURRENCY})`);
     this.visited.clear();
     this.results = [];
 
@@ -113,6 +135,9 @@ export class ZillowAduScraper extends ZillowScraper {
 
         logger.info(`[${this.sourceName}] ${market.name} page ${page}: ${pageListings.length} raw listing(s)`);
 
+        // ── Phase 1: Cheap filters — collect listings that need detail fetch ──
+        const pendingDetails: Array<{ rawListing: RawListing; preFilter: AduResearchListing }> = [];
+
         for (const rawListing of pageListings) {
           if (rawScannedForMarket >= this.options.maxListings) break;
           if (processedThisBatch >= BACKFILL_BATCH_SIZE) break;
@@ -167,119 +192,134 @@ export class ZillowAduScraper extends ZillowScraper {
             continue;
           }
 
-          // ── EXPENSIVE DETAIL FETCH (only for Ohio listings that pass criteria) ──
+          // Listing passed cheap filters — queue it for detail fetch
+          pendingDetails.push({ rawListing, preFilter });
+        }
+
+        // ── Phase 2: Fetch detail pages with micro-concurrency ───────────────
+        if (pendingDetails.length > 0) {
           logger.info(
-            `[${this.sourceName}] [${processedThisBatch}/${BACKFILL_BATCH_SIZE}] Fetching description: ${rawListing.address ?? rawListing.url} ` +
-            `(daysOnZillow=${rawListing.daysOnZillow ?? "?"})`
+            `[${this.sourceName}] ${market.name} page ${page}: ` +
+            `${pendingDetails.length} listings need detail fetch (concurrency=${DETAIL_CONCURRENCY})`
           );
 
-          let description = "";
-          let units: number | undefined;
-          let yearBuilt: number | undefined;
-          let schoolRating: string | undefined;
-          let status: string | undefined;
-          let lotSqft: number | undefined;
+          const detailTasks = pendingDetails.map(({ rawListing, preFilter }, idx) => {
+            return async () => {
+              logger.info(
+                `[${this.sourceName}] [${idx + 1}/${pendingDetails.length}] Fetching description: ${rawListing.address ?? rawListing.url} ` +
+                `(daysOnZillow=${rawListing.daysOnZillow ?? "?"})`
+              );
 
-          try {
-            const FETCH_TIMEOUT_MS = Number(process.env.ADU_FETCH_TIMEOUT_MS ?? 180_000);
-            let html: string | null = await raceTimeout(
-              oxylabsFetch(rawListing.url!, (this as any).sessionId),
-              FETCH_TIMEOUT_MS,
-              `detail fetch ${rawListing.url}`
-            );
-            logger.debug(`[${this.sourceName}] [#${processedThisBatch}] fetched, html=${html ? html.length : 0} chars`);
-            if (html) {
-              const json = extractNextData(html);
-              html = null; // Release ~1-2 MB HTML string for GC
-              if (json) {
-                const props = json?.props?.pageProps;
-                
-                // Extract description
-                description = props?.componentProps?.description ?? "";
-                if (!description) {
-                  const rawCache = props?.gdpClientCache ?? props?.componentProps?.gdpClientCache;
-                  if (rawCache) {
-                    try {
-                      const cache = typeof rawCache === "string" ? JSON.parse(rawCache) : rawCache;
-                      for (const key of Object.keys(cache ?? {})) {
-                        const propData = cache[key]?.property;
-                        if (propData) {
-                          if (propData.description) description = propData.description;
-                          
-                          // Extract units, yearBuilt, schoolRating from gdpClientCache
-                          if (propData.yearBuilt) yearBuilt = Number(propData.yearBuilt);
-                          if (propData.homeStatus) status = propData.homeStatus;
-                          if (propData.lotAreaValue) {
-                            if (propData.lotAreaUnit === "acres") lotSqft = Math.round(propData.lotAreaValue * 43560);
-                            else lotSqft = Math.round(propData.lotAreaValue);
+              let description = "";
+              let units: number | undefined;
+              let yearBuilt: number | undefined;
+              let schoolRating: string | undefined;
+              let status: string | undefined;
+              let lotSqft: number | undefined;
+
+              try {
+                const FETCH_TIMEOUT_MS = Number(process.env.ADU_FETCH_TIMEOUT_MS ?? 180_000);
+                let html: string | null = await raceTimeout(
+                  oxylabsFetch(rawListing.url!, (this as any).sessionId),
+                  FETCH_TIMEOUT_MS,
+                  `detail fetch ${rawListing.url}`
+                );
+                logger.debug(`[${this.sourceName}] [#${idx}] fetched, html=${html ? html.length : 0} chars`);
+                if (html) {
+                  const json = extractNextData(html);
+                  html = null; // Release ~1-2 MB HTML string for GC
+                  if (json) {
+                    const props = json?.props?.pageProps;
+                    
+                    // Extract description
+                    description = props?.componentProps?.description ?? "";
+                    if (!description) {
+                      const rawCache = props?.gdpClientCache ?? props?.componentProps?.gdpClientCache;
+                      if (rawCache) {
+                        try {
+                          const cache = typeof rawCache === "string" ? JSON.parse(rawCache) : rawCache;
+                          for (const key of Object.keys(cache ?? {})) {
+                            const propData = cache[key]?.property;
+                            if (propData) {
+                              if (propData.description) description = propData.description;
+                              
+                              // Extract units, yearBuilt, schoolRating from gdpClientCache
+                              if (propData.yearBuilt) yearBuilt = Number(propData.yearBuilt);
+                              if (propData.homeStatus) status = propData.homeStatus;
+                              if (propData.lotAreaValue) {
+                                if (propData.lotAreaUnit === "acres") lotSqft = Math.round(propData.lotAreaValue * 43560);
+                                else lotSqft = Math.round(propData.lotAreaValue);
+                              }
+                              
+                              // Schools
+                              if (Array.isArray(propData.schools) && propData.schools.length > 0) {
+                                 const hs = propData.schools.find((s: any) => s.level === "High");
+                                 if (hs && hs.rating) schoolRating = `${hs.rating}/10`;
+                                 else if (propData.schools[0].rating) schoolRating = `${propData.schools[0].rating}/10`;
+                              }
+                              
+                              break;
+                            }
                           }
-                          
-                          // Schools
-                          if (Array.isArray(propData.schools) && propData.schools.length > 0) {
-                             const hs = propData.schools.find((s: any) => s.level === "High");
-                             if (hs && hs.rating) schoolRating = `${hs.rating}/10`;
-                             else if (propData.schools[0].rating) schoolRating = `${propData.schools[0].rating}/10`;
-                          }
-                          
-                          break;
-                        }
+                        } catch {}
                       }
-                    } catch {}
+                    }
                   }
                 }
+              } catch (err) {
+                logger.warn(`[${this.sourceName}] ${rawListing.url}: ${err instanceof Error ? err.message : err}`);
               }
-            }
-          } catch (err) {
-            logger.warn(`[${this.sourceName}] ${rawListing.url}: ${err instanceof Error ? err.message : err}`);
-          }
 
-          logger.debug(`[${this.sourceName}] [#${processedThisBatch}] parsed, desc=${description.length} chars`);
+              logger.debug(`[${this.sourceName}] [#${idx}] parsed, desc=${description.length} chars`);
 
-          const enriched: AduResearchListing = {
-            ...preFilter,
-            description,
-            units,
-            yearBuilt: yearBuilt ?? preFilter.yearBuilt,
-            schoolRating,
-            status: status ?? preFilter.status,
-            lotSqft: lotSqft ?? preFilter.lotSqft,
-          } as AduResearchListing;
+              const enriched: AduResearchListing = {
+                ...preFilter,
+                description,
+                units,
+                yearBuilt: yearBuilt ?? preFilter.yearBuilt,
+                schoolRating,
+                status: status ?? preFilter.status,
+                lotSqft: lotSqft ?? preFilter.lotSqft,
+              } as AduResearchListing;
 
-          // Now filter by keywords (requires description from detail page)
-          const haystack = [enriched.title, enriched.description, enriched.address].join(" ").toLowerCase();
-          const matchedKeyword = ADU_KEYWORDS.find((kw) => {
-            const regex = new RegExp(`\\b${kw}\\b`, 'i');
-            return regex.test(haystack);
+              // Now filter by keywords (requires description from detail page)
+              const haystack = [enriched.title, enriched.description, enriched.address].join(" ").toLowerCase();
+              const matchedKeyword = ADU_KEYWORDS.find((kw) => {
+                const regex = new RegExp(`\\b${kw}\\b`, 'i');
+                return regex.test(haystack);
+              });
+              
+              if (matchedKeyword) {
+                 enriched.matchedKeyword = matchedKeyword;
+                 this.results.push(enriched);
+                 aduRunState.matched = this.results.length;
+                 logger.info(`[${this.sourceName}] ✓ MATCHED ADU KEYWORD: ${matchedKeyword}`);
+                 if (this.options.onMatch) {
+                   try {
+                     const MATCH_TIMEOUT_MS = Number(process.env.ADU_MATCH_TIMEOUT_MS ?? 300_000);
+                     await raceTimeout(
+                       this.options.onMatch(enriched),
+                       MATCH_TIMEOUT_MS,
+                       `onMatch ${rawListing.url}`
+                     );
+                   } catch (err) {
+                     logger.warn(`[${this.sourceName}] ${rawListing.url}: ${err instanceof Error ? err.message : err}`);
+                   }
+                 }
+              } else {
+                logger.debug(`[${this.sourceName}] [#${idx}] no keyword match`);
+              }
+
+              await sleep(jitter(BETWEEN_DETAIL_MS));
+              lastProgressAt = Date.now();
+              aduRunState.lastProgressAt = lastProgressAt;
+              aduRunState.listingsProcessed = processedThisBatch;
+              aduRunState.rssMB = Math.round(process.memoryUsage().rss / 1024 / 1024);
+              aduRunState.heapMB = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+            };
           });
-          
-          if (matchedKeyword) {
-             enriched.matchedKeyword = matchedKeyword;
-             this.results.push(enriched);
-             aduRunState.matched = this.results.length;
-             logger.info(`[${this.sourceName}] ✓ MATCHED ADU KEYWORD: ${matchedKeyword}`);
-             if (this.options.onMatch) {
-               try {
-                 const MATCH_TIMEOUT_MS = Number(process.env.ADU_MATCH_TIMEOUT_MS ?? 300_000);
-                 await raceTimeout(
-                   this.options.onMatch(enriched),
-                   MATCH_TIMEOUT_MS,
-                   `onMatch ${rawListing.url}`
-                 );
-               } catch (err) {
-                 logger.warn(`[${this.sourceName}] ${rawListing.url}: ${err instanceof Error ? err.message : err}`);
-               }
-             }
-          } else {
-            logger.debug(`[${this.sourceName}] [#${processedThisBatch}] no keyword match`);
-          }
 
-          await sleep(jitter(BETWEEN_DETAIL_MS));
-          logger.debug(`[${this.sourceName}] [#${processedThisBatch}] done`);
-          lastProgressAt = Date.now();
-          aduRunState.lastProgressAt = lastProgressAt;
-          aduRunState.listingsProcessed = processedThisBatch;
-          aduRunState.rssMB = Math.round(process.memoryUsage().rss / 1024 / 1024);
-          aduRunState.heapMB = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+          await runPool(detailTasks, DETAIL_CONCURRENCY);
         }
 
         if (pageListings.length === 0) {
