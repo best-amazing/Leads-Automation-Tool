@@ -11,7 +11,7 @@
 import "dotenv/config";
 import { ZillowAduScraper } from "./zillow-adu.scraper";
 import { RedfinAduScraper } from "./redfin-adu.scraper";
-import { ColdwellBankerAduScraper } from "./coldwellbanker-adu.scraper";
+// import { ColdwellBankerAduScraper } from "./coldwellbanker-adu.scraper"; // REMOVED
 import { CraigslistAduScraper } from "./craigslist-adu.scraper";
 
 import { logger } from "../../utils/logger";
@@ -86,12 +86,11 @@ export async function runAduResearch(): Promise<void> {
 
   const maxListings = Number(process.env.MAX_LISTINGS ?? 5000);
 
-  // Coldwell Banker runs first: sitemap-driven, direct HTTP (no Oxylabs
-  // credits), and dedup happens at discovery time so it finishes fast.
-  const coldwell = new ColdwellBankerAduScraper({
-    maxListings,
-    onMatch: handleMatch,
-  });
+  // Coldwell Banker removed from the scraper list (2026-08-27).
+  // const coldwell = new ColdwellBankerAduScraper({
+  //   maxListings,
+  //   onMatch: handleMatch,
+  // });
 
   const zillow = new ZillowAduScraper({
     maxListings,
@@ -133,13 +132,13 @@ export async function runAduResearch(): Promise<void> {
       return allResults;
     }
 
-    const coldwellResults = await runContinuous(coldwell);
+    // const coldwellResults = await runContinuous(coldwell);
     const redfinResults = await runContinuous(redfin);
     const craigslistResults = await runContinuous(craigslist);
     const zillowResults = await runContinuous(zillow);
     if (global.gc) global.gc();
 
-    const finalResults = [...coldwellResults, ...redfinResults, ...craigslistResults, ...zillowResults];
+    const finalResults = [...redfinResults, ...craigslistResults, ...zillowResults];
 
     try {
       const DEBUG_DIR = path.resolve("logs");
