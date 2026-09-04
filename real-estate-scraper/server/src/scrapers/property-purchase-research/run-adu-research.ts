@@ -87,10 +87,10 @@ export async function runAduResearch(): Promise<void> {
   const maxListings = Number(process.env.MAX_LISTINGS ?? 5000);
 
   // Coldwell Banker removed from the scraper list (2026-08-27).
-  const coldwell = new ColdwellBankerAduScraper({
-    maxListings,
-    onMatch: handleMatch,
-  });
+  // const coldwell = new ColdwellBankerAduScraper({
+  //   maxListings,
+  //   onMatch: handleMatch,
+  // });
 
   const zillow = new ZillowAduScraper({
     maxListings,
@@ -132,13 +132,13 @@ export async function runAduResearch(): Promise<void> {
       return allResults;
     }
 
-    const coldwellResults = await runContinuous(coldwell);
+    // const coldwellResults = await runContinuous(coldwell);
     const redfinResults = await runContinuous(redfin);
     const craigslistResults = await runContinuous(craigslist);
     const zillowResults = await runContinuous(zillow);
     if (global.gc) global.gc();
 
-    const finalResults = [...redfinResults, ...craigslistResults, ...zillowResults, ...coldwellResults];
+    const finalResults = [...redfinResults, ...craigslistResults, ...zillowResults ];
 
     try {
       const DEBUG_DIR = path.resolve("logs");
