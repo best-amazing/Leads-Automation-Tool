@@ -4,7 +4,7 @@
 //
 // Extends the existing InvestorLiftScraper to:
 //   1. Replace price/location passesFilter() with keyword-based ADU matching
-//   2. Match listings in Ohio (OH)
+//   2. Match listings in Ohio (OH) and Indiana (IN)
 //   3. Capture extended fields (description, units, yearBuilt, schoolRating)
 //   4. Output results to CSV + JSON instead of the database
 //

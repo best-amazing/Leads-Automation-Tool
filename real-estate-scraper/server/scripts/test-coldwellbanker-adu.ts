@@ -15,7 +15,7 @@
 import "dotenv/config";
 import {
   ColdwellBankerScraper,
-  discoverOhioListingUrls,
+  discoverTargetListingUrls,
   extractLid,
 } from "../src/scrapers/coldwellbanker/coldwellbanker.scraper";
 import { ColdwellBankerAduScraper } from "../src/scrapers/property-purchase-research/coldwellbanker-adu.scraper";
@@ -25,7 +25,7 @@ import { logger } from "../src/utils/logger";
 
 async function stage1Discovery(): Promise<string[]> {
   console.log("\n═══ Stage 1: sitemap discovery ═══");
-  const urls = await discoverOhioListingUrls("new-day");
+  const urls = await discoverTargetListingUrls("new-day");
   console.log(`OH URLs discovered: ${urls.length}`);
   if (urls.length > 0) {
     console.log("sample:", urls[0]);

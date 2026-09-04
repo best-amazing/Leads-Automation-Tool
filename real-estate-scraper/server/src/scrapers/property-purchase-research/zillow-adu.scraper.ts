@@ -180,7 +180,7 @@ export class ZillowAduScraper extends ZillowScraper {
           } as AduResearchListing;
 
           // ── CHEAP FILTERS FIRST (no network call) ──────────────────
-          // 1. Location filter — only Ohio
+          // 1. Location filter — only OH and IN
           if (!passesLocationFilter(preFilter)) {
             logger.debug(`[${this.sourceName}] [#${processedThisBatch}] skipped — location filter`);
             continue;

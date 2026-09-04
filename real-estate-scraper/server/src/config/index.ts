@@ -113,6 +113,8 @@ export const config = {
       columbus:  "https://columbus.craigslist.org/search/rea",
       cleveland: "https://cleveland.craigslist.org/search/rea",
       toledo:    "https://toledo.craigslist.org/search/rea",
+      indianapolis: "https://indianapolis.craigslist.org/search/rea",
+      fortwayne: "https://fortwayne.craigslist.org/search/rea",
     },
 
     zillow: {
@@ -120,6 +122,11 @@ export const config = {
         {
           name:        "Ohio - Active",
           baseUrl:     "https://www.zillow.com/oh/",
+          listingType: "active" as const,
+        },
+        {
+          name:        "Indiana - Active",
+          baseUrl:     "https://www.zillow.com/in/",
           listingType: "active" as const,
         },
       ] as Array<{

@@ -122,14 +122,14 @@ function extractLocs(xml: string): string[] {
 }
 
 /**
- * Discover Coldwell Banker listing URLs for Ohio.
+ * Discover Coldwell Banker listing URLs for target states.
  *
  *  - "new-day"/"new-week": child sitemaps are brand-keyed, so every chunk is
- *    fetched and URLs filtered on "/oh/".
- *  - "full": child sitemaps are state-keyed (sitemap-listings-oh-NNN.xml), so
- *    only Ohio chunks are fetched — cheapest way to sweep all ~47K actives.
+ *    fetched and URLs filtered on target states.
+ *  - "full": child sitemaps are state-keyed (sitemap-listings-state-NNN.xml), so
+ *    only target state chunks are fetched — cheapest way to sweep active listings.
  */
-export async function discoverOhioListingUrls(mode: CbInventoryMode): Promise<string[]> {
+export async function discoverTargetListingUrls(mode: CbInventoryMode): Promise<string[]> {
   const indexXml = await httpGetWithRetry(SITEMAP_INDEX[mode], `sitemap index (${mode})`);
   let childSitemaps = extractLocs(indexXml);
   logger.info(
@@ -137,8 +137,8 @@ export async function discoverOhioListingUrls(mode: CbInventoryMode): Promise<st
   );
 
   if (mode === "full") {
-    childSitemaps = childSitemaps.filter((u) => /sitemap-listings-oh-\d+\.xml$/.test(u));
-    logger.info(`[coldwellbanker] full mode: ${childSitemaps.length} Ohio chunk(s)`);
+    childSitemaps = childSitemaps.filter((u) => /sitemap-listings-(oh|in)-\d+\.xml$/.test(u));
+    logger.info(`[coldwellbanker] full mode: ${childSitemaps.length} target chunk(s)`);
   }
 
   const urls = new Set<string>();
@@ -148,7 +148,7 @@ export async function discoverOhioListingUrls(mode: CbInventoryMode): Promise<st
       const xml = await httpGetWithRetry(sm, `chunk ${sm.split("/").pop()}`);
       fetched++;
       for (const u of extractLocs(xml)) {
-        if (/^https:\/\/www\.coldwellbanker\.com\/oh\/.+\/lid-/.test(u)) urls.add(u);
+        if (/^https:\/\/www\.coldwellbanker\.com\/(oh|in)\/.+\/lid-/.test(u)) urls.add(u);
       }
     } catch (err) {
       logger.warn(`[coldwellbanker] Skipping unreadable sitemap ${sm}: ${err}`);
@@ -159,7 +159,7 @@ export async function discoverOhioListingUrls(mode: CbInventoryMode): Promise<st
 
   logger.info(
     `[coldwellbanker] Discovery complete (${mode}): ${fetched}/${childSitemaps.length} chunks, ` +
-      `${urls.size} unique OH listing URL(s)`
+      `${urls.size} unique target listing URL(s)`
   );
   return [...urls];
 }
@@ -374,7 +374,7 @@ export class ColdwellBankerScraper extends BaseScraper {
     this.results = [];
 
     const mode = (process.env.CB_INVENTORY_MODE as CbInventoryMode) || "new-week";
-    const urls = await discoverOhioListingUrls(mode);
+    const urls = await discoverTargetListingUrls(mode);
 
     for (const url of urls) {
       if (this.results.length >= this.options.maxListings) break;

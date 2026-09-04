@@ -60,4 +60,4 @@ export const ADU_KEYWORDS = [
 /**
  * US state abbreviations to filter listings by geography.
  */
-export const TARGET_STATES = ["OH"];
+export const TARGET_STATES = ["OH", "IN"];

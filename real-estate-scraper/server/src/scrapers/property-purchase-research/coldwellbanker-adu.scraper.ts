@@ -25,7 +25,7 @@ import { RawListing } from "../../types/listing";
 import {
   ColdwellBankerScraper,
   CbInventoryMode,
-  discoverOhioListingUrls,
+  discoverTargetListingUrls,
   extractLid,
   DEFAULT_CB_DELAY_MS,
   CB_CONCURRENCY,
@@ -66,7 +66,7 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
     const reservedLids = new Set(previouslySeen); // intra-run double-processing guard
 
     // ── Discover + subtract seen BEFORE any expensive fetch ──────────────
-    const discovered = await discoverOhioListingUrls(mode);
+    const discovered = await discoverTargetListingUrls(mode);
     const queue: string[] = [];
     let skippedAsSeen = 0;
     for (const url of discovered) {
@@ -149,7 +149,7 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
       return;
     }
 
-    // Stage 1: location (OH) — URLs are /oh/-scoped but verify parsed state
+    // Stage 1: location (OH/IN) — URLs are state-scoped but verify parsed state
     if (!passesLocationFilter(listing)) return;
     // Stage 2: hard property criteria (price/beds/baths/year/type exclusions)
     if (!passesPropertyCriteria(listing)) return;

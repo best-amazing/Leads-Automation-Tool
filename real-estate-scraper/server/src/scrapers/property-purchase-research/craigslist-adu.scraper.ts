@@ -33,6 +33,8 @@ const CITY_TO_STATE: Record<string, string> = {
   columbus: "OH",
   cleveland: "OH",
   toledo: "OH",
+  indianapolis: "IN",
+  fortwayne: "IN",
 };
 
 function raceTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {

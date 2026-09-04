@@ -1,6 +1,6 @@
 import { config } from "../config";
 import { oxylabsFetch } from "../scrapers/zillow/zillow.scraper";
-import { discoverOhioListingUrls } from "../scrapers/coldwellbanker/coldwellbanker.scraper";
+import { discoverTargetListingUrls } from "../scrapers/coldwellbanker/coldwellbanker.scraper";
 
 async function run() {
   console.log("=========================================");
@@ -9,8 +9,8 @@ async function run() {
 
   // 1. Coldwell Banker — uses the scraper's own HTTP (correct domain + UA)
   try {
-    const ohUrls = await discoverOhioListingUrls("full");
-    const newDayUrls = await discoverOhioListingUrls("new-day").catch(() => [] as string[]);
+    const ohUrls = await discoverTargetListingUrls("full");
+    const newDayUrls = await discoverTargetListingUrls("new-day").catch(() => [] as string[]);
 
     console.log(`[COLDWELL BANKER]`);
     console.log(` - Active Ohio Listings: ${ohUrls.length}`);
