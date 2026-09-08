@@ -132,13 +132,13 @@ export async function runAduResearch(): Promise<void> {
       return allResults;
     }
 
-    const coldwellResults = await runContinuous(coldwell);
+    // const coldwellResults = await runContinuous(coldwell);
     const redfinResults = await runContinuous(redfin);
     const craigslistResults = await runContinuous(craigslist);
     const zillowResults = await runContinuous(zillow);
     if (global.gc) global.gc();
 
-    const finalResults = [...coldwellResults, ...redfinResults, ...craigslistResults, ...zillowResults ];
+    const finalResults = [...redfinResults, ...craigslistResults, ...zillowResults ];
 
     try {
       const DEBUG_DIR = path.resolve("logs");
