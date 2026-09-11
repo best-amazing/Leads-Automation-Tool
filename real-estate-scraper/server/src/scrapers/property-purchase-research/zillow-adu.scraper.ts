@@ -20,6 +20,9 @@ import { sleep, jitter }         from "../../utils/browser";
 // Pause between detail-page fetches to avoid hammering Oxylabs
 const BETWEEN_DETAIL_MS = 1_000;
 
+// Pause between page requests (same cadence as the base Zillow scraper)
+const BETWEEN_PAGE_MS = 3_000;
+
 // How many listings to log full diagnostics for
 const ZILLOW_DIAG_LIMIT = 10;
 
@@ -324,8 +327,9 @@ export class ZillowAduScraper extends ZillowScraper {
 
         if (pageListings.length === 0) {
           logger.info(`[${this.sourceName}] ${market.name} — no listings on page ${page}, skipping to next older page`);
-          continue; // going backwards, keep moving to older pages
         }
+
+        await sleep(jitter(BETWEEN_PAGE_MS));
       }
       if (processedThisBatch >= BACKFILL_BATCH_SIZE) break;
       if (global.gc) global.gc();

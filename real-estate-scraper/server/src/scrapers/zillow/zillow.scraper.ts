@@ -54,6 +54,12 @@ const OXYLABS_PASSWORD   = process.env.OXYLABS_PASSWORD ?? "";
 const REQUEST_TIMEOUT_MS = 120_000;
 const BETWEEN_PAGE_MS    = 3_000;
 const BETWEEN_MARKET_MS  = 5_000;   // extra pause between markets
+const MAX_RETRIES        = 3;       // retry count for 429 / transient errors
+
+// Exponential backoff: 8s, 16s, 32s (+ jitter), capped at 45s
+function retryDelayMs(attempt: number): number {
+  return Math.min(8_000 * Math.pow(2, attempt - 1) + Math.random() * 4_000, 45_000);
+}
 const DEBUG_PAGES        = 3;       // save raw HTML/JSON for first N pages per market
 const MAX_DETAIL_SAVES   = 3;       // how many detail-page __NEXT_DATA__ files to save
 
@@ -173,7 +179,16 @@ interface OxylabsResponse {
   }>;
 }
 
-export function oxylabsFetch(targetUrl: string, sessionId?: string): Promise<string | null> {
+// ── Single Oxylabs request (no retry) ────────────────────────────────────────
+//
+// Returns { html, rateLimited } so the caller can decide whether to retry.
+
+interface OxylabsResult {
+  html:        string | null;
+  rateLimited: boolean;
+}
+
+function oxylabsFetchOnce(targetUrl: string, sessionId?: string): Promise<OxylabsResult> {
   return new Promise((resolve) => {
     if (!OXYLABS_USERNAME || !OXYLABS_PASSWORD) {
       logger.error(
@@ -181,17 +196,16 @@ export function oxylabsFetch(targetUrl: string, sessionId?: string): Promise<str
         "[zillow]   OXYLABS_USERNAME=your_api_user\n" +
         "[zillow]   OXYLABS_PASSWORD=your_api_password"
       );
-      resolve(null);
+      resolve({ html: null, rateLimited: false });
       return;
     }
 
-    // Guard: once the Promise is settled, no timer/event should call resolve again.
     let settled = false;
-    function settle(value: string | null) {
+    function settle(html: string | null, rateLimited = false) {
       if (settled) return;
       settled = true;
       clearTimeout(deadline);
-      resolve(value);
+      resolve({ html, rateLimited });
     }
 
     const payload: OxylabsPayload = {
@@ -206,9 +220,6 @@ export function oxylabsFetch(targetUrl: string, sessionId?: string): Promise<str
     const bodyStr = JSON.stringify(payload);
     const authStr = Buffer.from(`${OXYLABS_USERNAME}:${OXYLABS_PASSWORD}`).toString("base64");
 
-    // Hard wall-clock deadline — the ONLY timer that can cancel everything.
-    // Set to 150s (30s more than socket idle) so socket timeout fires first
-    // in normal cases, and this acts as the absolute last resort.
     const DEADLINE_MS = REQUEST_TIMEOUT_MS + 30_000;
     const deadline = setTimeout(() => {
       logger.warn(`[zillow] Oxylabs deadline exceeded (${DEADLINE_MS / 1_000}s) — aborting`);
@@ -257,7 +268,7 @@ export function oxylabsFetch(targetUrl: string, sessionId?: string): Promise<str
           const status = res.statusCode ?? 0;
 
           if (status === 401) { logger.error("[zillow] Oxylabs 401 — bad credentials"); settle(null); return; }
-          if (status === 429) { logger.warn("[zillow] Oxylabs 429 — rate limited");      settle(null); return; }
+          if (status === 429) { logger.warn("[zillow] Oxylabs 429 — rate limited");      settle(null, true); return; }
           if (status !== 200) {
             logger.warn(`[zillow] Oxylabs HTTP ${status}`);
             logger.debug(`[zillow] Body snippet: ${raw.slice(0, 300)}`);
@@ -276,7 +287,7 @@ export function oxylabsFetch(targetUrl: string, sessionId?: string): Promise<str
 
           if (innerStatus === 403 || innerStatus === 429) {
             logger.warn(`[zillow] Zillow HTTP ${innerStatus} via Oxylabs`);
-            settle(null); return;
+            settle(null, true); return;
           }
           if (!content || content.length < 5_000) {
             logger.warn(`[zillow] Short content (${content.length} chars) — possible block`);
@@ -305,9 +316,6 @@ export function oxylabsFetch(targetUrl: string, sessionId?: string): Promise<str
       settle(null);
     });
 
-    // Catch-all: any close settles with null. The deadline timer is only
-    // cleared by settle() after the Promise has already resolved — never
-    // before, so a premature 'close' event can never disarm the deadline.
     req.on("close", () => {
       logger.debug("[zillow] [sock] close");
       settle(null);
@@ -317,6 +325,30 @@ export function oxylabsFetch(targetUrl: string, sessionId?: string): Promise<str
     req.end();
     logger.debug(`[zillow] [sock] request sent — ${targetUrl}`);
   });
+}
+
+// ── Public Oxylabs fetch with retry ──────────────────────────────────────────
+//
+// Retries on 429 / rate-limit responses with exponential backoff, matching
+// the convention used by LoopNet, Redfin, Offmarket, and ColdwellBanker.
+
+export async function oxylabsFetch(targetUrl: string, sessionId?: string): Promise<string | null> {
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const { html, rateLimited } = await oxylabsFetchOnce(targetUrl, sessionId);
+
+    if (html !== null) return html;                     // success
+    if (!rateLimited)   return null;                     // non-retryable error (401, parse, timeout …)
+
+    // rate-limited — retry with backoff
+    if (attempt < MAX_RETRIES) {
+      const delay = retryDelayMs(attempt);
+      logger.warn(`[zillow] 429 retry ${attempt}/${MAX_RETRIES} — waiting ${Math.round(delay / 1_000)}s`);
+      await sleep(delay);
+    } else {
+      logger.warn(`[zillow] 429 — all ${MAX_RETRIES} retries exhausted for ${targetUrl.slice(0, 80)}`);
+    }
+  }
+  return null;
 }
 
 // ── __NEXT_DATA__ extractor ───────────────────────────────────────────────────
@@ -495,7 +527,6 @@ export class ZillowScraper extends BaseScraper {
 
         if (pageListings.length === 0) {
           logger.info(`[${this.sourceName}] ${market.name} — no listings on page ${page}, skipping to next older page`);
-          continue; // changed break to continue since we are going backwards
         }
 
         await sleep(jitter(BETWEEN_PAGE_MS));
