@@ -333,8 +333,9 @@ function oxylabsFetchOnce(targetUrl: string, sessionId?: string): Promise<Oxylab
 // the convention used by LoopNet, Redfin, Offmarket, and ColdwellBanker.
 
 export async function oxylabsFetch(targetUrl: string, sessionId?: string): Promise<string | null> {
+  let currentSessionId = sessionId;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    const { html, rateLimited } = await oxylabsFetchOnce(targetUrl, sessionId);
+    const { html, rateLimited } = await oxylabsFetchOnce(targetUrl, currentSessionId);
 
     if (html !== null) return html;                     // success
     if (!rateLimited)   return null;                     // non-retryable error (401, parse, timeout …)
@@ -342,7 +343,12 @@ export async function oxylabsFetch(targetUrl: string, sessionId?: string): Promi
     // rate-limited — retry with backoff
     if (attempt < MAX_RETRIES) {
       const delay = retryDelayMs(attempt);
-      logger.warn(`[zillow] 429 retry ${attempt}/${MAX_RETRIES} — waiting ${Math.round(delay / 1_000)}s`);
+      if (currentSessionId) {
+        currentSessionId = `zillow_${Date.now()}_${Math.floor(Math.random() * 9_999)}`;
+        logger.info(`[zillow] 429 retry ${attempt}/${MAX_RETRIES} — rotating session ID to ${currentSessionId} and waiting ${Math.round(delay / 1_000)}s`);
+      } else {
+        logger.warn(`[zillow] 429 retry ${attempt}/${MAX_RETRIES} — waiting ${Math.round(delay / 1_000)}s`);
+      }
       await sleep(delay);
     } else {
       logger.warn(`[zillow] 429 — all ${MAX_RETRIES} retries exhausted for ${targetUrl.slice(0, 80)}`);
@@ -423,7 +429,7 @@ export class ZillowScraper extends BaseScraper {
   // visited is inherited from BaseScraper and shared across all markets
   // so we automatically deduplicate the same zpid appearing in multiple markets.
   private allListings: RawListing[] = [];
-  private readonly sessionId = `zillow_${Date.now()}_${Math.floor(Math.random() * 9_999)}`;
+  public sessionId = `zillow_${Date.now()}_${Math.floor(Math.random() * 9_999)}`;
 
   constructor(options: ScraperOptions = {}) {
     super(options);
@@ -587,6 +593,7 @@ export class ZillowScraper extends BaseScraper {
     const html = await oxylabsFetch(pageUrl, this.sessionId);
     if (!html) {
       logger.warn(`[zillow] No HTML for ${market.name} page ${pageNumber} — skipping page`);
+      this.sessionId = `zillow_${Date.now()}_${Math.floor(Math.random() * 9_999)}`;
       return { listings: [], stop: false };
     }
 
@@ -597,6 +604,7 @@ export class ZillowScraper extends BaseScraper {
     const { blocked, reason } = detectBlock(html);
     if (blocked) {
       logger.error(`[zillow] Blocked on ${market.name} page ${pageNumber}: ${reason}`);
+      this.sessionId = `zillow_${Date.now()}_${Math.floor(Math.random() * 9_999)}`;
       saveFile(`zillow_blocked_p${pageNumber}_${slug}.html`, html);
       return { listings: [], stop: false };
     }
