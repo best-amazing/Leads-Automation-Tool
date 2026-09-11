@@ -13,7 +13,6 @@ import { ZillowAduScraper } from "./zillow-adu.scraper";
 import { RedfinAduScraper } from "./redfin-adu.scraper";
 import { ColdwellBankerAduScraper } from "./coldwellbanker-adu.scraper"; // REMOVED
 import { CraigslistAduScraper } from "./craigslist-adu.scraper";
-
 import { logger } from "../../utils/logger";
 import { getLastBackfillStatus } from "../../utils/backfill-store";
 import { ADU_KEYWORDS, TARGET_STATES } from "./adu-keywords";
