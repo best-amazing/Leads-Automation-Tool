@@ -555,8 +555,8 @@ export class ZillowScraper extends BaseScraper {
 
     const html = await oxylabsFetch(pageUrl, this.sessionId);
     if (!html) {
-      logger.warn(`[zillow] No HTML for ${market.name} page ${pageNumber} — stopping market`);
-      return { listings: [], stop: true };
+      logger.warn(`[zillow] No HTML for ${market.name} page ${pageNumber} — skipping page`);
+      return { listings: [], stop: false };
     }
 
     if (pageNumber <= DEBUG_PAGES) {
@@ -567,20 +567,20 @@ export class ZillowScraper extends BaseScraper {
     if (blocked) {
       logger.error(`[zillow] Blocked on ${market.name} page ${pageNumber}: ${reason}`);
       saveFile(`zillow_blocked_p${pageNumber}_${slug}.html`, html);
-      return { listings: [], stop: true };
+      return { listings: [], stop: false };
     }
 
     if (!html.includes("zillowstatic.com") && !html.includes("__NEXT_DATA__")) {
       logger.error(`[zillow] ${market.name} page ${pageNumber} doesn't look like Zillow`);
       saveFile(`zillow_unexpected_p${pageNumber}_${slug}.html`, html);
-      return { listings: [], stop: true };
+      return { listings: [], stop: false };
     }
 
     const json = extractNextData(html);
     if (!json) {
       logger.warn(`[zillow] No __NEXT_DATA__ on ${market.name} page ${pageNumber}`);
       saveFile(`zillow_no_next_data_p${pageNumber}_${slug}.html`, html);
-      return { listings: [], stop: true };
+      return { listings: [], stop: false };
     }
 
     if (pageNumber <= DEBUG_PAGES) {
