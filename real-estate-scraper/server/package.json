@@ -43,7 +43,8 @@
     "scrape:adu-research:cron": "node --max-old-space-size=384 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/run-adu-research-cron.ts",
     "verify:zillow": "node --max-old-space-size=384 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/verify-zillow-ordering.ts",
     "reprocess:il-logs": "node --max-old-space-size=384 -r ./polyfill-file.js -r ts-node/register scripts/reprocess-il-logs.ts",
-    "check:il-counts": "node --max-old-space-size=384 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/check-il-counts.ts"
+    "check:il-counts": "node --max-old-space-size=384 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/check-il-counts.ts",
+    "backfill:deed-dates": "node --max-old-space-size=4096 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/backfill-sheet-deed-dates.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.13.0",
