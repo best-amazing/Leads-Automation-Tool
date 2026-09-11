@@ -51,10 +51,11 @@ const OXYLABS_PATH       = "/v1/queries";
 const OXYLABS_USERNAME   = process.env.OXYLABS_USERNAME ?? "";
 const OXYLABS_PASSWORD   = process.env.OXYLABS_PASSWORD ?? "";
 
-const REQUEST_TIMEOUT_MS = 120_000;
-const BETWEEN_PAGE_MS    = 3_000;
-const BETWEEN_MARKET_MS  = 5_000;   // extra pause between markets
-const MAX_RETRIES        = 3;       // retry count for 429 / transient errors
+const REQUEST_TIMEOUT_MS    = 120_000;
+const BETWEEN_PAGE_MS       = 8_000;   // base pause between pages
+const BETWEEN_MARKET_MS     = 10_000;  // extra pause between markets
+const POST_FAIL_COOLDOWN_MS = 60_000;  // cooldown after all retries exhausted on a page
+const MAX_RETRIES           = 3;       // retry count for 429 / transient errors
 
 // Exponential backoff: 8s, 16s, 32s (+ jitter), capped at 45s
 function retryDelayMs(attempt: number): number {
@@ -592,8 +593,9 @@ export class ZillowScraper extends BaseScraper {
 
     const html = await oxylabsFetch(pageUrl, this.sessionId);
     if (!html) {
-      logger.warn(`[zillow] No HTML for ${market.name} page ${pageNumber} — skipping page`);
+      logger.warn(`[zillow] No HTML for ${market.name} page ${pageNumber} — skipping page. Cooling off for ${POST_FAIL_COOLDOWN_MS / 1_000}s`);
       this.sessionId = `zillow_${Date.now()}_${Math.floor(Math.random() * 9_999)}`;
+      await sleep(POST_FAIL_COOLDOWN_MS);
       return { listings: [], stop: false };
     }
 
