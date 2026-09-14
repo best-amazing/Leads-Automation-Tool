@@ -12,7 +12,7 @@
 
 import "dotenv/config";
 import axios from "axios";
-import { logger } from "../../utils/logger";
+import { logger } from "../../../utils/logger";
 
 const ATTOM_API_KEY = process.env.ATTOM_API_KEY;
 const ATTOM_BASE = "https://api.gateway.attomdata.com/propertyapi/v1.0.0";
@@ -51,7 +51,10 @@ function normalizeDate(raw: string | number | undefined | null): string | null {
   return d.toISOString().slice(0, 10);
 }
 
-function splitForAttom(normalizedAddress: string): { address1: string; address2: string } {
+function splitForAttom(normalizedAddress: string): {
+  address1: string;
+  address2: string;
+} {
   const [first, ...rest] = normalizedAddress.split(",").map((p) => p.trim());
   return { address1: first, address2: rest.join(", ") };
 }
@@ -71,7 +74,9 @@ export async function geocodeAddress(
       return null;
     }
 
-    logger.debug(`[deed-resolver] [geocode] Matched: "${match.matchedAddress}"`);
+    logger.debug(
+      `[deed-resolver] [geocode] Matched: "${match.matchedAddress}"`,
+    );
     return {
       lat: match.coordinates.y,
       lon: match.coordinates.x,
@@ -107,13 +112,17 @@ export async function getFromAttom(
 
     const saleDate = res.data?.property?.[0]?.sale?.saleTransDate;
     if (!saleDate) {
-      logger.debug(`[deed-resolver] [attom] No saleTransDate in response for "${address1}"`);
+      logger.debug(
+        `[deed-resolver] [attom] No saleTransDate in response for "${address1}"`,
+      );
     }
     return normalizeDate(saleDate);
   } catch (err: any) {
     const status = err.response?.status;
     const msg = err.response?.data?.status?.msg || err.message || err;
-    logger.debug(`[deed-resolver] [attom] ERROR ${status || "network"}: ${msg}`);
+    logger.debug(
+      `[deed-resolver] [attom] ERROR ${status || "network"}: ${msg}`,
+    );
     return null;
   }
 }
@@ -181,7 +190,9 @@ export async function fetchDeedTransferDate(
         return ogripDate;
       }
     }
-    logger.debug(`[deed-resolver] Neither address nor usable coordinates — skipping lookup`);
+    logger.debug(
+      `[deed-resolver] Neither address nor usable coordinates — skipping lookup`,
+    );
     return null;
   }
 
@@ -226,7 +237,9 @@ export async function fetchDeedTransferDate(
   if (address1 && address2) {
     const attomDate = await getFromAttom(address1, address2);
     if (attomDate) {
-      logger.info(`[deed-resolver] ✓ ATTOM matched: ${attomDate} for "${input.address}"`);
+      logger.info(
+        `[deed-resolver] ✓ ATTOM matched: ${attomDate} for "${input.address}"`,
+      );
       return attomDate;
     }
   }
@@ -234,7 +247,9 @@ export async function fetchDeedTransferDate(
   // 4. Try OGRIP fallback with point geometry
   const ogripDate = await getFromOgrip(lat, lon);
   if (ogripDate) {
-    logger.info(`[deed-resolver] ✓ OGRIP matched: ${ogripDate} for "${input.address}"`);
+    logger.info(
+      `[deed-resolver] ✓ OGRIP matched: ${ogripDate} for "${input.address}"`,
+    );
     return ogripDate;
   }
 

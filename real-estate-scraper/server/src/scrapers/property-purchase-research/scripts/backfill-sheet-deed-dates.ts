@@ -15,8 +15,8 @@ import "dotenv/config";
 import * as fs from "fs";
 import * as path from "path";
 import { google } from "googleapis";
-import { enrichOneListing } from "../../lib/deed-data/enrich-listings";
-import { logger } from "../../utils/logger";
+import { enrichOneListing } from "../../../lib/deed-data/enrich-listings";
+import { logger } from "../../../utils/logger";
 
 const SHEET_NAME = "New Property Research Tool";
 const DEED_DATE_FALLBACK_COLUMN = 22; // column W — where adu-research writes the deed date
@@ -35,8 +35,16 @@ function getServiceAccountPath(): string {
     raw,
     path.resolve(raw),
     path.join(process.cwd(), "amazing-properties-447020-b2f3946f4b3e.json"),
-    path.join(__dirname, "../..", "amazing-properties-447020-b2f3946f4b3e.json"),
-    path.join(__dirname, "../../..", "amazing-properties-447020-b2f3946f4b3e.json"),
+    path.join(
+      __dirname,
+      "../..",
+      "amazing-properties-447020-b2f3946f4b3e.json",
+    ),
+    path.join(
+      __dirname,
+      "../../..",
+      "amazing-properties-447020-b2f3946f4b3e.json",
+    ),
   ];
 
   for (const cand of candidates) {
@@ -79,7 +87,9 @@ async function main(): Promise<void> {
 
   const keyPath = getServiceAccountPath();
   if (!fs.existsSync(keyPath) || !keyPath) {
-    logger.error(`[backfill] Google service account key not found (${keyPath})`);
+    logger.error(
+      `[backfill] Google service account key not found (${keyPath})`,
+    );
     process.exit(1);
   }
 
@@ -87,7 +97,9 @@ async function main(): Promise<void> {
   logger.info("Google Sheet Deed-Date Backfill");
   logger.info("═".repeat(60));
   logger.info(`Sheet: ${SHEET_NAME}`);
-  logger.info(`Mode:  ${FORCE ? "force (re-fetch all)" : "only rows missing a deed date"}`);
+  logger.info(
+    `Mode:  ${FORCE ? "force (re-fetch all)" : "only rows missing a deed date"}`,
+  );
   logger.info(`Limit: ${LIMIT === Infinity ? "none" : LIMIT} unique addresses`);
   logger.info("─".repeat(60));
 
@@ -126,7 +138,11 @@ async function main(): Promise<void> {
       // Day-block header — adopt its column layout for the rows below.
       lastHeaderIndex = i;
       activeAddressCol = findColumn(r, "Address", 5);
-      activeDeedCol = findColumn(r, "Deed Transfer Date", DEED_DATE_FALLBACK_COLUMN);
+      activeDeedCol = findColumn(
+        r,
+        "Deed Transfer Date",
+        DEED_DATE_FALLBACK_COLUMN,
+      );
       continue;
     }
     if (/^== \d{4}-\d{2}-\d{2} ==$/.test(first)) continue; // day marker
@@ -138,7 +154,12 @@ async function main(): Promise<void> {
     const currentDeedDate = (r[activeDeedCol] || "").toString().trim();
     if (!FORCE && currentDeedDate) continue; // already filled (idempotent)
 
-    dataRows.push({ sheetRow: i + 1, address, currentDeedDate, deedCol: activeDeedCol });
+    dataRows.push({
+      sheetRow: i + 1,
+      address,
+      currentDeedDate,
+      deedCol: activeDeedCol,
+    });
   }
 
   logger.info(`Data rows needing a deed date: ${dataRows.length}`);
@@ -169,7 +190,9 @@ async function main(): Promise<void> {
         found++;
         logger.info(`  ✓ ${date} (${result.deedDataSource}) :: ${address}`);
       } else {
-        logger.warn(`  ✗ none :: ${address} (${result.enrichmentNote || "no deed date"})`);
+        logger.warn(
+          `  ✗ none :: ${address} (${result.enrichmentNote || "no deed date"})`,
+        );
       }
       deedCache.set(address.toLowerCase().replace(/\s+/g, " "), date);
     } catch (err: any) {
@@ -178,7 +201,9 @@ async function main(): Promise<void> {
     }
     await new Promise((r) => setTimeout(r, 250));
   }
-  logger.info(`Deed dates found: ${found}/${toProcess.length} unique addresses`);
+  logger.info(
+    `Deed dates found: ${found}/${toProcess.length} unique addresses`,
+  );
 
   // 4. Build the updates: map every data row back to its cached address result.
   const updates: { range: string; value: string }[] = [];
@@ -192,7 +217,11 @@ async function main(): Promise<void> {
 
   // Label the column on the latest header block if it predates the new field.
   const lastDeedCol = activeDeedCol;
-  if (lastHeaderIndex >= 0 && (rows[lastHeaderIndex][lastDeedCol] || "").toString() !== "Deed Transfer Date") {
+  if (
+    lastHeaderIndex >= 0 &&
+    (rows[lastHeaderIndex][lastDeedCol] || "").toString() !==
+      "Deed Transfer Date"
+  ) {
     updates.push({
       range: `${SHEET_NAME}!${colLetter(lastDeedCol)}${lastHeaderIndex + 1}`,
       value: "Deed Transfer Date",
@@ -214,7 +243,9 @@ async function main(): Promise<void> {
   }
 
   logger.info("─".repeat(60));
-  logger.info(`Done — updated ${updates.length} cells with deed transfer dates.`);
+  logger.info(
+    `Done — updated ${updates.length} cells with deed transfer dates.`,
+  );
   logger.info("═".repeat(60));
 }
 

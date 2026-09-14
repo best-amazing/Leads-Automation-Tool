@@ -125,7 +125,7 @@ export class ZillowAduScraper extends ZillowScraper {
     }, 60_000);
 
     // We import config from base to read markets
-    const { config } = await import("../../config");
+    const { config } = await import("../../../config");
     const zillowCfg = config.sources.zillow;
     const markets = zillowCfg.markets;
 

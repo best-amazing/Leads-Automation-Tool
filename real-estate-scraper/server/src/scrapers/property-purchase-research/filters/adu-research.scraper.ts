@@ -21,14 +21,14 @@ import * as path from "path";
 const DIAGNOSTIC_LOG_LIMIT = 10;
 
 import axios from "axios";
-import { BaseScraper, ScraperOptions } from "../base.scraper";
-import { BrowserHandle, sleep } from "../../utils/browser";
-import { RawListing } from "../../types/listing";
-import { logger } from "../../utils/logger";
+import { BaseScraper, ScraperOptions } from "../../base.scraper";
+import { BrowserHandle, sleep } from "../../../utils/browser";
+import { RawListing } from "../../../types/listing";
+import { logger } from "../../../utils/logger";
 import {
   loadSeenListings as loadSeenFromDb,
   saveSeenListings as saveSeenToDb,
-} from "../../utils/backfill-store";
+} from "../../../utils/backfill-store";
 import { ADU_KEYWORDS, TARGET_STATES } from "../core/adu-keywords";
 import {
   AduResearchListing,
@@ -135,7 +135,9 @@ export function isIndianaZipAllowed(
   return /^46\d{3}$/.test(normalized);
 }
 
-export function validateIndianaLeadZip(listing: AduResearchListing): boolean {
+export function validateIndianaLeadZip(
+  listing: Pick<AduResearchListing, "state" | "address" | "zip">,
+): boolean {
   const stateUpper = (listing.state ?? "").toUpperCase();
   const addressUpper = (listing.address ?? "").toUpperCase();
   const zipValue = listing.zip ?? "";

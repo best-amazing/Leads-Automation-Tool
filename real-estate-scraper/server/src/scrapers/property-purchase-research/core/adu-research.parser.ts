@@ -11,8 +11,8 @@
 // Also logs all available API keys on the first item for diagnostics.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { RawListing } from "../../types/listing";
-import { logger } from "../../utils/logger";
+import { RawListing } from "../../../types/listing";
+import { logger } from "../../../utils/logger";
 import { ADU_KEYWORDS } from "./adu-keywords";
 
 // ── Extended listing type ──────────────────────────────────────────────────
@@ -86,7 +86,7 @@ const PARSER_DIAG_LIMIT = 3;
 /**
  * Map raw API items to AduResearchListing[], capturing all fields
  * needed for the ADU research spreadsheet.
-*/
+ */
 
 export function mapAduItems(
   items: any[],
@@ -117,22 +117,46 @@ export function mapAduItems(
   // ── Diagnostic: log description-candidate fields for first N items ────
   // This helps identify which fields actually contain description text
   const descCandidateKeys = [
-    "description", "remarks", "notes", "comment", "comments",
-    "overview", "body", "details", "summary", "narrative",
-    "public_remarks", "agent_remarks", "listing_remarks",
-    "property_description", "marketing_remarks",
+    "description",
+    "remarks",
+    "notes",
+    "comment",
+    "comments",
+    "overview",
+    "body",
+    "details",
+    "summary",
+    "narrative",
+    "public_remarks",
+    "agent_remarks",
+    "listing_remarks",
+    "property_description",
+    "marketing_remarks",
   ];
 
-  for (let diagIdx = 0; diagIdx < Math.min(items.length, PARSER_DIAG_LIMIT); diagIdx++) {
+  for (
+    let diagIdx = 0;
+    diagIdx < Math.min(items.length, PARSER_DIAG_LIMIT);
+    diagIdx++
+  ) {
     const item = items[diagIdx];
-    logger.info(`[adu-parser] ── ITEM [${diagIdx + 1}] DESCRIPTION FIELD DIAGNOSTICS ──`);
-    logger.info(`[adu-parser]   id=${item.id} | title="${(item.title ?? "").slice(0, 80)}"`);
+    logger.info(
+      `[adu-parser] ── ITEM [${diagIdx + 1}] DESCRIPTION FIELD DIAGNOSTICS ──`,
+    );
+    logger.info(
+      `[adu-parser]   id=${item.id} | title="${(item.title ?? "").slice(0, 80)}"`,
+    );
 
     for (const candKey of descCandidateKeys) {
       const val = item[candKey];
       if (val !== undefined && val !== null && val !== "") {
-        const preview = typeof val === "string" ? val.slice(0, 150) : JSON.stringify(val).slice(0, 150);
-        logger.info(`[adu-parser]   ✓ FOUND "${candKey}" (${typeof val}, ${String(val).length} chars): "${preview}"`);
+        const preview =
+          typeof val === "string"
+            ? val.slice(0, 150)
+            : JSON.stringify(val).slice(0, 150);
+        logger.info(
+          `[adu-parser]   ✓ FOUND "${candKey}" (${typeof val}, ${String(val).length} chars): "${preview}"`,
+        );
       } else {
         logger.debug(`[adu-parser]   ✗ "${candKey}" = ${JSON.stringify(val)}`);
       }
@@ -144,7 +168,9 @@ export function mapAduItems(
         typeof v === "string" &&
         v.length > 50 &&
         !descCandidateKeys.includes(k) &&
-        !["title", "url", "image", "photo", "img"].some(skip => k.toLowerCase().includes(skip))
+        !["title", "url", "image", "photo", "img"].some((skip) =>
+          k.toLowerCase().includes(skip),
+        )
       ) {
         logger.info(
           `[adu-parser]   ⚠ POSSIBLE DESC FIELD "${k}" (${v.length} chars): "${v.slice(0, 150)}"`,
@@ -176,7 +202,7 @@ export function mapAduItems(
           .join(" ")
           .toLowerCase();
         const matchedKeyword = ADU_KEYWORDS.find((kw) => {
-          const regex = new RegExp(`\\b${kw}\\b`, 'i');
+          const regex = new RegExp(`\\b${kw}\\b`, "i");
           return regex.test(haystack);
         });
 
@@ -199,17 +225,21 @@ export function mapAduItems(
             item.dispositions_manager?.name ??
             item.account?.title ??
             undefined,
-          ownerPhone: item.seller_phone ?? item.dispositions_manager?.phone ?? undefined,
-          ownerEmail: item.seller_email ?? item.dispositions_manager?.email ?? undefined,
-          bedrooms:
-            item.bedrooms != null ? Number(item.bedrooms) : undefined,
+          ownerPhone:
+            item.seller_phone ?? item.dispositions_manager?.phone ?? undefined,
+          ownerEmail:
+            item.seller_email ?? item.dispositions_manager?.email ?? undefined,
+          bedrooms: item.bedrooms != null ? Number(item.bedrooms) : undefined,
           bathrooms:
             item.bathrooms != null ? Number(item.bathrooms) : undefined,
           squareFeet:
             (item.sq_footage ?? item.sqft) != null
               ? Number(item.sq_footage ?? item.sqft)
               : undefined,
-          lotSqft: (item.lot_size ?? item.lot_sqft) != null ? Number(item.lot_size ?? item.lot_sqft) : undefined,
+          lotSqft:
+            (item.lot_size ?? item.lot_sqft) != null
+              ? Number(item.lot_size ?? item.lot_sqft)
+              : undefined,
 
           // ADU-specific fields
           units: item.units != null ? Number(item.units) : undefined,
@@ -222,27 +252,41 @@ export function mapAduItems(
           schoolRating: item.school_rating ?? undefined,
           matchedKeyword,
 
-           // Location fields for filtering
+          // Location fields for filtering
           city: item.city ?? undefined,
           state: item.state_code ?? item.state ?? undefined,
           zip: item.zip ?? undefined,
 
           // ── Columnar API fields ──────────────────────────────────────
-          arvEstimate: item.arv_estimate != null ? Number(item.arv_estimate) : undefined,
-          arvPercentage: item.arv_percentage != null ? Number(item.arv_percentage) : undefined,
-          grossMargin: item.gross_margin != null ? Number(item.gross_margin) : undefined,
+          arvEstimate:
+            item.arv_estimate != null ? Number(item.arv_estimate) : undefined,
+          arvPercentage:
+            item.arv_percentage != null
+              ? Number(item.arv_percentage)
+              : undefined,
+          grossMargin:
+            item.gross_margin != null ? Number(item.gross_margin) : undefined,
           views: item.views != null ? Number(item.views) : undefined,
           hotness: item.hotness != null ? Number(item.hotness) : undefined,
           score: item.score != null ? Number(item.score) : undefined,
           entryFee: item.entry_fee != null ? Number(item.entry_fee) : undefined,
-          propertyTypeId: item.property_type_id != null ? Number(item.property_type_id) : undefined,
-          parkingTypeId: item.parking_type_id != null ? Number(item.parking_type_id) : undefined,
-          statusIndex: item.status_index != null ? Number(item.status_index) : undefined,
+          propertyTypeId:
+            item.property_type_id != null
+              ? Number(item.property_type_id)
+              : undefined,
+          parkingTypeId:
+            item.parking_type_id != null
+              ? Number(item.parking_type_id)
+              : undefined,
+          statusIndex:
+            item.status_index != null ? Number(item.status_index) : undefined,
           publishedAt: item.published_at ?? undefined,
           latitude: item.latitude != null ? Number(item.latitude) : undefined,
-          longitude: item.longitude != null ? Number(item.longitude) : undefined,
+          longitude:
+            item.longitude != null ? Number(item.longitude) : undefined,
           tags: item.tags ?? undefined,
-          isVerified: item.is_verified != null ? Boolean(item.is_verified) : undefined,
+          isVerified:
+            item.is_verified != null ? Boolean(item.is_verified) : undefined,
         };
       } catch {
         return null;
@@ -271,7 +315,7 @@ export function parseAduApiResponse(
     if (Array.isArray(raw.columns) && Array.isArray(raw.data)) {
       const columns = raw.columns as string[];
       const rows = raw.data as any[][];
-      const objects = rows.map(row => {
+      const objects = rows.map((row) => {
         const obj: any = {};
         columns.forEach((col, idx) => {
           obj[col] = row[idx];
