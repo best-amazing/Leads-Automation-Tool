@@ -13,7 +13,7 @@
  * "Matched Keyword" column. Generic fallbacks ("unit", "package") sit last.
  *
  * Matched case-insensitively against title + description + address.
-*/
+ */
 
 export const ADU_KEYWORDS = [
   // ── Priority tier 1–20 (strongest ADU signals) ────────────────────────────
@@ -50,6 +50,8 @@ export const ADU_KEYWORDS = [
 
   // ── Weak / generic fallbacks ──────────────────────────────────────────────
   "private entrance",
+  "private studio",
+  "private apartment",
   "same lot",
   "in one lot",
   "in one parcel",

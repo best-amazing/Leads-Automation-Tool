@@ -38,7 +38,10 @@ const SITEMAP_INDEX: Record<CbInventoryMode, string> = {
 export type CbInventoryMode = "new-day" | "new-week" | "full";
 
 export const DEFAULT_CB_DELAY_MS = Number(process.env.CB_DELAY_MS ?? 500);
-export const CB_CONCURRENCY = Math.max(1, Number(process.env.CB_CONCURRENCY ?? 2));
+export const CB_CONCURRENCY = Math.max(
+  1,
+  Number(process.env.CB_CONCURRENCY ?? 2),
+);
 const FETCH_TIMEOUT_MS = Number(process.env.CB_FETCH_TIMEOUT_MS ?? 60_000);
 
 // ── Low-level HTTP GET (no proxy — CB serves sitemaps/details openly) ───────
@@ -53,7 +56,8 @@ function httpGet(url: string): Promise<{ status: number; body: string }> {
           "User-Agent":
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-          Accept: "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+          Accept:
+            "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
           "Accept-Language": "en-US,en;q=0.9",
         },
         timeout: FETCH_TIMEOUT_MS,
@@ -62,9 +66,12 @@ function httpGet(url: string): Promise<{ status: number; body: string }> {
         const chunks: Buffer[] = [];
         res.on("data", (c: Buffer) => chunks.push(c));
         res.on("end", () =>
-          resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf-8") })
+          resolve({
+            status: res.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString("utf-8"),
+          }),
         );
-      }
+      },
     );
     req.on("timeout", () => {
       req.destroy(new Error(`timeout after ${FETCH_TIMEOUT_MS}ms`));
@@ -74,7 +81,11 @@ function httpGet(url: string): Promise<{ status: number; body: string }> {
   });
 }
 
-async function httpGetWithRetry(url: string, label: string, attempts = 2): Promise<string> {
+async function httpGetWithRetry(
+  url: string,
+  label: string,
+  attempts = 2,
+): Promise<string> {
   let lastErr = "";
   for (let i = 0; i < attempts; i++) {
     try {
@@ -84,7 +95,9 @@ async function httpGetWithRetry(url: string, label: string, attempts = 2): Promi
       // 403/429 → back off before retrying
       if (status === 403 || status === 429) {
         const waitMs = 5_000 * (i + 1);
-        logger.warn(`[coldwellbanker] ${label}: ${lastErr} — backing off ${waitMs / 1000}s`);
+        logger.warn(
+          `[coldwellbanker] ${label}: ${lastErr} — backing off ${waitMs / 1000}s`,
+        );
         await sleep(waitMs);
       }
     } catch (err) {
@@ -101,7 +114,11 @@ let buildIdResolvedAt = 0;
 const BUILD_ID_TTL_MS = 30 * 60_000;
 
 export async function resolveBuildId(force = false): Promise<string> {
-  if (!force && cachedBuildId && Date.now() - buildIdResolvedAt < BUILD_ID_TTL_MS) {
+  if (
+    !force &&
+    cachedBuildId &&
+    Date.now() - buildIdResolvedAt < BUILD_ID_TTL_MS
+  ) {
     return cachedBuildId;
   }
   const html = await httpGetWithRetry(CB_BASE, "buildId discovery");
@@ -129,16 +146,25 @@ function extractLocs(xml: string): string[] {
  *  - "full": child sitemaps are state-keyed (sitemap-listings-state-NNN.xml), so
  *    only target state chunks are fetched — cheapest way to sweep active listings.
  */
-export async function discoverTargetListingUrls(mode: CbInventoryMode): Promise<string[]> {
-  const indexXml = await httpGetWithRetry(SITEMAP_INDEX[mode], `sitemap index (${mode})`);
+export async function discoverTargetListingUrls(
+  mode: CbInventoryMode,
+): Promise<string[]> {
+  const indexXml = await httpGetWithRetry(
+    SITEMAP_INDEX[mode],
+    `sitemap index (${mode})`,
+  );
   let childSitemaps = extractLocs(indexXml);
   logger.info(
-    `[coldwellbanker] ${mode} index: ${childSitemaps.length} child sitemap(s)`
+    `[coldwellbanker] ${mode} index: ${childSitemaps.length} child sitemap(s)`,
   );
 
   if (mode === "full") {
-    childSitemaps = childSitemaps.filter((u) => /sitemap-listings-(oh|in)-\d+\.xml$/.test(u));
-    logger.info(`[coldwellbanker] full mode: ${childSitemaps.length} target chunk(s)`);
+    childSitemaps = childSitemaps.filter((u) =>
+      /sitemap-listings-(oh|in)-\d+\.xml$/.test(u),
+    );
+    logger.info(
+      `[coldwellbanker] full mode: ${childSitemaps.length} target chunk(s)`,
+    );
   }
 
   const urls = new Set<string>();
@@ -148,7 +174,8 @@ export async function discoverTargetListingUrls(mode: CbInventoryMode): Promise<
       const xml = await httpGetWithRetry(sm, `chunk ${sm.split("/").pop()}`);
       fetched++;
       for (const u of extractLocs(xml)) {
-        if (/^https:\/\/www\.coldwellbanker\.com\/(oh|in)\/.+\/lid-/.test(u)) urls.add(u);
+        if (/^https:\/\/www\.coldwellbanker\.com\/(oh|in)\/.+\/lid-/.test(u))
+          urls.add(u);
       }
     } catch (err) {
       logger.warn(`[coldwellbanker] Skipping unreadable sitemap ${sm}: ${err}`);
@@ -159,7 +186,7 @@ export async function discoverTargetListingUrls(mode: CbInventoryMode): Promise<
 
   logger.info(
     `[coldwellbanker] Discovery complete (${mode}): ${fetched}/${childSitemaps.length} chunks, ` +
-      `${urls.size} unique target listing URL(s)`
+      `${urls.size} unique target listing URL(s)`,
   );
   return [...urls];
 }
@@ -180,7 +207,10 @@ function parseNum(val: unknown): number | undefined {
   return undefined;
 }
 
-function parseDaysOnMarket(added: unknown, insertedDate: unknown): number | undefined {
+function parseDaysOnMarket(
+  added: unknown,
+  insertedDate: unknown,
+): number | undefined {
   if (typeof added === "string") {
     const m = added.match(/(\d+)\s*day/i);
     if (m) return Number(m[1]);
@@ -204,7 +234,10 @@ export function extractLid(url: string): string {
  * Map CB pageProps → RawListing (+ zip). Returns null for non-ACTIVE
  * listings or pages missing the expected payload.
  */
-export function parseCbProperty(pageProps: CbPageProps, url: string): (RawListing & { zip?: string }) | null {
+export function parseCbProperty(
+  pageProps: CbPageProps,
+  url: string,
+): (RawListing & { zip?: string }) | null {
   const pd = pageProps?.propertyDetails;
   const rawPd = pageProps?.rawPropertyDetails;
   if (!pd || !rawPd) return null;
@@ -231,18 +264,23 @@ export function parseCbProperty(pageProps: CbPageProps, url: string): (RawListin
       : "") ||
     "";
 
-  const price = parseNum(pd.price?.listPrice) ?? parseNum(about.priceSummary?.listPrice);
+  const price =
+    parseNum(pd.price?.listPrice) ?? parseNum(about.priceSummary?.listPrice);
 
   const bedrooms = parseNum(structure.bedroomsTotal);
   const bathrooms =
-    parseNum(structure.bathroomsTotalDecimal) ?? parseNum(structure.bathroomsTotalInteger);
-  const squareFeet = parseNum(structure.livingArea) ?? parseNum(structure.buildingAreaTotal);
-  const yearBuilt = parseNum(structure.yearBuilt) ?? parseNum(about.homeFacts?.yearBuilt);
+    parseNum(structure.bathroomsTotalDecimal) ??
+    parseNum(structure.bathroomsTotalInteger);
+  const squareFeet =
+    parseNum(structure.livingArea) ?? parseNum(structure.buildingAreaTotal);
+  const yearBuilt =
+    parseNum(structure.yearBuilt) ?? parseNum(about.homeFacts?.yearBuilt);
 
   // Lot size: prefer sqft; fall back to acres → sqft
   let lotSqft = parseNum(characteristics.lotSizeSquareFeet);
   if (lotSqft == null) {
-    const acres = parseNum(characteristics.lotSizeAcres) ?? parseNum(pd.lot?.lotSizeAcres);
+    const acres =
+      parseNum(characteristics.lotSizeAcres) ?? parseNum(pd.lot?.lotSizeAcres);
     if (acres != null) lotSqft = Math.round(acres * 43_560);
   }
   if (lotSqft == null) lotSqft = parseNum(pd.lot?.lotSizeSquareFeet);
@@ -317,7 +355,10 @@ export class ColdwellBankerScraper extends BaseScraper {
     try {
       const buildId = await resolveBuildId();
       const jsonUrl = `${CB_BASE}/_next/data/${buildId}${new URL(url).pathname}.json`;
-      const body = await httpGetWithRetry(jsonUrl, `detail json ${extractLid(url)}`);
+      const body = await httpGetWithRetry(
+        jsonUrl,
+        `detail json ${extractLid(url)}`,
+      );
       if (body.startsWith("{")) {
         const pageProps = JSON.parse(body)?.pageProps;
         const parsed = parseCbProperty(pageProps, url);
@@ -325,7 +366,9 @@ export class ColdwellBankerScraper extends BaseScraper {
         // Non-ACTIVE or empty payload — not a transport failure, don't fall through
         return null;
       }
-      logger.debug(`[coldwellbanker] JSON route returned non-JSON for ${url} — refreshing buildId`);
+      logger.debug(
+        `[coldwellbanker] JSON route returned non-JSON for ${url} — refreshing buildId`,
+      );
       await resolveBuildId(true);
     } catch (err) {
       logger.debug(`[coldwellbanker] JSON route failed for ${url}: ${err}`);
@@ -334,7 +377,10 @@ export class ColdwellBankerScraper extends BaseScraper {
 
     // 2. Direct HTML
     try {
-      const html = await httpGetWithRetry(url, `detail html ${extractLid(url)}`);
+      const html = await httpGetWithRetry(
+        url,
+        `detail html ${extractLid(url)}`,
+      );
       const pageProps = extractNextDataJson(html);
       const parsed = parseCbProperty(pageProps ?? {}, url);
       if (parsed) return parsed;
@@ -345,22 +391,31 @@ export class ColdwellBankerScraper extends BaseScraper {
 
     // 3. Last resort: Oxylabs (costs credits — keep rare)
     const { oxylabsFetch } = await import("../zillow/zillow.scraper");
+    logger.warn(
+      `[coldwellbanker] Falling back to shared Oxylabs fetch for ${extractLid(url)}`,
+    );
     const html = await oxylabsFetch(url);
     if (html) {
       const pageProps = extractNextDataJson(html);
-      return parseCbProperty(pageProps ?? {}, url);
+      const parsed = parseCbProperty(pageProps ?? {}, url);
+      if (parsed) return parsed;
+      logger.warn(
+        `[coldwellbanker] Oxylabs fallback returned data that did not parse as a Coldwell Banker listing for ${extractLid(url)}`,
+      );
+      return null;
     }
 
     // Every method failed to even retrieve the page — surface as an error so
     // the caller leaves this listing out of the seen-set and retries next run.
-    throw new Error(
-      `all fetch methods failed for ${extractLid(url)}`
-    );
+    throw new Error(`all fetch methods failed for ${extractLid(url)}`);
   }
 
   // BaseScraper abstract members — unused: this source is sitemap-driven,
   // not page-walking like the browser scrapers.
-  protected async scrapePage(_handle: unknown, _pageNumber: number): Promise<RawListing[]> {
+  protected async scrapePage(
+    _handle: unknown,
+    _pageNumber: number,
+  ): Promise<RawListing[]> {
     return [];
   }
 
@@ -373,7 +428,8 @@ export class ColdwellBankerScraper extends BaseScraper {
     this.visited.clear();
     this.results = [];
 
-    const mode = (process.env.CB_INVENTORY_MODE as CbInventoryMode) || "new-week";
+    const mode =
+      (process.env.CB_INVENTORY_MODE as CbInventoryMode) || "new-week";
     const urls = await discoverTargetListingUrls(mode);
 
     for (const url of urls) {
@@ -386,7 +442,9 @@ export class ColdwellBankerScraper extends BaseScraper {
       await sleep(jitter(DEFAULT_CB_DELAY_MS));
     }
 
-    logger.info(`[${this.sourceName}] Finished — ${this.results.length} ACTIVE listing(s)`);
+    logger.info(
+      `[${this.sourceName}] Finished — ${this.results.length} ACTIVE listing(s)`,
+    );
     return this.results;
   }
 }
