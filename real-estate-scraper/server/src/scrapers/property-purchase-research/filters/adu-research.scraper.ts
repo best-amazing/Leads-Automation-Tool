@@ -29,29 +29,37 @@ import {
   loadSeenListings as loadSeenFromDb,
   saveSeenListings as saveSeenToDb,
 } from "../../utils/backfill-store";
-import { ADU_KEYWORDS, TARGET_STATES } from "./adu-keywords";
+import { ADU_KEYWORDS, TARGET_STATES } from "../core/adu-keywords";
 import {
   AduResearchListing,
   parseAduApiResponse,
-} from "./adu-research.parser";
+} from "../core/adu-research.parser";
 
 // ── Constants (reuse from InvestorLift) ────────────────────────────────────
 
 const MARKETPLACE_URL = "https://investorlift.com/marketplace/";
-const PROPERTIES_API_URL = "https://investorlift.com/marketplace/api/customer/api/properties";
-const ADDRESS_INQUIRY_URL = "https://investorlift.com/marketplace/api/customer/api/inquiry";
+const PROPERTIES_API_URL =
+  "https://investorlift.com/marketplace/api/customer/api/properties";
+const ADDRESS_INQUIRY_URL =
+  "https://investorlift.com/marketplace/api/customer/api/inquiry";
 
-const ADDRESS_LIMIT_SENTINEL = "You have reached the daily address request limit";
+const ADDRESS_LIMIT_SENTINEL =
+  "You have reached the daily address request limit";
 const ADDRESS_FETCH_LIMIT = 5;
 const ADDRESS_REQUEST_DELAY = 800;
 
 const SESSION_FILE_DEFAULT = process.env.INVESTORLIFT_SESSION_FILE
   ? path.resolve(process.env.INVESTORLIFT_SESSION_FILE)
   : path.join(__dirname, "../../..", "investorlift-session.json");
-const SESSION_FILE_FALLBACK = path.join(__dirname, "../../..", "investor-session.json");
-const SESSION_FILE = fs.existsSync(SESSION_FILE_FALLBACK) && !fs.existsSync(SESSION_FILE_DEFAULT)
-  ? SESSION_FILE_FALLBACK
-  : SESSION_FILE_DEFAULT;
+const SESSION_FILE_FALLBACK = path.join(
+  __dirname,
+  "../../..",
+  "investor-session.json",
+);
+const SESSION_FILE =
+  fs.existsSync(SESSION_FILE_FALLBACK) && !fs.existsSync(SESSION_FILE_DEFAULT)
+    ? SESSION_FILE_FALLBACK
+    : SESSION_FILE_DEFAULT;
 const DEBUG_DIR = path.resolve("logs");
 
 // How many new listings to process per run
@@ -67,8 +75,8 @@ const USER_AGENT =
 
 const BASE_HEADERS = {
   "User-Agent": USER_AGENT,
-  "Origin": "https://investorlift.com",
-  "Referer": "https://investorlift.com/marketplace/",
+  Origin: "https://investorlift.com",
+  Referer: "https://investorlift.com/marketplace/",
 };
 
 const CHROMIUM_ARGS = [
@@ -117,6 +125,37 @@ export function resetDiagCounters(): void {
   _criteriaDiagCount = 0;
 }
 
+export function isIndianaZipAllowed(
+  zipValue?: string | number | null,
+): boolean {
+  const normalized = String(zipValue ?? "")
+    .trim()
+    .replace(/[^\d]/g, "");
+
+  return /^46\d{3}$/.test(normalized);
+}
+
+export function validateIndianaLeadZip(listing: AduResearchListing): boolean {
+  const stateUpper = (listing.state ?? "").toUpperCase();
+  const addressUpper = (listing.address ?? "").toUpperCase();
+  const zipValue = listing.zip ?? "";
+
+  const isIndiana =
+    stateUpper === "IN" ||
+    addressUpper.includes(", IN") ||
+    addressUpper.includes(" IN ");
+  if (!isIndiana) return true;
+
+  const hasIndianaZip = isIndianaZipAllowed(zipValue);
+  if (!hasIndianaZip) {
+    logger.warn(
+      `[adu-filter] Indiana lead rejected: zip="${String(zipValue ?? "").trim() || "(missing)"}" address="${(listing.address ?? "(empty)").slice(0, 120)}"`,
+    );
+  }
+
+  return hasIndianaZip;
+}
+
 /**
  * Stage 1: Check if a listing is located in one of TARGET_STATES.
  * Logs diagnostic details for the first N listings.
@@ -130,17 +169,20 @@ export function passesLocationFilter(listing: AduResearchListing): boolean {
     return addressUpper.includes(`, ${s}`);
   });
 
-  const passed = !!matchedState;
+  const isIndianaZipValid = validateIndianaLeadZip(listing);
+  const passed = !!matchedState && isIndianaZipValid;
 
   // Diagnostic logging for first N listings
   if (_locationDiagCount < DIAGNOSTIC_LOG_LIMIT) {
     _locationDiagCount++;
     logger.info(
       `[adu-filter] LOCATION [${_locationDiagCount}] ` +
-      `${passed ? "✓ PASS" : "✗ FAIL"} | ` +
-      `state field="${listing.state ?? "(empty)"}" | ` +
-      `address="${(listing.address ?? "(empty)").slice(0, 80)}" | ` +
-      `matched="${matchedState ?? "none"}"`
+        `${passed ? "✓ PASS" : "✗ FAIL"} | ` +
+        `state field="${listing.state ?? "(empty)"}" | ` +
+        `zip="${String(listing.zip ?? "(empty)").slice(0, 20)}" | ` +
+        `address="${(listing.address ?? "(empty)").slice(0, 80)}" | ` +
+        `matched="${matchedState ?? "none"}" | ` +
+        `indianaZipOk=${isIndianaZipValid}`,
     );
   }
 
@@ -151,7 +193,7 @@ export function passesLocationFilter(listing: AduResearchListing): boolean {
  * Stage 2: Check if a listing contains at least one ADU_KEYWORD
  * in title/description/address.
  * Logs diagnostic details for the first N listings.
-*/
+ */
 
 export function passesKeywordFilter(listing: AduResearchListing): boolean {
   const titlePart = listing.title ?? "";
@@ -163,7 +205,7 @@ export function passesKeywordFilter(listing: AduResearchListing): boolean {
     .toLowerCase();
 
   const matchedKeyword = ADU_KEYWORDS.find((kw) => {
-    const regex = new RegExp(`\\b${kw}\\b`, 'i');
+    const regex = new RegExp(`\\b${kw}\\b`, "i");
     return regex.test(haystack);
   });
 
@@ -174,13 +216,13 @@ export function passesKeywordFilter(listing: AduResearchListing): boolean {
     _keywordDiagCount++;
     logger.info(
       `[adu-filter] KEYWORD [${_keywordDiagCount}] ` +
-      `${passed ? "✓ PASS" : "✗ FAIL"} | ` +
-      `title="${titlePart.slice(0, 60)}" | ` +
-      `desc length=${descriptionPart.length} | ` +
-      `desc preview="${descriptionPart.slice(0, 100)}" | ` +
-      `address="${addressPart.slice(0, 60)}" | ` +
-      `matchedKw="${matchedKeyword ?? "none"}" | ` +
-      `haystack (300 chars)="${haystack.slice(0, 300)}"`
+        `${passed ? "✓ PASS" : "✗ FAIL"} | ` +
+        `title="${titlePart.slice(0, 60)}" | ` +
+        `desc length=${descriptionPart.length} | ` +
+        `desc preview="${descriptionPart.slice(0, 100)}" | ` +
+        `address="${addressPart.slice(0, 60)}" | ` +
+        `matchedKw="${matchedKeyword ?? "none"}" | ` +
+        `haystack (300 chars)="${haystack.slice(0, 300)}"`,
     );
   }
 
@@ -189,7 +231,7 @@ export function passesKeywordFilter(listing: AduResearchListing): boolean {
 
 /**
  * Stage 3: Check strict property criteria (Price, Beds, Baths, Year, HOA, etc.)
-*/
+ */
 
 export function passesPropertyCriteria(listing: AduResearchListing): boolean {
   let passed = true;
@@ -217,36 +259,53 @@ export function passesPropertyCriteria(listing: AduResearchListing): boolean {
   }
   // 5. Exclude HOA, 55+, New Construction, Auctions, Foreclosures, Short Sales
   else {
-    const haystack = [listing.title, listing.description, listing.address].join(" ").toLowerCase();
+    const haystack = [listing.title, listing.description, listing.address]
+      .join(" ")
+      .toLowerCase();
 
     // Property Type constraint (Single Family Home or Multi-Family only) -> exclude condo/townhouse/mobile/land/lot
     // Use word boundaries so "Woodland" or "1 acre lot" don't false-positive
-    const propertyTypeRe = /\b(condo|townhouse|townhome|mobile home|manufactured|mobile|vacant land|bare land|lot only)\b/i;
+    const propertyTypeRe =
+      /\b(condo|townhouse|townhome|mobile home|manufactured|mobile|vacant land|bare land|lot only)\b/i;
     if (propertyTypeRe.test(haystack)) {
       passed = false;
       failReason = "property type (not SFH/Multi)";
-    }
-    else if (haystack.includes("hoa") || haystack.includes("homeowners association") || haystack.includes("home owner association") || haystack.includes("home owner's association") || haystack.includes("homeowner's association")) {
+    } else if (
+      haystack.includes("hoa") ||
+      haystack.includes("homeowners association") ||
+      haystack.includes("home owner association") ||
+      haystack.includes("home owner's association") ||
+      haystack.includes("homeowner's association")
+    ) {
       passed = false;
       failReason = "has HOA";
-    }
-    else if (haystack.includes("55+") || haystack.includes("55 and older") || haystack.includes("active adult") || haystack.includes("senior community")) {
+    } else if (
+      haystack.includes("55+") ||
+      haystack.includes("55 and older") ||
+      haystack.includes("active adult") ||
+      haystack.includes("senior community")
+    ) {
       passed = false;
       failReason = "55+ community";
-    }
-    else if (haystack.includes("new construction") || haystack.includes("to be built") || haystack.includes("under construction") || haystack.includes("pre-construction")) {
+    } else if (
+      haystack.includes("new construction") ||
+      haystack.includes("to be built") ||
+      haystack.includes("under construction") ||
+      haystack.includes("pre-construction")
+    ) {
       passed = false;
       failReason = "new construction";
-    }
-    else if (haystack.includes("auction")) {
+    } else if (haystack.includes("auction")) {
       passed = false;
       failReason = "auction";
-    }
-    else if (haystack.includes("foreclosure") || haystack.includes("reo ") || haystack.includes("bank owned")) {
+    } else if (
+      haystack.includes("foreclosure") ||
+      haystack.includes("reo ") ||
+      haystack.includes("bank owned")
+    ) {
       passed = false;
       failReason = "foreclosure";
-    }
-    else if (haystack.includes("short sale")) {
+    } else if (haystack.includes("short sale")) {
       passed = false;
       failReason = "short sale";
     }
@@ -257,9 +316,9 @@ export function passesPropertyCriteria(listing: AduResearchListing): boolean {
     _criteriaDiagCount++;
     logger.info(
       `[adu-filter] CRITERIA [${_criteriaDiagCount}] ` +
-      `${passed ? "✓ PASS" : "✗ FAIL"} | ` +
-      `reason="${failReason}" | ` +
-      `price=${listing.price} beds=${listing.bedrooms} baths=${listing.bathrooms} year=${listing.yearBuilt} dom=${listing.daysOnMarket} status=${listing.status}`
+        `${passed ? "✓ PASS" : "✗ FAIL"} | ` +
+        `reason="${failReason}" | ` +
+        `price=${listing.price} beds=${listing.bedrooms} baths=${listing.bathrooms} year=${listing.yearBuilt} dom=${listing.daysOnMarket} status=${listing.status}`,
     );
   }
 
@@ -272,7 +331,11 @@ export function passesPropertyCriteria(listing: AduResearchListing): boolean {
  * you need to inspect the intermediate set.
  */
 export function passesAduFilter(listing: AduResearchListing): boolean {
-  return passesLocationFilter(listing) && passesPropertyCriteria(listing) && passesKeywordFilter(listing);
+  return (
+    passesLocationFilter(listing) &&
+    passesPropertyCriteria(listing) &&
+    passesKeywordFilter(listing)
+  );
 }
 
 // ── Scraper ──────────────────────────────────────────────────────────────────
@@ -343,7 +406,7 @@ export class AduResearchScraper extends BaseScraper {
           try {
             const r = await fetch(url, { credentials: "include" });
             const body = await r.json().catch(() => null);
-            return { status: r.status, hasData: !!(body?.data?.length) };
+            return { status: r.status, hasData: !!body?.data?.length };
           } catch {
             return { status: 0, hasData: false };
           }
@@ -371,7 +434,9 @@ export class AduResearchScraper extends BaseScraper {
       if (valid) {
         logger.info("[adu-research] Session is valid");
       } else {
-        logger.warn("[adu-research] Session validation failed or timed out — keeping file to try anyway");
+        logger.warn(
+          "[adu-research] Session validation failed or timed out — keeping file to try anyway",
+        );
       }
       return;
     } else {
@@ -396,7 +461,10 @@ export class AduResearchScraper extends BaseScraper {
     try {
       if (!fs.existsSync(SESSION_FILE)) return null;
       const state = JSON.parse(fs.readFileSync(SESSION_FILE, "utf-8"));
-      const cookies = (state.cookies ?? []) as Array<{ name: string; value: string }>;
+      const cookies = (state.cookies ?? []) as Array<{
+        name: string;
+        value: string;
+      }>;
       if (cookies.length === 0) return null;
       return cookies.map((c) => `${c.name}=${c.value}`).join("; ");
     } catch (err) {
@@ -405,7 +473,9 @@ export class AduResearchScraper extends BaseScraper {
     }
   }
 
-  private async fetchFullAddress(listingId: string): Promise<string | undefined> {
+  private async fetchFullAddress(
+    listingId: string,
+  ): Promise<string | undefined> {
     const cookieHeader = this.buildCookieHeader();
     if (!cookieHeader) {
       logger.warn("[adu-research] No session cookies — cannot fetch address");
@@ -415,22 +485,25 @@ export class AduResearchScraper extends BaseScraper {
     let text: string;
     let status: number;
     try {
-      const response = await axios.post(ADDRESS_INQUIRY_URL, 
+      const response = await axios.post(
+        ADDRESS_INQUIRY_URL,
         JSON.stringify({ property_id: listingId, type: "address_request" }),
         {
           headers: {
             ...BASE_HEADERS,
             "Content-Type": "text/plain;charset=UTF-8",
-            "Referer": `https://investorlift.com/marketplace/deal/${listingId}`,
-            "Cookie": cookieHeader,
+            Referer: `https://investorlift.com/marketplace/deal/${listingId}`,
+            Cookie: cookieHeader,
           },
-          validateStatus: () => true // Resolve for all status codes
-        }
+          validateStatus: () => true, // Resolve for all status codes
+        },
       );
       status = response.status;
       text = response.data;
     } catch (err: any) {
-      logger.warn(`[adu-research] Network error fetching address for ${listingId}: ${err.message}`);
+      logger.warn(
+        `[adu-research] Network error fetching address for ${listingId}: ${err.message}`,
+      );
       return undefined;
     }
 
@@ -461,32 +534,39 @@ export class AduResearchScraper extends BaseScraper {
     if (!cookieHeader) return null;
 
     try {
-      const response = await axios.get(`https://investorlift.com/marketplace/api/customer/api/properties/${listingId}`, {
-        headers: {
-          ...BASE_HEADERS,
-          "Cookie": cookieHeader,
+      const response = await axios.get(
+        `https://investorlift.com/marketplace/api/customer/api/properties/${listingId}`,
+        {
+          headers: {
+            ...BASE_HEADERS,
+            Cookie: cookieHeader,
+          },
         },
-      });
+      );
       return response.data;
     } catch (err: any) {
-      logger.warn(`[adu-research] Network error fetching details for ${listingId}: ${err.message}`);
+      logger.warn(
+        `[adu-research] Network error fetching details for ${listingId}: ${err.message}`,
+      );
     }
     return null;
   }
 
   // ── Post-filter enrichment ─────────────────────────────────────────────
 
-  protected async enrichAfterFilter(listings: RawListing[]): Promise<RawListing[]> {
+  protected async enrichAfterFilter(
+    listings: RawListing[],
+  ): Promise<RawListing[]> {
     if (listings.length === 0) return listings;
 
     logger.info(
       `[adu-research] Enriching ${listings.length} candidate listings with descriptions for keyword filtering...`,
     );
 
-    const result:       RawListing[] = [];
-    let   fetchedAddressCount        = 0;
-    let   addressLimitReached        = false;
-    let   descFetchCount             = 0;
+    const result: RawListing[] = [];
+    let fetchedAddressCount = 0;
+    let addressLimitReached = false;
+    let descFetchCount = 0;
 
     for (let i = 0; i < listings.length; i++) {
       const listing = { ...listings[i] } as AduResearchListing;
@@ -496,7 +576,10 @@ export class AduResearchScraper extends BaseScraper {
         const details = await this.fetchFullDetails(listingId);
         if (details) {
           if (details.description) {
-            listing.description = details.description.replace(/<[^>]*>?/gm, ' ');
+            listing.description = details.description.replace(
+              /<[^>]*>?/gm,
+              " ",
+            );
             descFetchCount++;
           }
           if (details.year_built && !listing.yearBuilt) {
@@ -506,7 +589,8 @@ export class AduResearchScraper extends BaseScraper {
             listing.units = Number(details.units);
           }
           if (!listing.ownerName) {
-            listing.ownerName = details.dispositions_manager?.name || details.account?.title;
+            listing.ownerName =
+              details.dispositions_manager?.name || details.account?.title;
           }
           if (!listing.bedrooms && details.bedrooms) {
             listing.bedrooms = Number(details.bedrooms);
@@ -563,10 +647,16 @@ export class AduResearchScraper extends BaseScraper {
           if (!listing.buyNowPrice && details.buy_now_price != null) {
             listing.buyNowPrice = Number(details.buy_now_price);
           }
-          if (!listing.repairEstimateMin && details.repair_estimate_min != null) {
+          if (
+            !listing.repairEstimateMin &&
+            details.repair_estimate_min != null
+          ) {
             listing.repairEstimateMin = Number(details.repair_estimate_min);
           }
-          if (!listing.repairEstimateMax && details.repair_estimate_max != null) {
+          if (
+            !listing.repairEstimateMax &&
+            details.repair_estimate_max != null
+          ) {
             listing.repairEstimateMax = Number(details.repair_estimate_max);
           }
           if (!listing.occupancy && details.occupancy?.value) {
@@ -604,15 +694,21 @@ export class AduResearchScraper extends BaseScraper {
 
       // Set matchedKeyword for traceability (passesKeywordFilter doesn't mutate)
       if (!listing.matchedKeyword) {
-        const kHaystack = [listing.title, listing.description, listing.address].join(" ").toLowerCase();
+        const kHaystack = [listing.title, listing.description, listing.address]
+          .join(" ")
+          .toLowerCase();
         listing.matchedKeyword = ADU_KEYWORDS.find((kw) => {
-          const regex = new RegExp(`\\b${kw}\\b`, 'i');
+          const regex = new RegExp(`\\b${kw}\\b`, "i");
           return regex.test(kHaystack);
         });
       }
 
       // 3. Fetch full address for keyword-matched listings
-      if (listingId && !addressLimitReached && fetchedAddressCount < ADDRESS_FETCH_LIMIT) {
+      if (
+        listingId &&
+        !addressLimitReached &&
+        fetchedAddressCount < ADDRESS_FETCH_LIMIT
+      ) {
         try {
           const fullAddress = await this.fetchFullAddress(listingId);
           if (fullAddress) {
@@ -627,14 +723,16 @@ export class AduResearchScraper extends BaseScraper {
             );
             addressLimitReached = true;
           } else {
-            logger.warn(`[adu-research] Address fetch failed for ${listingId}: ${err}`);
+            logger.warn(
+              `[adu-research] Address fetch failed for ${listingId}: ${err}`,
+            );
           }
         }
       }
 
       // Final match — passes location + criteria + keyword!
       logger.info(
-        `[adu-research] ✓ MATCH #${result.length + 1}: ${listing.address || listing.url} | keyword="${listing.matchedKeyword ?? ''}"`,
+        `[adu-research] ✓ MATCH #${result.length + 1}: ${listing.address || listing.url} | keyword="${listing.matchedKeyword ?? ""}"`,
       );
       result.push(listing);
       if (this.options.onMatch) await this.options.onMatch(listing);
@@ -692,7 +790,9 @@ export class AduResearchScraper extends BaseScraper {
             timeout: 30_000,
           });
         } catch (gotoErr) {
-          logger.warn(`[adu-research] page.goto failed or timed out: ${gotoErr} — continuing anyway`);
+          logger.warn(
+            `[adu-research] page.goto failed or timed out: ${gotoErr} — continuing anyway`,
+          );
         }
 
         // Guard: session expiry / bot detection
@@ -717,7 +817,9 @@ export class AduResearchScraper extends BaseScraper {
           landedUrl.includes("challenge") ||
           landedUrl.includes("blocked")
         ) {
-          logger.error("[adu-research] IP blocked or CAPTCHA challenge detected");
+          logger.error(
+            "[adu-research] IP blocked or CAPTCHA challenge detected",
+          );
           return [];
         }
 
@@ -725,8 +827,8 @@ export class AduResearchScraper extends BaseScraper {
 
         logger.info("[adu-research] Fetching properties directly via API...");
         const cookies = await context.cookies();
-        const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join("; ");
-        
+        const cookieStr = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+
         let json: any;
         try {
           const resp = await axios.get(PROPERTIES_API_URL, {
@@ -748,12 +850,14 @@ export class AduResearchScraper extends BaseScraper {
           fs.writeFileSync(
             path.join(DEBUG_DIR, `il_adu_raw_response_full.json`),
             JSON.stringify(json, null, 2),
-            "utf-8"
+            "utf-8",
           );
         } catch (saveErr) {}
 
         const parsed = parseAduApiResponse(json, this.sourceName);
-        logger.info(`[adu-research] Fetched ${parsed.length} total listings from API.`);
+        logger.info(
+          `[adu-research] Fetched ${parsed.length} total listings from API.`,
+        );
 
         // ── Sort by publishedAt ascending (oldest first) ──────────────
         parsed.sort((a, b) => {
@@ -761,16 +865,18 @@ export class AduResearchScraper extends BaseScraper {
           const dateB = b.publishedAt ?? "";
           return dateA.localeCompare(dateB); // ascending
         });
-        logger.info(`[adu-research] Sorted listings oldest-first. Oldest: ${parsed[0]?.publishedAt ?? "N/A"}, Newest: ${parsed[parsed.length - 1]?.publishedAt ?? "N/A"}`);
+        logger.info(
+          `[adu-research] Sorted listings oldest-first. Oldest: ${parsed[0]?.publishedAt ?? "N/A"}, Newest: ${parsed[parsed.length - 1]?.publishedAt ?? "N/A"}`,
+        );
 
         // ── Load previously seen listing IDs ────────────────────────────
         const previouslySeen = await loadSeenFromDb(this.sourceName);
-        const allSeenIds = new Set(previouslySeen); 
+        const allSeenIds = new Set(previouslySeen);
 
         const seenUrls: Set<string> = new Set();
         const apiListings: AduResearchListing[] = [];
         const rawStateCounts: Map<string, number> = new Map();
-        
+
         let skippedAsSeen = 0;
         let processedThisBatch = 0;
         let oldestInBatch = "N/A";
@@ -800,7 +906,8 @@ export class AduResearchScraper extends BaseScraper {
             }
           }
 
-          if (oldestInBatch === "N/A") oldestInBatch = listing.publishedAt ?? "N/A";
+          if (oldestInBatch === "N/A")
+            oldestInBatch = listing.publishedAt ?? "N/A";
           newestInBatch = listing.publishedAt ?? "N/A";
 
           // Process this new listing
@@ -810,9 +917,10 @@ export class AduResearchScraper extends BaseScraper {
           if (passesLocationFilter(listing)) {
             const addressUpper = (listing.address ?? "").toUpperCase();
             const stateUpper = (listing.state ?? "").toUpperCase();
-            const matchedState = TARGET_STATES.find((s) =>
-              addressUpper.includes(`, ${s}`) || stateUpper === s
-            ) ?? "UNKNOWN";
+            const matchedState =
+              TARGET_STATES.find(
+                (s) => addressUpper.includes(`, ${s}`) || stateUpper === s,
+              ) ?? "UNKNOWN";
 
             const stateCount = rawStateCounts.get(matchedState) || 0;
             if (stateCount < this.options.maxListings) {
@@ -826,21 +934,31 @@ export class AduResearchScraper extends BaseScraper {
 
           // Stop if we hit the batch limit
           if (processedThisBatch >= BACKFILL_BATCH_SIZE) {
-             logger.info(`[adu-research] Reached backfill batch limit of ${BACKFILL_BATCH_SIZE}. Stopping processing.`);
-             break;
+            logger.info(
+              `[adu-research] Reached backfill batch limit of ${BACKFILL_BATCH_SIZE}. Stopping processing.`,
+            );
+            break;
           }
         }
 
         // ── Save updated tracker to DB ─────────────────────────────
         await saveSeenToDb(this.sourceName, allSeenIds, processedThisBatch);
-        logger.info(`[adu-research] Batch date range: ${oldestInBatch} to ${newestInBatch}`);
+        logger.info(
+          `[adu-research] Batch date range: ${oldestInBatch} to ${newestInBatch}`,
+        );
 
         // Log results
-        logger.info(`[adu-research] Processed ${processedThisBatch} new listings, skipped ${skippedAsSeen} already-seen`);
+        logger.info(
+          `[adu-research] Processed ${processedThisBatch} new listings, skipped ${skippedAsSeen} already-seen`,
+        );
         if (apiListings.length > 0) {
-          logger.info(`[adu-research] ${apiListings.length} NEW passing ADU listings collected via API`);
+          logger.info(
+            `[adu-research] ${apiListings.length} NEW passing ADU listings collected via API`,
+          );
           for (const [state, count] of rawStateCounts.entries()) {
-            logger.info(`[adu-research] Raw listings scanned for ${state}: ${count}/${this.options.maxListings}`);
+            logger.info(
+              `[adu-research] Raw listings scanned for ${state}: ${count}/${this.options.maxListings}`,
+            );
           }
         } else {
           logger.warn("[adu-research] No new matching listings collected");
@@ -860,7 +978,6 @@ export class AduResearchScraper extends BaseScraper {
     return pageNumber <= 1;
   }
 
-
   // ── Debug helpers ──────────────────────────────────────────────────────
 
   private saveDebugHtml(html: string, label: string): void {
@@ -870,7 +987,9 @@ export class AduResearchScraper extends BaseScraper {
         path.join(DEBUG_DIR, `adu-research_${label}.html`),
         html,
       );
-      logger.info(`[adu-research] Debug HTML saved: logs/adu-research_${label}.html`);
-    } catch { }
+      logger.info(
+        `[adu-research] Debug HTML saved: logs/adu-research_${label}.html`,
+      );
+    } catch {}
   }
 }

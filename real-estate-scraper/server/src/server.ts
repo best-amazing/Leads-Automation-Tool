@@ -6,7 +6,7 @@ import { cronManager } from "./utils/cronManager";
 import { initializeDailyScrapeJob } from "./jobs/daily-scrape.job";
 import { getFilter } from "./db/repository";
 import { applySavedFilter } from "./config";
-import { startAduWatchdog } from "./scrapers/property-purchase-research/run-adu-research-cron";
+import { startAduWatchdog } from "./scrapers/property-purchase-research/scripts/run-adu-research-cron";
 
 const PORT = process.env.PORT || 3005;
 
@@ -14,7 +14,7 @@ async function startServer() {
   try {
     logger.info(
       `[boot] pid=${process.pid} instance=${process.env.RENDER_INSTANCE_ID ?? "n/a"} ` +
-      `commit=${process.env.RENDER_GIT_COMMIT ?? "local"}`
+        `commit=${process.env.RENDER_GIT_COMMIT ?? "local"}`,
     );
 
     // Test database connection
@@ -31,29 +31,36 @@ async function startServer() {
         logger.info("No saved filter in DB; using config defaults");
       }
     } catch (err) {
-      logger.warn("Failed to load saved filter from DB; using config defaults", err);
+      logger.warn(
+        "Failed to load saved filter from DB; using config defaults",
+        err,
+      );
     }
 
     // Start Express server
     const server = app.listen(PORT, () => {
       logger.info(`✓ Server listening on http://localhost:${PORT}`);
-      logger.info(`✓ Properties endpoint: GET http://localhost:${PORT}/api/v1/properties`);
+      logger.info(
+        `✓ Properties endpoint: GET http://localhost:${PORT}/api/v1/properties`,
+      );
 
       // Start the ADU research watchdog (runs on boot, then every 10 min).
       // Keeps the scraper perpetually active without a paid background worker.
       // The first run is deferred so the web server is up and serving the
       // health check before the heavy scraper (puppeteer/playwright) loads.
-      const WATCHDOG_BOOT_DELAY_MS = Number(process.env.WATCHDOG_BOOT_DELAY_MS ?? 60_000);
+      const WATCHDOG_BOOT_DELAY_MS = Number(
+        process.env.WATCHDOG_BOOT_DELAY_MS ?? 60_000,
+      );
       setTimeout(() => startAduWatchdog(), WATCHDOG_BOOT_DELAY_MS);
     });
 
-      // Initialize cron jobs and start cron manager
-      // try {
-      //   initializeDailyScrapeJob();
-      //   cronManager.startAll();
-      // } catch (err) {
-      //   logger.error("Failed to initialize cron jobs:", err);
-      // }
+    // Initialize cron jobs and start cron manager
+    // try {
+    //   initializeDailyScrapeJob();
+    //   cronManager.startAll();
+    // } catch (err) {
+    //   logger.error("Failed to initialize cron jobs:", err);
+    // }
 
     // Graceful shutdown
     process.on("SIGTERM", async () => {

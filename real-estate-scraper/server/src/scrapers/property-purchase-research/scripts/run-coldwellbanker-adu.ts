@@ -14,14 +14,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import "dotenv/config";
-import { ColdwellBankerAduScraper } from "./coldwellbanker-adu.scraper";
+import { ColdwellBankerAduScraper } from "../sources/coldwellbanker-adu.scraper";
 
 import { logger } from "../../utils/logger";
 import { getLastBackfillStatus } from "../../utils/backfill-store";
-import { TARGET_STATES } from "./adu-keywords";
-import { appendAduResult } from "./adu-csv-writer";
-import { AduResearchListing } from "./adu-research.parser";
-import { fetchDeedTransferDate } from "./deed-data-resolver";
+import { TARGET_STATES } from "../core/adu-keywords";
+import { appendAduResult } from "../core/adu-csv-writer";
+import { AduResearchListing } from "../core/adu-research.parser";
+import { fetchDeedTransferDate } from "../core/deed-data-resolver";
 import { writeAduResearchToSheets } from "../../utils/google-sheets";
 
 let capturedCount = 0;
@@ -37,18 +37,24 @@ function dedupKey(listing: AduResearchListing): string {
 async function handleMatch(listing: AduResearchListing) {
   const key = dedupKey(listing);
   if (seenKeys.has(key)) {
-    logger.debug(`[runner] Skipping duplicate: ${listing.address || listing.url}`);
+    logger.debug(
+      `[runner] Skipping duplicate: ${listing.address || listing.url}`,
+    );
     return;
   }
   seenKeys.add(key);
 
   capturedCount++;
-  logger.info(`[runner] Match #${capturedCount}: ${listing.address || listing.url}`);
+  logger.info(
+    `[runner] Match #${capturedCount}: ${listing.address || listing.url}`,
+  );
 
   // ── Inline deed transfer date lookup (same as zillow/redfin pipeline) ──
   if (listing.address) {
     try {
-      logger.info(`[runner] Looking up deed transfer date for: ${listing.address}`);
+      logger.info(
+        `[runner] Looking up deed transfer date for: ${listing.address}`,
+      );
       const deedDate = await fetchDeedTransferDate({
         address: listing.address,
         city: listing.city,
@@ -97,23 +103,33 @@ export async function runColdwellBankerAduResearch(): Promise<void> {
       allResults.push(...(results as AduResearchListing[]));
       if (global.gc) global.gc();
       logger.info(
-        `Memory after coldwellbanker-adu: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`
+        `Memory after coldwellbanker-adu: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`,
       );
 
-      const { processedCount } = await getLastBackfillStatus(coldwell.sourceName);
+      const { processedCount } = await getLastBackfillStatus(
+        coldwell.sourceName,
+      );
       if (processedCount >= Number(process.env.CB_BACKFILL_BATCH_SIZE ?? 500)) {
-        logger.info(`[runner] coldwellbanker-adu hit batch limit, immediately fetching next batch...`);
+        logger.info(
+          `[runner] coldwellbanker-adu hit batch limit, immediately fetching next batch...`,
+        );
         await new Promise((r) => setTimeout(r, 500));
       } else {
-        logger.info(`[runner] coldwellbanker-adu backfill complete or reached end of inventory.`);
+        logger.info(
+          `[runner] coldwellbanker-adu backfill complete or reached end of inventory.`,
+        );
         break;
       }
     }
 
     logger.info("═".repeat(60));
-    logger.info(`Coldwell Banker ADU Research Complete — ${allResults.length} matches found`);
+    logger.info(
+      `Coldwell Banker ADU Research Complete — ${allResults.length} matches found`,
+    );
     if (allResults.length > 0) {
-      logger.info(`Outputs incrementally streamed to CSV, JSON, and Google Sheets`);
+      logger.info(
+        `Outputs incrementally streamed to CSV, JSON, and Google Sheets`,
+      );
     }
     logger.info("═".repeat(60));
   } catch (err: any) {

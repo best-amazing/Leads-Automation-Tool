@@ -16,10 +16,16 @@
 import "dotenv/config";
 import * as fs from "fs";
 import * as path from "path";
-import { parseAduApiResponse, AduResearchListing } from "../src/scrapers/property-purchase-research/adu-research.parser";
-import { passesLocationFilter, passesKeywordFilter } from "../src/scrapers/property-purchase-research/adu-research.scraper";
-import { ADU_KEYWORDS } from "../src/scrapers/property-purchase-research/adu-keywords";
-import { appendAduResult } from "../src/scrapers/property-purchase-research/adu-csv-writer";
+import {
+  parseAduApiResponse,
+  AduResearchListing,
+} from "../src/scrapers/property-purchase-research/core/adu-research.parser";
+import {
+  passesLocationFilter,
+  passesKeywordFilter,
+} from "../src/scrapers/property-purchase-research/filters/adu-research.scraper";
+import { ADU_KEYWORDS } from "../src/scrapers/property-purchase-research/core/adu-keywords";
+import { appendAduResult } from "../src/scrapers/property-purchase-research/core/adu-csv-writer";
 import { writeAduResearchToSheets } from "../src/utils/google-sheets";
 import { logger } from "../src/utils/logger";
 
@@ -28,16 +34,20 @@ const CACHE_FILE = path.join(LOGS_DIR, "il_details_cache.json");
 const SESSION_FILE = path.join(__dirname, "..", "investorlift-session.json");
 
 const BASE_HEADERS = {
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-  "Origin": "https://investorlift.com",
-  "Referer": "https://investorlift.com/marketplace/",
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+  Origin: "https://investorlift.com",
+  Referer: "https://investorlift.com/marketplace/",
 };
 
 function getCookieHeader(): string | null {
   try {
     if (!fs.existsSync(SESSION_FILE)) return null;
     const state = JSON.parse(fs.readFileSync(SESSION_FILE, "utf-8"));
-    const cookies = (state.cookies ?? []) as Array<{ name: string; value: string }>;
+    const cookies = (state.cookies ?? []) as Array<{
+      name: string;
+      value: string;
+    }>;
     if (cookies.length === 0) return null;
     return cookies.map((c) => `${c.name}=${c.value}`).join("; ");
   } catch {
@@ -67,16 +77,23 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchDetails(listingId: string, cookieHeader: string | null, cache: Record<string, any>): Promise<any> {
+async function fetchDetails(
+  listingId: string,
+  cookieHeader: string | null,
+  cache: Record<string, any>,
+): Promise<any> {
   if (cache[listingId]) {
     return cache[listingId];
   }
   if (!cookieHeader) return null;
 
   try {
-    const res = await fetch(`https://investorlift.com/marketplace/api/customer/api/properties/${listingId}`, {
-      headers: { ...BASE_HEADERS, Cookie: cookieHeader },
-    });
+    const res = await fetch(
+      `https://investorlift.com/marketplace/api/customer/api/properties/${listingId}`,
+      {
+        headers: { ...BASE_HEADERS, Cookie: cookieHeader },
+      },
+    );
     if (res.ok) {
       const data = await res.json();
       cache[listingId] = data;
@@ -84,7 +101,9 @@ async function fetchDetails(listingId: string, cookieHeader: string | null, cach
       return data;
     }
   } catch (err) {
-    logger.warn(`[reprocessor] Error fetching details for ${listingId}: ${err}`);
+    logger.warn(
+      `[reprocessor] Error fetching details for ${listingId}: ${err}`,
+    );
   }
   return null;
 }
@@ -105,13 +124,19 @@ async function runReprocessor() {
     return;
   }
 
-  const files = fs.readdirSync(LOGS_DIR).filter((f) => f.startsWith("il_adu_raw_response_") && f.endsWith(".json"));
+  const files = fs
+    .readdirSync(LOGS_DIR)
+    .filter((f) => f.startsWith("il_adu_raw_response_") && f.endsWith(".json"));
   if (files.length === 0) {
-    logger.info("[reprocessor] No raw InvestorLift response files found in logs/.");
+    logger.info(
+      "[reprocessor] No raw InvestorLift response files found in logs/.",
+    );
     return;
   }
 
-  logger.info(`[reprocessor] Found ${files.length} raw response file(s): ${files.join(", ")}`);
+  logger.info(
+    `[reprocessor] Found ${files.length} raw response file(s): ${files.join(", ")}`,
+  );
 
   const cache = loadCache();
   const cookieHeader = getCookieHeader();
@@ -124,7 +149,9 @@ async function runReprocessor() {
       const content = fs.readFileSync(filePath, "utf-8");
       const json = JSON.parse(content);
       const parsed = parseAduApiResponse(json, "investorlift");
-      logger.info(`[reprocessor] ${file}: Parsed ${parsed.length} raw listings`);
+      logger.info(
+        `[reprocessor] ${file}: Parsed ${parsed.length} raw listings`,
+      );
 
       for (const listing of parsed) {
         if (listing.url && !allListingsMap.has(listing.url)) {
@@ -137,11 +164,15 @@ async function runReprocessor() {
   }
 
   const allListings = Array.from(allListingsMap.values());
-  logger.info(`[reprocessor] Total unique listings across logs: ${allListings.length}`);
+  logger.info(
+    `[reprocessor] Total unique listings across logs: ${allListings.length}`,
+  );
 
   // Location filter
   const locationMatches = allListings.filter(passesLocationFilter);
-  logger.info(`[reprocessor] Listings passing location filter: ${locationMatches.length}`);
+  logger.info(
+    `[reprocessor] Listings passing location filter: ${locationMatches.length}`,
+  );
 
   let matchCount = 0;
 
@@ -162,7 +193,8 @@ async function runReprocessor() {
           listing.units = Number(details.units);
         }
         if (!listing.ownerName) {
-          listing.ownerName = details.dispositions_manager?.name || details.account?.title;
+          listing.ownerName =
+            details.dispositions_manager?.name || details.account?.title;
         }
         if (!listing.bedrooms && details.bedrooms) {
           listing.bedrooms = Number(details.bedrooms);
@@ -253,11 +285,17 @@ async function runReprocessor() {
     if (passesKeywordFilter(listing)) {
       matchCount++;
       if (!listing.matchedKeyword) {
-        const kHaystack = [listing.title, listing.description, listing.address].join(" ").toLowerCase();
-        listing.matchedKeyword = ADU_KEYWORDS.find((kw) => new RegExp(`\\b${kw}\\b`, "i").test(kHaystack));
+        const kHaystack = [listing.title, listing.description, listing.address]
+          .join(" ")
+          .toLowerCase();
+        listing.matchedKeyword = ADU_KEYWORDS.find((kw) =>
+          new RegExp(`\\b${kw}\\b`, "i").test(kHaystack),
+        );
       }
 
-      logger.info(`[reprocessor] ✓ MATCH #${matchCount}: ${listing.address || listing.url} | keyword="${listing.matchedKeyword ?? ""}"`);
+      logger.info(
+        `[reprocessor] ✓ MATCH #${matchCount}: ${listing.address || listing.url} | keyword="${listing.matchedKeyword ?? ""}"`,
+      );
 
       appendAduResult(listing);
       await writeAduResearchToSheets([listing]);
@@ -265,7 +303,9 @@ async function runReprocessor() {
   }
 
   logger.info("=======================================================");
-  logger.info(`[reprocessor] Reprocessing complete! ${matchCount} total match(es) processed & updated.`);
+  logger.info(
+    `[reprocessor] Reprocessing complete! ${matchCount} total match(es) processed & updated.`,
+  );
   logger.info("=======================================================");
 }
 

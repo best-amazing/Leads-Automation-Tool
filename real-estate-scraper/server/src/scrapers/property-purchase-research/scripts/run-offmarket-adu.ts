@@ -8,15 +8,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import "dotenv/config";
-import { AduResearchScraper } from "./adu-research.scraper";
-import { CrexiAduScraper } from "./crexi-adu.scraper";
+import { AduResearchScraper } from "../filters/adu-research.scraper";
+import { CrexiAduScraper } from "../sources/crexi-adu.scraper";
 
 import { logger } from "../../utils/logger";
 import { getLastBackfillStatus } from "../../utils/backfill-store";
-import { ADU_KEYWORDS, TARGET_STATES } from "./adu-keywords";
-import { appendAduResult } from "./adu-csv-writer";
-import { AduResearchListing } from "./adu-research.parser";
-import { fetchDeedTransferDate } from "./deed-data-resolver";
+import { ADU_KEYWORDS, TARGET_STATES } from "../core/adu-keywords";
+import { appendAduResult } from "../core/adu-csv-writer";
+import { AduResearchListing } from "../core/adu-research.parser";
+import { fetchDeedTransferDate } from "../core/deed-data-resolver";
 import * as fs from "fs";
 import * as path from "path";
 import { writeAduResearchToSheets } from "../../utils/google-sheets";
@@ -34,18 +34,24 @@ function dedupKey(listing: AduResearchListing): string {
 async function handleMatch(listing: AduResearchListing) {
   const key = dedupKey(listing);
   if (seenKeys.has(key)) {
-    logger.debug(`[runner] Skipping duplicate: ${listing.address || listing.url}`);
+    logger.debug(
+      `[runner] Skipping duplicate: ${listing.address || listing.url}`,
+    );
     return;
   }
   seenKeys.add(key);
 
   capturedCount++;
-  logger.info(`[runner] Match #${capturedCount}: ${listing.address || listing.url}`);
+  logger.info(
+    `[runner] Match #${capturedCount}: ${listing.address || listing.url}`,
+  );
 
   // ── Inline deed transfer date lookup ──────────────────────────────────
   if (listing.address) {
     try {
-      logger.info(`[runner] Looking up deed transfer date for: ${listing.address}`);
+      logger.info(
+        `[runner] Looking up deed transfer date for: ${listing.address}`,
+      );
       const deedDate = await fetchDeedTransferDate({
         address: listing.address,
         city: listing.city,
@@ -97,16 +103,24 @@ export async function runOffmarketAduResearch(): Promise<void> {
         const results = await scraper.run();
         allResults.push(...(results as AduResearchListing[]));
         if (global.gc) global.gc();
-        logger.info(`Memory after ${sourceName}: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
+        logger.info(
+          `Memory after ${sourceName}: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`,
+        );
 
         const { processedCount } = await getLastBackfillStatus(sourceName);
 
-        if (processedCount >= Number(process.env.ADU_BACKFILL_BATCH_SIZE ?? 500)) {
-          logger.info(`[runner] ${sourceName} backfill hit batch limit, immediately fetching next batch...`);
+        if (
+          processedCount >= Number(process.env.ADU_BACKFILL_BATCH_SIZE ?? 500)
+        ) {
+          logger.info(
+            `[runner] ${sourceName} backfill hit batch limit, immediately fetching next batch...`,
+          );
           // Small 500ms sleep to avoid hammering the DB
-          await new Promise(r => setTimeout(r, 500));
+          await new Promise((r) => setTimeout(r, 500));
         } else {
-          logger.info(`[runner] ${sourceName} backfill complete or reached end of inventory.`);
+          logger.info(
+            `[runner] ${sourceName} backfill complete or reached end of inventory.`,
+          );
           break;
         }
       }
@@ -127,12 +141,15 @@ export async function runOffmarketAduResearch(): Promise<void> {
     }
 
     logger.info("═".repeat(60));
-    logger.info(`Off-Market ADU Research Complete — ${finalResults.length} matches found`);
+    logger.info(
+      `Off-Market ADU Research Complete — ${finalResults.length} matches found`,
+    );
     if (finalResults.length > 0) {
-      logger.info(`Outputs incrementally streamed to CSV, JSON, and Google Sheets`);
+      logger.info(
+        `Outputs incrementally streamed to CSV, JSON, and Google Sheets`,
+      );
     }
     logger.info("═".repeat(60));
-
   } catch (err: any) {
     logger.error(`Off-Market ADU Research scraper failed: ${err}`);
     throw err;

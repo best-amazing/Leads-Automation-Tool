@@ -18,9 +18,9 @@ import {
   discoverTargetListingUrls,
   extractLid,
 } from "../src/scrapers/coldwellbanker/coldwellbanker.scraper";
-import { ColdwellBankerAduScraper } from "../src/scrapers/property-purchase-research/coldwellbanker-adu.scraper";
-import { appendAduResult } from "../src/scrapers/property-purchase-research/adu-csv-writer";
-import { AduResearchListing } from "../src/scrapers/property-purchase-research/adu-research.parser";
+import { ColdwellBankerAduScraper } from "../src/scrapers/property-purchase-research/sources/coldwellbanker-adu.scraper";
+import { appendAduResult } from "../src/scrapers/property-purchase-research/core/adu-csv-writer";
+import { AduResearchListing } from "../src/scrapers/property-purchase-research/core/adu-research.parser";
 import { logger } from "../src/utils/logger";
 
 async function stage1Discovery(): Promise<string[]> {
@@ -39,17 +39,25 @@ async function stage2DetailParse(urls: string[]): Promise<void> {
   for (const url of urls.slice(0, 3)) {
     const listing = await scraper.fetchListingDetail(url);
     if (!listing) {
-      console.log(`✗ ${extractLid(url)} — no data (non-ACTIVE or fetch failed)`);
+      console.log(
+        `✗ ${extractLid(url)} — no data (non-ACTIVE or fetch failed)`,
+      );
       continue;
     }
     console.log(`✓ ${extractLid(url)}`);
     console.log(`   address:    ${listing.address}`);
     console.log(`   price:      ${listing.price?.toLocaleString()}`);
     console.log(`   beds/baths: ${listing.bedrooms}/${listing.bathrooms}`);
-    console.log(`   sqft/lot:   ${listing.squareFeet ?? "?"} / ${listing.lotSqft ?? "?"}`);
+    console.log(
+      `   sqft/lot:   ${listing.squareFeet ?? "?"} / ${listing.lotSqft ?? "?"}`,
+    );
     console.log(`   year:       ${listing.yearBuilt ?? "?"}`);
-    console.log(`   status/DOM: ${listing.status} / ${listing.daysOnMarket ?? "?"}`);
-    console.log(`   desc:       ${(listing.description ?? "").slice(0, 100).replace(/\n/g, " ")}`);
+    console.log(
+      `   status/DOM: ${listing.status} / ${listing.daysOnMarket ?? "?"}`,
+    );
+    console.log(
+      `   desc:       ${(listing.description ?? "").slice(0, 100).replace(/\n/g, " ")}`,
+    );
   }
 }
 
@@ -64,16 +72,21 @@ async function stage3Pipeline(): Promise<void> {
       // Local CSV/JSON only unless CB_TEST_SHEETS=true (avoids polluting prod sheet)
       appendAduResult(listing);
       if (process.env.CB_TEST_SHEETS === "true") {
-        const { writeAduResearchToSheets } = await import("../src/utils/google-sheets");
+        const { writeAduResearchToSheets } =
+          await import("../src/utils/google-sheets");
         await writeAduResearchToSheets([listing]);
       }
     },
   });
 
   const results = await scraper.run();
-  console.log(`\nPipeline finished: ${results.length} ADU keyword match(es), onMatch fired ${matchCount}x`);
+  console.log(
+    `\nPipeline finished: ${results.length} ADU keyword match(es), onMatch fired ${matchCount}x`,
+  );
   for (const r of results) {
-    console.log(`   ✓ [${(r as AduResearchListing).matchedKeyword}] ${r.address} @ $${r.price?.toLocaleString()}`);
+    console.log(
+      `   ✓ [${(r as AduResearchListing).matchedKeyword}] ${r.address} @ $${r.price?.toLocaleString()}`,
+    );
   }
 }
 
@@ -85,7 +98,9 @@ async function main() {
     await stage3Pipeline();
     console.log("\n✅ All stages completed");
   } catch (err) {
-    logger.error(`Smoke test failed: ${err instanceof Error ? err.message : err}`);
+    logger.error(
+      `Smoke test failed: ${err instanceof Error ? err.message : err}`,
+    );
     process.exitCode = 1;
   } finally {
     process.exit(process.exitCode ?? 0);

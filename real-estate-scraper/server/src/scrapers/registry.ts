@@ -20,7 +20,7 @@ import { CreativeListingScraper } from "./creative-listing/creative-listing.scra
 import { RealtorScraper } from "./realtor/realtor.scraper";
 import { RedfinScraper } from "./redfin/redfin.scraper";
 import { PropwireScraper } from "./propwire/propwire.scraper";
-import { AduResearchScraper } from "./property-purchase-research/adu-research.scraper";
+import { AduResearchScraper } from "./property-purchase-research/filters/adu-research.scraper";
 import { config } from "../config";
 
 /** Each entry returns a ready-to-run BaseScraper instance */
@@ -32,37 +32,50 @@ export const SCRAPER_REGISTRY: Record<string, ScraperFactory> = {
 
   // ── Facebook ───────────────────────────────────────────────────────────────
   facebook: () => new FacebookScraper(),
-  
+
   // ── Offmarket (uses proxy) ────────────────────────────────────────────────
   offmarket: () => new OffmarketScraper({ proxyUrl: config.proxyUrl }),
 
   // ── InvestorLift (highest priority per project doc §3.1) ─────────────────
-  investorlift: () => new InvestorLiftScraper({ headless: process.env.INVESTORLIFT_HEADLESS !== "false" }),
+  investorlift: () =>
+    new InvestorLiftScraper({
+      headless: process.env.INVESTORLIFT_HEADLESS !== "false",
+    }),
 
   // ── Crexi ─────────────────────────────────────────────────────────────────
   crexi: () => new CrexiScraper(),
 
   // CreativeListing (creative-finance marketplace, uses proxy)
-  creativelisting: () => new CreativeListingScraper({ proxyUrl: config.proxyUrl }),
-  
+  creativelisting: () =>
+    new CreativeListingScraper({ proxyUrl: config.proxyUrl }),
+
   // Accept hyphenated variant from frontend: "creative-listing"
-  "creative-listing": () => new CreativeListingScraper({ proxyUrl: config.proxyUrl }),
+  "creative-listing": () =>
+    new CreativeListingScraper({ proxyUrl: config.proxyUrl }),
 
   // ── LoopNet ───────────────────────────────────────────────────────────────
   loopnet: () => new LoopNetScraper(),
 
   // ── Craigslist cities (use proxy) ─────────────────────────────────────────
   craigslist_milwaukee: () =>
-    new CraigslistScraper(config.sources.craigslist.milwaukee, { proxyUrl: config.proxyUrl }),
+    new CraigslistScraper(config.sources.craigslist.milwaukee, {
+      proxyUrl: config.proxyUrl,
+    }),
 
   craigslist_columbus: () =>
-    new CraigslistScraper(config.sources.craigslist.columbus, { proxyUrl: config.proxyUrl }),
+    new CraigslistScraper(config.sources.craigslist.columbus, {
+      proxyUrl: config.proxyUrl,
+    }),
 
   craigslist_cleveland: () =>
-    new CraigslistScraper(config.sources.craigslist.cleveland, { proxyUrl: config.proxyUrl }),
+    new CraigslistScraper(config.sources.craigslist.cleveland, {
+      proxyUrl: config.proxyUrl,
+    }),
 
   craigslist_toledo: () =>
-    new CraigslistScraper(config.sources.craigslist.toledo, { proxyUrl: config.proxyUrl }),
+    new CraigslistScraper(config.sources.craigslist.toledo, {
+      proxyUrl: config.proxyUrl,
+    }),
 
   // ── Zillow ────────────────────────────────────────────────────────────────
   zillow: () => new ZillowScraper(),
@@ -88,8 +101,9 @@ const ALIASES: Record<string, string[]> = {
     k.startsWith("craigslist_"),
   ),
   // "all" runs every registered scraper except excluded ones
-  all: Object.keys(SCRAPER_REGISTRY).filter((k) => 
-    !["zillow", "realtor", "redfin", "offmarket", "propwire"].includes(k)
+  all: Object.keys(SCRAPER_REGISTRY).filter(
+    (k) =>
+      !["zillow", "realtor", "redfin", "offmarket", "propwire"].includes(k),
   ),
 };
 

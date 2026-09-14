@@ -1,6 +1,6 @@
 import express, { Express, Request, Response, NextFunction } from "express";
 import { logger } from "./utils/logger";
-import { aduRunState } from "./scrapers/property-purchase-research/adu-run-state";
+import { aduRunState } from "./scrapers/property-purchase-research/core/adu-run-state";
 
 const app: Express = express();
 
@@ -11,10 +11,13 @@ app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ limit: "10mb", extended: true }));
 
 // Request logging middleware — suppress noisy endpoints
-const IGNORED_LOG_PATHS = new Set(['/api/v1/scrape/status']);
+const IGNORED_LOG_PATHS = new Set(["/api/v1/scrape/status"]);
 app.use((req: Request, res: Response, next: NextFunction) => {
   // Skip logging for the scrape status endpoint (OPTIONS/GET spam)
-  if (IGNORED_LOG_PATHS.has(req.path) && (req.method === 'OPTIONS' || req.method === 'GET')) {
+  if (
+    IGNORED_LOG_PATHS.has(req.path) &&
+    (req.method === "OPTIONS" || req.method === "GET")
+  ) {
     return next();
   }
 
@@ -35,8 +38,14 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   }
 
   res.setHeader("Access-Control-Allow-Credentials", "true");
-  res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Origin, X-Requested-With, Content-Type, Accept, Authorization",
+  );
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, DELETE, PATCH, OPTIONS",
+  );
   res.setHeader("Access-Control-Max-Age", "3600");
 
   // Handle preflight requests

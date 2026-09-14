@@ -1,10 +1,14 @@
 import { RawListing } from "../../types/listing";
 import { RedfinScraper } from "../redfin/redfin.scraper";
 import { ScraperOptions } from "../base.scraper";
-import { AduResearchListing } from "./adu-research.parser";
-import { passesLocationFilter, passesKeywordFilter, passesPropertyCriteria } from "./adu-research.scraper";
+import { AduResearchListing } from "../core/adu-research.parser";
+import {
+  passesLocationFilter,
+  passesKeywordFilter,
+  passesPropertyCriteria,
+} from "../filters/adu-research.scraper";
 import { logger } from "../../utils/logger";
-import { ADU_KEYWORDS } from "./adu-keywords";
+import { ADU_KEYWORDS } from "../core/adu-keywords";
 
 export class RedfinAduScraper extends RedfinScraper {
   readonly sourceName: string = "redfin-adu";
@@ -21,22 +25,30 @@ export class RedfinAduScraper extends RedfinScraper {
     // persistOffset: resume from the stored {marketIndex, phaseIndex, start}
     // cursor each run() so the backfill walk continues past the 500-listing
     // depth cap and eventually sweeps the full served result set.
-    options = { ...options, skipAvmEnrichment: true, allListings: false, persistOffset: true };
+    options = {
+      ...options,
+      skipAvmEnrichment: true,
+      allListings: false,
+      persistOffset: true,
+    };
     super(options);
   }
 
   async run(): Promise<RawListing[]> {
     logger.info(`[${this.sourceName}] Starting ADU research scrape via Redfin`);
-    
+
     const rawResults = await super.run();
-    
-    const aduListings: AduResearchListing[] = rawResults.map(listing => {
+
+    const aduListings: AduResearchListing[] = rawResults.map((listing) => {
       const haystack = [listing.title, listing.description, listing.address]
-          .join(" ")
-          .toLowerCase();
-      
+        .join(" ")
+        .toLowerCase();
+
       const matchedKeyword = ADU_KEYWORDS.find((kw) => {
-        const regex = new RegExp(`\\b${kw.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')}\\b`, 'i');
+        const regex = new RegExp(
+          `\\b${kw.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&")}\\b`,
+          "i",
+        );
         return regex.test(haystack);
       });
 
@@ -64,17 +76,20 @@ export class RedfinAduScraper extends RedfinScraper {
     aduListings.sort(
       (a, b) =>
         (a.daysOnMarket ?? Number.MAX_SAFE_INTEGER) -
-        (b.daysOnMarket ?? Number.MAX_SAFE_INTEGER)
+        (b.daysOnMarket ?? Number.MAX_SAFE_INTEGER),
     );
 
-    const filtered = aduListings.filter(l => 
-      passesLocationFilter(l) && 
-      passesKeywordFilter(l) && 
-      passesPropertyCriteria(l)
+    const filtered = aduListings.filter(
+      (l) =>
+        passesLocationFilter(l) &&
+        passesKeywordFilter(l) &&
+        passesPropertyCriteria(l),
     );
-    
-    logger.info(`[${this.sourceName}] ✓ ${filtered.length} listings passed ADU filters (out of ${aduListings.length} total)`);
-    
+
+    logger.info(
+      `[${this.sourceName}] ✓ ${filtered.length} listings passed ADU filters (out of ${aduListings.length} total)`,
+    );
+
     if (this.options.onMatch) {
       for (const item of filtered) {
         await this.options.onMatch(item);

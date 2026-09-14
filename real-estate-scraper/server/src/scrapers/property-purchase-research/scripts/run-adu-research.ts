@@ -9,34 +9,42 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import "dotenv/config";
-import { ZillowAduScraper } from "./zillow-adu.scraper";
-import { RedfinAduScraper } from "./redfin-adu.scraper";
-import { ColdwellBankerAduScraper } from "./coldwellbanker-adu.scraper"; // REMOVED
-import { CreativeListingAduScraper } from "./creative-listing-adu.scraper";
-import { CraigslistAduScraper } from "./craigslist-adu.scraper";
+import { ZillowAduScraper } from "../sources/zillow-adu.scraper";
+import { RedfinAduScraper } from "../sources/redfin-adu.scraper";
+import { ColdwellBankerAduScraper } from "../sources/coldwellbanker-adu.scraper";
+import { CreativeListingAduScraper } from "../sources/creative-listing-adu.scraper";
+import { CraigslistAduScraper } from "../sources/craigslist-adu.scraper";
 import { logger } from "../../utils/logger";
 import { getLastBackfillStatus } from "../../utils/backfill-store";
-import { ADU_KEYWORDS, TARGET_STATES } from "./adu-keywords";
+import { ADU_KEYWORDS, TARGET_STATES } from "../core/adu-keywords";
 import {
   appendAduResult,
   writeAduResults,
   writeCsvOnly,
-} from "./adu-csv-writer";
-import { AduResearchListing } from "./adu-research.parser";
+} from "../core/adu-csv-writer";
+import { AduResearchListing } from "../core/adu-research.parser";
 import {
   passesKeywordFilter,
   passesLocationFilter,
-} from "./adu-research.scraper";
-import { fetchDeedTransferDate } from "./deed-data-resolver";
+  validateIndianaLeadZip,
+} from "../filters/adu-research.scraper";
+import { fetchDeedTransferDate } from "../core/deed-data-resolver";
 import * as fs from "fs";
 import * as path from "path";
 import { writeAduResearchToSheets } from "../../utils/google-sheets";
-import { dedupKey } from "./address-dedupe";
+import { dedupKey } from "../filters/address-dedupe";
 
 let capturedCount = 0;
 const seenKeys = new Set<string>();
 
 async function handleMatch(listing: AduResearchListing) {
+  if (!validateIndianaLeadZip(listing)) {
+    logger.warn(
+      `[runner] Ignoring Indiana lead with non-46xxx ZIP: ${listing.address || listing.url} | zip=${String(listing.zip ?? "(missing)")}`,
+    );
+    return;
+  }
+
   const key = dedupKey(listing);
   if (seenKeys.has(key)) {
     logger.debug(

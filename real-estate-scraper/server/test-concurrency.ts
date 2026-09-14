@@ -1,4 +1,4 @@
-import { CraigslistAduScraper } from "./src/scrapers/property-purchase-research/craigslist-adu.scraper";
+import { CraigslistAduScraper } from "./src/scrapers/property-purchase-research/sources/craigslist-adu.scraper";
 import { logger } from "./src/utils/logger";
 
 // Force a tiny batch size so it stops quickly
@@ -12,16 +12,16 @@ import * as BackfillStore from "./src/utils/backfill-store";
 
 async function test() {
   logger.info("=== Starting Concurrency Test ===");
-  
+
   const scraper = new CraigslistAduScraper({
     maxListings: 5,
     onMatch: async (listing) => {
       logger.info(`Found match: ${listing.url}`);
-    }
+    },
   });
 
   await scraper.run();
-  
+
   logger.info("=== Concurrency Test Finished ===");
 }
 

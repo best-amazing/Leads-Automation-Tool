@@ -1,10 +1,10 @@
 import { RawListing } from "../../types/listing";
 import { RealtorScraper } from "../realtor/realtor.scraper";
 import { ScraperOptions } from "../base.scraper";
-import { AduResearchListing } from "./adu-research.parser";
-import { passesAduFilter } from "./adu-research.scraper";
+import { AduResearchListing } from "../core/adu-research.parser";
+import { passesAduFilter } from "../filters/adu-research.scraper";
 import { logger } from "../../utils/logger";
-import { ADU_KEYWORDS } from "./adu-keywords";
+import { ADU_KEYWORDS } from "../core/adu-keywords";
 
 export class RealtorAduScraper extends RealtorScraper {
   readonly sourceName = "realtor-adu";
@@ -14,19 +14,21 @@ export class RealtorAduScraper extends RealtorScraper {
   }
 
   async run(): Promise<RawListing[]> {
-    logger.info(`[${this.sourceName}] Starting ADU research scrape via Realtor`);
-    
+    logger.info(
+      `[${this.sourceName}] Starting ADU research scrape via Realtor`,
+    );
+
     // Call base run() which scrapes all configured markets
     const rawResults = await super.run();
-    
-    const aduListings: AduResearchListing[] = rawResults.map(listing => {
+
+    const aduListings: AduResearchListing[] = rawResults.map((listing) => {
       // Find matching keyword for QA
       const haystack = [listing.title, listing.description, listing.address]
-          .join(" ")
-          .toLowerCase();
-      
+        .join(" ")
+        .toLowerCase();
+
       const matchedKeyword = ADU_KEYWORDS.find((kw) => {
-        const regex = new RegExp(`\\b${kw}\\b`, 'i');
+        const regex = new RegExp(`\\b${kw}\\b`, "i");
         return regex.test(haystack);
       });
 
@@ -46,10 +48,12 @@ export class RealtorAduScraper extends RealtorScraper {
       } as AduResearchListing;
     });
 
-    const filtered = aduListings.filter(l => passesAduFilter(l));
-    
-    logger.info(`[${this.sourceName}] ✓ ${filtered.length} listings passed ADU keyword filter (out of ${aduListings.length} total)`);
-    
+    const filtered = aduListings.filter((l) => passesAduFilter(l));
+
+    logger.info(
+      `[${this.sourceName}] ✓ ${filtered.length} listings passed ADU keyword filter (out of ${aduListings.length} total)`,
+    );
+
     return filtered;
   }
 }

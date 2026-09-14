@@ -1,9 +1,12 @@
 import { google } from "googleapis";
 import * as fs from "fs";
-import { extractKeywordContext, displayAddress } from "../scrapers/property-purchase-research/adu-csv-writer";
+import {
+  extractKeywordContext,
+  displayAddress,
+} from "../scrapers/property-purchase-research/core/adu-csv-writer";
 import * as os from "os";
 import { logger } from "./logger";
-import { AduResearchListing } from "../scrapers/property-purchase-research/adu-research.parser";
+import { AduResearchListing } from "../scrapers/property-purchase-research/core/adu-research.parser";
 
 let cachedExistingLinks: Set<string> | null = null;
 let stateLoaded = false;
@@ -21,13 +24,20 @@ function getServiceAccountPath(): string {
       const decoded = Buffer.from(b64, "base64").toString("utf-8");
       JSON.parse(decoded); // validate it's a JSON key
       const tempPath = path.join(os.tmpdir(), "google-service-account.json");
-      if (!fs.existsSync(tempPath) || fs.readFileSync(tempPath, "utf-8") !== decoded) {
+      if (
+        !fs.existsSync(tempPath) ||
+        fs.readFileSync(tempPath, "utf-8") !== decoded
+      ) {
         fs.writeFileSync(tempPath, decoded, { mode: 0o600 });
-        logger.info("[sheets] Decoded GOOGLE_SERVICE_ACCOUNT_KEY_B64 to temp key file");
+        logger.info(
+          "[sheets] Decoded GOOGLE_SERVICE_ACCOUNT_KEY_B64 to temp key file",
+        );
       }
       return tempPath;
     } catch (err) {
-      logger.error(`[sheets] Failed to decode GOOGLE_SERVICE_ACCOUNT_KEY_B64: ${err}`);
+      logger.error(
+        `[sheets] Failed to decode GOOGLE_SERVICE_ACCOUNT_KEY_B64: ${err}`,
+      );
     }
   }
 
@@ -40,8 +50,16 @@ function getServiceAccountPath(): string {
     raw,
     path.resolve(raw),
     path.join(process.cwd(), "amazing-properties-447020-b2f3946f4b3e.json"),
-    path.join(__dirname, "../..", "amazing-properties-447020-b2f3946f4b3e.json"),
-    path.join(__dirname, "../../..", "amazing-properties-447020-b2f3946f4b3e.json")
+    path.join(
+      __dirname,
+      "../..",
+      "amazing-properties-447020-b2f3946f4b3e.json",
+    ),
+    path.join(
+      __dirname,
+      "../../..",
+      "amazing-properties-447020-b2f3946f4b3e.json",
+    ),
   ];
 
   for (const cand of candidates) {
@@ -86,7 +104,10 @@ export const ADU_SHEET_HEADERS = [
  */
 export function buildAduSheetRow(l: AduResearchListing): any[] {
   // safely extract keyword text if it's an object or string
-  const matchedKw = typeof l.matchedKeyword === "string" ? l.matchedKeyword : (l.matchedKeyword as any)?.name || "";
+  const matchedKw =
+    typeof l.matchedKeyword === "string"
+      ? l.matchedKeyword
+      : (l.matchedKeyword as any)?.name || "";
 
   return [
     new Date().toLocaleDateString(),
@@ -115,14 +136,14 @@ export function buildAduSheetRow(l: AduResearchListing): any[] {
   ];
 }
 
-export async function writeAduResearchToSheets(
-  listings: AduResearchListing[]
-) {
+export async function writeAduResearchToSheets(listings: AduResearchListing[]) {
   if (listings.length === 0) return;
 
   const spreadsheetId = process.env.SPREADSHEET_ID;
   if (!spreadsheetId) {
-    logger.warn("[sheets] SPREADSHEET_ID not found in .env, skipping Google Sheets upload.");
+    logger.warn(
+      "[sheets] SPREADSHEET_ID not found in .env, skipping Google Sheets upload.",
+    );
     return;
   }
 
@@ -130,7 +151,9 @@ export async function writeAduResearchToSheets(
   const keyPath = getServiceAccountPath();
 
   if (!fs.existsSync(keyPath)) {
-    logger.error(`[sheets] Google service account key not found at ${keyPath}. Skipping upload.`);
+    logger.error(
+      `[sheets] Google service account key not found at ${keyPath}. Skipping upload.`,
+    );
     return;
   }
 
@@ -152,8 +175,8 @@ export async function writeAduResearchToSheets(
       let sheetId: number | undefined;
       meta.data.sheets?.forEach((s) => {
         if (s.properties?.title === sheetName) {
-           sheetExists = true;
-           sheetId = s.properties.sheetId ?? undefined;
+          sheetExists = true;
+          sheetId = s.properties.sheetId ?? undefined;
         }
       });
 
@@ -173,7 +196,9 @@ export async function writeAduResearchToSheets(
             ],
           },
         });
-        sheetId = createRes.data.replies?.[0]?.addSheet?.properties?.sheetId ?? undefined;
+        sheetId =
+          createRes.data.replies?.[0]?.addSheet?.properties?.sheetId ??
+          undefined;
       }
 
       const headers = ADU_SHEET_HEADERS;
@@ -245,7 +270,9 @@ export async function writeAduResearchToSheets(
       });
 
       if (newRows.length === 0) {
-        logger.info(`[sheets] All ${listings.length} listings already exist in Google Sheets. Skipping append.`);
+        logger.info(
+          `[sheets] All ${listings.length} listings already exist in Google Sheets. Skipping append.`,
+        );
         break; // break instead of return
       }
 
@@ -287,7 +314,9 @@ export async function writeAduResearchToSheets(
         cachedLastRow += 1;
       }
 
-      logger.info(`[sheets] Writing ${newRows.length} new rows to "${sheetName}" starting at row ${nextRow} (skipped ${listings.length - newRows.length} duplicates)...`);
+      logger.info(
+        `[sheets] Writing ${newRows.length} new rows to "${sheetName}" starting at row ${nextRow} (skipped ${listings.length - newRows.length} duplicates)...`,
+      );
       const response = await sheets.spreadsheets.values.update({
         spreadsheetId,
         range: `${sheetName}!A${nextRow}`,
@@ -308,18 +337,24 @@ export async function writeAduResearchToSheets(
       }
 
       const updatedRange = response.data.updatedRange;
-      logger.info(`[sheets] Successfully wrote to Google Sheets at range: ${updatedRange}`);
+      logger.info(
+        `[sheets] Successfully wrote to Google Sheets at range: ${updatedRange}`,
+      );
       break; // Success! Break out of the retry loop
     } catch (error: any) {
       attempt++;
       stateLoaded = false; // reload true sheet state before retrying
-      logger.error(`[sheets] Failed to write to Google Sheets (attempt ${attempt}/${maxRetries}): ${error.message}`);
+      logger.error(
+        `[sheets] Failed to write to Google Sheets (attempt ${attempt}/${maxRetries}): ${error.message}`,
+      );
       if (attempt >= maxRetries) {
-        logger.error(`[sheets] Max retries reached. Listing could not be uploaded.`);
+        logger.error(
+          `[sheets] Max retries reached. Listing could not be uploaded.`,
+        );
         break;
       }
       // Wait before retrying (2s, 4s, etc)
-      await new Promise(r => setTimeout(r, 2000 * attempt));
+      await new Promise((r) => setTimeout(r, 2000 * attempt));
     }
   }
 }

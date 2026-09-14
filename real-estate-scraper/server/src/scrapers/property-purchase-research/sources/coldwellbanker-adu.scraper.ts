@@ -31,19 +31,19 @@ import {
   CB_CONCURRENCY,
 } from "../coldwellbanker/coldwellbanker.scraper";
 import { ScraperOptions } from "../base.scraper";
-import { AduResearchListing } from "./adu-research.parser";
+import { AduResearchListing } from "../core/adu-research.parser";
 import {
   passesLocationFilter,
   passesKeywordFilter,
   passesPropertyCriteria,
-} from "./adu-research.scraper";
+} from "../filters/adu-research.scraper";
 import { logger } from "../../utils/logger";
 import { sleep, jitter } from "../../utils/browser";
 import {
   loadSeenListings as loadSeenFromDb,
   saveSeenListings as saveSeenToDb,
 } from "../../utils/backfill-store";
-import { ADU_KEYWORDS } from "./adu-keywords";
+import { ADU_KEYWORDS } from "../core/adu-keywords";
 
 const BACKFILL_BATCH_SIZE = Number(process.env.CB_BACKFILL_BATCH_SIZE ?? 500);
 const CB_LOOKBACK_DAYS = Number(process.env.CB_LOOKBACK_DAYS ?? 90);
@@ -56,12 +56,16 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
   }
 
   override async run(): Promise<RawListing[]> {
-    logger.info(`[${this.sourceName}] Starting ADU research scrape via Coldwell Banker`);
+    logger.info(
+      `[${this.sourceName}] Starting ADU research scrape via Coldwell Banker`,
+    );
     this.visited.clear();
     this.results = [];
 
     const mode = (process.env.CB_INVENTORY_MODE as CbInventoryMode) || "full";
-    logger.info(`[${this.sourceName}] Inventory mode: ${mode}, lookback: ${CB_LOOKBACK_DAYS} days`);
+    logger.info(
+      `[${this.sourceName}] Inventory mode: ${mode}, lookback: ${CB_LOOKBACK_DAYS} days`,
+    );
     const previouslySeen = await loadSeenFromDb(this.sourceName);
     const reservedLids = new Set(previouslySeen); // intra-run double-processing guard
 
@@ -81,10 +85,13 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
     logger.info(
       `[${this.sourceName}] ${discovered.length} discovered, ` +
         `${skippedAsSeen} already seen, ${queue.length} to process ` +
-        `(batch cap ${Math.min(BACKFILL_BATCH_SIZE, this.options.maxListings)})`
+        `(batch cap ${Math.min(BACKFILL_BATCH_SIZE, this.options.maxListings)})`,
     );
 
-    const work = queue.slice(0, Math.min(BACKFILL_BATCH_SIZE, this.options.maxListings));
+    const work = queue.slice(
+      0,
+      Math.min(BACKFILL_BATCH_SIZE, this.options.maxListings),
+    );
     let processedThisBatch = 0;
 
     // Only lids whose fetch attempt COMPLETED (listing parsed, or definitive
@@ -106,14 +113,14 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
           }
         } catch (err) {
           logger.warn(
-            `[${this.sourceName}] ${url}: ${err instanceof Error ? err.message : err}`
+            `[${this.sourceName}] ${url}: ${err instanceof Error ? err.message : err}`,
           );
         }
         processedThisBatch++;
         if (processedThisBatch % 25 === 0) {
           logger.info(
             `[${this.sourceName}] progress ${processedThisBatch}/${work.length} ` +
-              `(matches: ${this.results.length})`
+              `(matches: ${this.results.length})`,
           );
         }
         await sleep(jitter(DEFAULT_CB_DELAY_MS));
@@ -125,7 +132,7 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
 
     logger.info(
       `[${this.sourceName}] Processed ${processedThisBatch} new listing(s), ` +
-        `skipped ${skippedAsSeen} already-seen, matched ${this.results.length}`
+        `skipped ${skippedAsSeen} already-seen, matched ${this.results.length}`,
     );
 
     // ── Persist updated tracker: previously seen + actually completed only ──
@@ -142,9 +149,12 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
     listing.totalBedrooms = listing.bedrooms;
 
     // Stage 0: 90-day lookback — skip listings older than CB_LOOKBACK_DAYS
-    if (listing.daysOnMarket != null && listing.daysOnMarket > CB_LOOKBACK_DAYS) {
+    if (
+      listing.daysOnMarket != null &&
+      listing.daysOnMarket > CB_LOOKBACK_DAYS
+    ) {
       logger.debug(
-        `[${this.sourceName}] Skipping — ${listing.daysOnMarket} days on market > ${CB_LOOKBACK_DAYS}d limit: ${listing.address}`
+        `[${this.sourceName}] Skipping — ${listing.daysOnMarket} days on market > ${CB_LOOKBACK_DAYS}d limit: ${listing.address}`,
       );
       return;
     }
@@ -160,14 +170,17 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
       .join(" ")
       .toLowerCase();
     listing.matchedKeyword = ADU_KEYWORDS.find((kw) => {
-      const regex = new RegExp(`\\b${kw.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&")}\\b`, "i");
+      const regex = new RegExp(
+        `\\b${kw.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&")}\\b`,
+        "i",
+      );
       return regex.test(haystack);
     });
 
     this.visited.add(extractLid(listing.url));
     this.results.push(listing);
     logger.info(
-      `[${this.sourceName}] ✓ MATCHED ADU KEYWORD: ${listing.matchedKeyword} — ${listing.address}`
+      `[${this.sourceName}] ✓ MATCHED ADU KEYWORD: ${listing.matchedKeyword} — ${listing.address}`,
     );
 
     if (this.options.onMatch) {
@@ -177,7 +190,7 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
         logger.warn(
           `[${this.sourceName}] onMatch failed for ${listing.url}: ${
             err instanceof Error ? err.message : err
-          }`
+          }`,
         );
       }
     }
