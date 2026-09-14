@@ -20,9 +20,9 @@
 import "dotenv/config";
 import { CronJob } from "cron";
 import axios from "axios";
-import { logger } from "../../utils/logger";
+import { logger } from "../../../utils/logger";
 import { runAduResearch } from "./run-adu-research";
-import { aduRunState } from "./adu-run-state";
+import { aduRunState } from "../core/adu-run-state";
 
 const SCHEDULE = process.env.ADU_CRON_SCHEDULE || "*/10 * * * *";
 const TIMEZONE = process.env.ADU_CRON_TIMEZONE || "Africa/Lagos";
@@ -43,7 +43,9 @@ function sendAlert(message: string): void {
 
   if (req) {
     req.catch((err: any) => {
-      logger.warn(`[adu-cron] Failed to send alert: ${err instanceof Error ? err.message : err}`);
+      logger.warn(
+        `[adu-cron] Failed to send alert: ${err instanceof Error ? err.message : err}`,
+      );
     });
   }
 }
@@ -60,7 +62,9 @@ export function startAduWatchdog(): void {
     SCHEDULE,
     async () => {
       if (running) {
-        logger.info("[adu-cron] Previous run still in progress — skipping this tick.");
+        logger.info(
+          "[adu-cron] Previous run still in progress — skipping this tick.",
+        );
         return;
       }
 
@@ -75,12 +79,15 @@ export function startAduWatchdog(): void {
       logger.info("[adu-cron] Starting ADU research run...");
 
       // Self-ping to prevent Render hibernation during long runs
-      const selfPing = setInterval(() => {
-        const pingUrl = process.env.RENDER_EXTERNAL_URL 
-          ? `${process.env.RENDER_EXTERNAL_URL}/api/healthcheck` 
-          : "http://localhost:10000/api/healthcheck";
-        axios.get(pingUrl).catch(() => {});
-      }, 5 * 60 * 1000); // Ping every 5 minutes
+      const selfPing = setInterval(
+        () => {
+          const pingUrl = process.env.RENDER_EXTERNAL_URL
+            ? `${process.env.RENDER_EXTERNAL_URL}/api/healthcheck`
+            : "http://localhost:10000/api/healthcheck";
+          axios.get(pingUrl).catch(() => {});
+        },
+        5 * 60 * 1000,
+      ); // Ping every 5 minutes
 
       try {
         await runAduResearch();
@@ -100,14 +107,16 @@ export function startAduWatchdog(): void {
         if (global.gc) global.gc();
       }
     },
-    null,        // onComplete
-    true,        // start immediately
-    TIMEZONE,    // timeZone
-    undefined,   // context
-    true         // runOnInit — first run now, then on schedule
+    null, // onComplete
+    true, // start immediately
+    TIMEZONE, // timeZone
+    undefined, // context
+    true, // runOnInit — first run now, then on schedule
   );
 
-  logger.info(`[adu-cron] Watchdog started — schedule "${SCHEDULE}" (${TIMEZONE}), first run now.`);
+  logger.info(
+    `[adu-cron] Watchdog started — schedule "${SCHEDULE}" (${TIMEZONE}), first run now.`,
+  );
 }
 
 // ── Direct execution ────────────────────────────────────────────────────────

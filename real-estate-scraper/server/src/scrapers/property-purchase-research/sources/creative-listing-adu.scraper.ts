@@ -1,13 +1,13 @@
-import { RawListing } from "../../types/listing";
-import { CreativeListingScraper } from "../creative-listing/creative-listing.scraper";
-import { ScraperOptions } from "../base.scraper";
+import { RawListing } from "../../../types/listing";
+import { CreativeListingScraper } from "../../creative-listing/creative-listing.scraper";
+import { ScraperOptions } from "../../base.scraper";
 import { AduResearchListing } from "../core/adu-research.parser";
 import {
   passesLocationFilter,
   passesKeywordFilter,
   passesPropertyCriteria,
 } from "../filters/adu-research.scraper";
-import { logger } from "../../utils/logger";
+import { logger } from "../../../utils/logger";
 import { ADU_KEYWORDS } from "../core/adu-keywords";
 
 export class CreativeListingAduScraper extends CreativeListingScraper {

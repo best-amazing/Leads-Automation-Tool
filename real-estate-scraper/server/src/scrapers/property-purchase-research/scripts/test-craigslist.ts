@@ -2,7 +2,7 @@ import "dotenv/config";
 import { CraigslistAduScraper } from "../sources/craigslist-adu.scraper";
 import { AduResearchListing } from "../core/adu-research.parser";
 import { displayAddress } from "../core/adu-csv-writer";
-import { logger } from "../../utils/logger";
+import { logger } from "../../../utils/logger";
 
 async function testCraigslistAdu() {
   const scraper = new CraigslistAduScraper({

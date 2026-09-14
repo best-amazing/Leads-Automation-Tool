@@ -1,9 +1,9 @@
-import { RawListing } from "../../types/listing";
-import { RealtorScraper } from "../realtor/realtor.scraper";
-import { ScraperOptions } from "../base.scraper";
+import { RawListing } from "../../../types/listing";
+import { RealtorScraper } from "../../realtor/realtor.scraper";
+import { ScraperOptions } from "../../base.scraper";
 import { AduResearchListing } from "../core/adu-research.parser";
 import { passesAduFilter } from "../filters/adu-research.scraper";
-import { logger } from "../../utils/logger";
+import { logger } from "../../../utils/logger";
 import { ADU_KEYWORDS } from "../core/adu-keywords";
 
 export class RealtorAduScraper extends RealtorScraper {
