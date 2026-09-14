@@ -435,11 +435,11 @@ export class ZillowScraper extends BaseScraper {
     const html = await oxylabsFetch(pageUrl, this.sessionId);
     if (!html) {
       logger.warn(
-        `[zillow] No HTML for ${market.name} page ${pageNumber} — skipping page. Cooling off for ${POST_FAIL_COOLDOWN_MS / 1_000}s`,
+        `[zillow] No HTML for ${market.name} page ${pageNumber} — rate-limit / page fetch failed. Cooling off for ${POST_FAIL_COOLDOWN_MS / 1_000}s and stopping this market`,
       );
       this.sessionId = `zillow_${Date.now()}_${Math.floor(Math.random() * 9_999)}`;
       await sleep(POST_FAIL_COOLDOWN_MS);
-      return { listings: [], stop: false };
+      return { listings: [], stop: true };
     }
 
     if (pageNumber <= DEBUG_PAGES) {
@@ -453,7 +453,7 @@ export class ZillowScraper extends BaseScraper {
       );
       this.sessionId = `zillow_${Date.now()}_${Math.floor(Math.random() * 9_999)}`;
       saveFile(`zillow_blocked_p${pageNumber}_${slug}.html`, html);
-      return { listings: [], stop: false };
+      return { listings: [], stop: true };
     }
 
     if (!html.includes("zillowstatic.com") && !html.includes("__NEXT_DATA__")) {

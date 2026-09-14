@@ -43,6 +43,25 @@ interface OxylabsFetchOptions {
   requestTimeoutMs?: number;
 }
 
+const oxylabsScopeCooldownUntil = new Map<string, number>();
+
+export function markOxylabsRateLimited(
+  loggerScope: string,
+  attempt: number,
+  _targetUrl?: string,
+): number {
+  const baseDelayMs = Math.min(30_000 * Math.pow(2, attempt - 1), 300_000);
+  const delayMs = Math.max(baseDelayMs, 60_000);
+  const until = Date.now() + delayMs;
+  oxylabsScopeCooldownUntil.set(loggerScope, until);
+  return delayMs;
+}
+
+export function getOxylabsCooldownRemainingMs(loggerScope: string): number {
+  const until = oxylabsScopeCooldownUntil.get(loggerScope) ?? 0;
+  return Math.max(0, until - Date.now());
+}
+
 function retryDelayMs(attempt: number): number {
   return Math.min(
     8_000 * Math.pow(2, attempt - 1) + Math.random() * 4_000,
@@ -244,6 +263,14 @@ export async function oxylabsFetch(
     requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
   } = options;
 
+  const activeCooldownMs = getOxylabsCooldownRemainingMs(loggerScope);
+  if (activeCooldownMs > 0) {
+    logger.warn(
+      `[${loggerScope}] Oxylabs cooldown active for ${Math.ceil(activeCooldownMs / 1000)}s — skipping ${targetUrl.slice(0, 80)}`,
+    );
+    return null;
+  }
+
   let currentSessionId = sessionId;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     const { html, rateLimited } = await oxylabsFetchOnce(
@@ -256,8 +283,10 @@ export async function oxylabsFetch(
     if (html !== null) return html;
     if (!rateLimited) return null;
 
+    const cooldownMs = markOxylabsRateLimited(loggerScope, attempt, targetUrl);
+
     if (attempt < maxRetries) {
-      const delay = retryDelayMs(attempt);
+      const delay = Math.max(retryDelayMs(attempt), cooldownMs);
       if (currentSessionId) {
         currentSessionId = `${loggerScope}_${Date.now()}_${Math.floor(
           Math.random() * 9_999,
@@ -274,6 +303,9 @@ export async function oxylabsFetch(
     } else {
       logger.warn(
         `[${loggerScope}] 429 — all ${maxRetries} retries exhausted for ${targetUrl.slice(0, 80)}`,
+      );
+      logger.warn(
+        `[${loggerScope}] applying 2-minute cooldown before retrying any more Oxylabs requests`,
       );
     }
   }
