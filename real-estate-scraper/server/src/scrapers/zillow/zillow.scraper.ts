@@ -27,42 +27,43 @@
 //      so logs stay organised when running multiple markets.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import * as https from "https";
-import * as http  from "http";
-import * as zlib  from "zlib";
-import * as fs    from "fs";
-import * as path  from "path";
+import * as fs from "fs";
+import * as path from "path";
 
 import { BaseScraper, ScraperOptions } from "../base.scraper";
-import { RawListing }                  from "../../types/listing";
-import { logger }                      from "../../utils/logger";
-import { sleep, jitter }               from "../../utils/browser";
+import { RawListing } from "../../types/listing";
+import { logger } from "../../utils/logger";
+import { sleep, jitter } from "../../utils/browser";
 import {
   loadSeenListings as loadSeenFromDb,
   saveSeenListings as saveSeenToDb,
 } from "../../utils/backfill-store";
 import { parseZillowResults, MAX_DAYS_OLD } from "./zillow.parser";
-import { config }                      from "../../config";
+import { config } from "../../config";
+import { oxylabsFetch as fetchOxylabs } from "../shared/oxylabs";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const OXYLABS_ENDPOINT   = "realtime.oxylabs.io";
-const OXYLABS_PATH       = "/v1/queries";
-const OXYLABS_USERNAME   = process.env.OXYLABS_USERNAME ?? "";
-const OXYLABS_PASSWORD   = process.env.OXYLABS_PASSWORD ?? "";
+const OXYLABS_ENDPOINT = "realtime.oxylabs.io";
+const OXYLABS_PATH = "/v1/queries";
+const OXYLABS_USERNAME = process.env.OXYLABS_USERNAME ?? "";
+const OXYLABS_PASSWORD = process.env.OXYLABS_PASSWORD ?? "";
 
-const REQUEST_TIMEOUT_MS    = 120_000;
-const BETWEEN_PAGE_MS       = 8_000;   // base pause between pages
-const BETWEEN_MARKET_MS     = 10_000;  // extra pause between markets
-const POST_FAIL_COOLDOWN_MS = 60_000;  // cooldown after all retries exhausted on a page
-const MAX_RETRIES           = 3;       // retry count for 429 / transient errors
+const REQUEST_TIMEOUT_MS = 120_000;
+const BETWEEN_PAGE_MS = 8_000; // base pause between pages
+const BETWEEN_MARKET_MS = 10_000; // extra pause between markets
+const POST_FAIL_COOLDOWN_MS = 60_000; // cooldown after all retries exhausted on a page
+const MAX_RETRIES = 3; // retry count for 429 / transient errors
 
 // Exponential backoff: 8s, 16s, 32s (+ jitter), capped at 45s
 function retryDelayMs(attempt: number): number {
-  return Math.min(8_000 * Math.pow(2, attempt - 1) + Math.random() * 4_000, 45_000);
+  return Math.min(
+    8_000 * Math.pow(2, attempt - 1) + Math.random() * 4_000,
+    45_000,
+  );
 }
-const DEBUG_PAGES        = 3;       // save raw HTML/JSON for first N pages per market
-const MAX_DETAIL_SAVES   = 3;       // how many detail-page __NEXT_DATA__ files to save
+const DEBUG_PAGES = 3; // save raw HTML/JSON for first N pages per market
+const MAX_DETAIL_SAVES = 3; // how many detail-page __NEXT_DATA__ files to save
 
 const BACKFILL_BATCH_SIZE = 1000;
 
@@ -71,8 +72,8 @@ const BACKFILL_BATCH_SIZE = 1000;
 export type OffMarketType = "pre_foreclosure" | "foreclosure" | "active";
 
 interface MarketConfig {
-  name:        string;
-  baseUrl:     string;
+  name: string;
+  baseUrl: string;
   listingType: OffMarketType;
 }
 
@@ -91,10 +92,10 @@ interface MarketConfig {
 // having separate market entries per type rather than combining them.
 
 function buildPageUrl(
-  baseUrl:     string,
+  baseUrl: string,
   listingType: OffMarketType,
-  pageNumber:  number,
-  ignorePriceFilter: boolean = false
+  pageNumber: number,
+  ignorePriceFilter: boolean = false,
 ): string {
   const [basePath] = baseUrl.split("?");
 
@@ -102,12 +103,12 @@ function buildPageUrl(
     // Disable on-market listing types unless active is requested
     fsba: { value: listingType === "active" },
     fsbo: { value: listingType === "active" },
-    nc:   { value: false }, // new construction
+    nc: { value: false }, // new construction
     cmsn: { value: false }, // coming soon
-    auc:  { value: false }, // auctions
+    auc: { value: false }, // auctions
     // Enable exactly the requested off-market type
     fore: { value: listingType === "foreclosure" },
-    pf:   { value: listingType === "pre_foreclosure" },
+    pf: { value: listingType === "pre_foreclosure" },
   };
 
   if (!ignorePriceFilter) {
@@ -138,7 +139,7 @@ function buildPageUrl(
 //   3. We still require url + address for deduplication and downstream use.
 
 function passesFilterOffMarket(listing: RawListing): boolean {
-  if (!listing.url)     return false;
+  if (!listing.url) return false;
   if (!listing.address) return false;
 
   // ZESTIMATE REQUIRED
@@ -160,210 +161,23 @@ function marketSlug(market: MarketConfig): string {
   return market.name.toLowerCase().replace(/[^a-z0-9]+/g, "_");
 }
 
-// ── Oxylabs HTTP client ───────────────────────────────────────────────────────
-
-interface OxylabsPayload {
-  source:          string;
-  url:             string;
-  render:          string;
-  geo_location:    string;
-  user_agent_type: string;
-  session_id?:     string;
-}
-
-interface OxylabsResponse {
-  results: Array<{
-    content:     string;
-    status_code: number;
-    url:         string;
-    job_id:      string;
-  }>;
-}
-
-// ── Single Oxylabs request (no retry) ────────────────────────────────────────
-//
-// Returns { html, rateLimited } so the caller can decide whether to retry.
-
-interface OxylabsResult {
-  html:        string | null;
-  rateLimited: boolean;
-}
-
-function oxylabsFetchOnce(targetUrl: string, sessionId?: string): Promise<OxylabsResult> {
-  return new Promise((resolve) => {
-    if (!OXYLABS_USERNAME || !OXYLABS_PASSWORD) {
-      logger.error(
-        "[zillow] Oxylabs credentials missing — add to .env:\n" +
-        "[zillow]   OXYLABS_USERNAME=your_api_user\n" +
-        "[zillow]   OXYLABS_PASSWORD=your_api_password"
-      );
-      resolve({ html: null, rateLimited: false });
-      return;
-    }
-
-    let settled = false;
-    function settle(html: string | null, rateLimited = false) {
-      if (settled) return;
-      settled = true;
-      clearTimeout(deadline);
-      resolve({ html, rateLimited });
-    }
-
-    const payload: OxylabsPayload = {
-      source:          "universal",
-      url:             targetUrl,
-      render:          "html",
-      geo_location:    "United States",
-      user_agent_type: "desktop",
-      ...(sessionId ? { session_id: sessionId } : {}),
-    };
-
-    const bodyStr = JSON.stringify(payload);
-    const authStr = Buffer.from(`${OXYLABS_USERNAME}:${OXYLABS_PASSWORD}`).toString("base64");
-
-    const DEADLINE_MS = REQUEST_TIMEOUT_MS + 30_000;
-    const deadline = setTimeout(() => {
-      logger.warn(`[zillow] Oxylabs deadline exceeded (${DEADLINE_MS / 1_000}s) — aborting`);
-      try { req.destroy(); } catch {}
-      settle(null);
-    }, DEADLINE_MS);
-
-    const req = https.request(
-      {
-        hostname: OXYLABS_ENDPOINT,
-        path:     OXYLABS_PATH,
-        method:   "POST",
-        family:   4,
-        headers:  {
-          "Content-Type":   "application/json",
-          "Authorization":  `Basic ${authStr}`,
-          "Content-Length": Buffer.byteLength(bodyStr).toString(),
-        },
-      },
-      (res: http.IncomingMessage) => {
-        const enc    = (res.headers["content-encoding"] ?? "").toLowerCase();
-        logger.debug(
-          `[zillow] [sock] response headers — status=${res.statusCode ?? 0} ` +
-          `enc=${enc || "identity"} content-length=${res.headers["content-length"] ?? "?"}`
-        );
-        const chunks: Buffer[] = [];
-        const stream =
-          enc === "gzip"    ? res.pipe(zlib.createGunzip())           :
-          enc === "deflate" ? res.pipe(zlib.createInflate())          :
-          enc === "br"      ? res.pipe(zlib.createBrotliDecompress()) :
-          res as any;
-
-        let chunkCount = 0;
-        let totalBytes = 0;
-        (stream as NodeJS.ReadableStream).on("data", (c: Buffer) => {
-          chunks.push(c);
-          chunkCount++;
-          totalBytes += c.length;
-          if (chunkCount === 1 || chunkCount % 100 === 0) {
-            logger.debug(`[zillow] [sock] chunk #${chunkCount} (+${c.length} B, total ${totalBytes} B)`);
-          }
-        });
-        (stream as NodeJS.ReadableStream).on("end", () => {
-          logger.debug(`[zillow] [sock] end — total ${totalBytes} B`);
-          const raw    = Buffer.concat(chunks).toString("utf-8");
-          const status = res.statusCode ?? 0;
-
-          if (status === 401) { logger.error("[zillow] Oxylabs 401 — bad credentials"); settle(null); return; }
-          if (status === 429) { logger.warn("[zillow] Oxylabs 429 — rate limited");      settle(null, true); return; }
-          if (status !== 200) {
-            logger.warn(`[zillow] Oxylabs HTTP ${status}`);
-            logger.debug(`[zillow] Body snippet: ${raw.slice(0, 300)}`);
-            settle(null); return;
-          }
-
-          let parsed: OxylabsResponse;
-          try { parsed = JSON.parse(raw); } catch {
-            logger.warn("[zillow] Could not parse Oxylabs envelope");
-            settle(null); return;
-          }
-
-          const result      = parsed?.results?.[0];
-          const content     = result?.content ?? "";
-          const innerStatus = result?.status_code ?? 0;
-
-          if (innerStatus === 403 || innerStatus === 429) {
-            logger.warn(`[zillow] Zillow HTTP ${innerStatus} via Oxylabs`);
-            settle(null, true); return;
-          }
-          if (!content || content.length < 5_000) {
-            logger.warn(`[zillow] Short content (${content.length} chars) — possible block`);
-            settle(null); return;
-          }
-
-          logger.debug(`[zillow] Oxylabs OK — ${content.length} chars, inner ${innerStatus}`);
-          settle(content);
-        });
-
-        (stream as NodeJS.ReadableStream).on("error", (err: any) => {
-          logger.warn(`[zillow] Stream error: ${err.message}`);
-          settle(null);
-        });
-      }
-    );
-
-    req.setTimeout(REQUEST_TIMEOUT_MS, () => {
-      logger.warn(`[zillow] Oxylabs timed out after ${REQUEST_TIMEOUT_MS / 1_000}s`);
-      try { req.destroy(); } catch {}
-      settle(null);
-    });
-
-    req.on("error", (err: any) => {
-      logger.error(`[zillow] Request error: [${err.code ?? "?"}] ${err.message}`);
-      settle(null);
-    });
-
-    req.on("close", () => {
-      logger.debug("[zillow] [sock] close");
-      settle(null);
-    });
-
-    req.write(bodyStr);
-    req.end();
-    logger.debug(`[zillow] [sock] request sent — ${targetUrl}`);
-  });
-}
-
-// ── Public Oxylabs fetch with retry ──────────────────────────────────────────
-//
-// Retries on 429 / rate-limit responses with exponential backoff, matching
-// the convention used by LoopNet, Redfin, Offmarket, and ColdwellBanker.
-
-export async function oxylabsFetch(targetUrl: string, sessionId?: string): Promise<string | null> {
-  let currentSessionId = sessionId;
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    const { html, rateLimited } = await oxylabsFetchOnce(targetUrl, currentSessionId);
-
-    if (html !== null) return html;                     // success
-    if (!rateLimited)   return null;                     // non-retryable error (401, parse, timeout …)
-
-    // rate-limited — retry with backoff
-    if (attempt < MAX_RETRIES) {
-      const delay = retryDelayMs(attempt);
-      if (currentSessionId) {
-        currentSessionId = `zillow_${Date.now()}_${Math.floor(Math.random() * 9_999)}`;
-        logger.info(`[zillow] 429 retry ${attempt}/${MAX_RETRIES} — rotating session ID to ${currentSessionId} and waiting ${Math.round(delay / 1_000)}s`);
-      } else {
-        logger.warn(`[zillow] 429 retry ${attempt}/${MAX_RETRIES} — waiting ${Math.round(delay / 1_000)}s`);
-      }
-      await sleep(delay);
-    } else {
-      logger.warn(`[zillow] 429 — all ${MAX_RETRIES} retries exhausted for ${targetUrl.slice(0, 80)}`);
-    }
-  }
-  return null;
+export async function oxylabsFetch(
+  targetUrl: string,
+  sessionId?: string,
+): Promise<string | null> {
+  return fetchOxylabs(targetUrl, { loggerScope: "zillow", sessionId });
 }
 
 // ── __NEXT_DATA__ extractor ───────────────────────────────────────────────────
 
 export function extractNextData(html: string): any | null {
-  const match = html.match(/<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i);
+  const match = html.match(
+    /<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i,
+  );
   if (!match?.[1]) return null;
-  try { return JSON.parse(match[1]); } catch (err) {
+  try {
+    return JSON.parse(match[1]);
+  } catch (err) {
     logger.warn(`[zillow] Failed to parse __NEXT_DATA__: ${err}`);
     return null;
   }
@@ -390,15 +204,20 @@ const BLOCK_BODY_SIGNALS = [
 ];
 
 function detectBlock(html: string): { blocked: boolean; reason: string } {
-  const title = (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "").toLowerCase().trim();
-  if (BLOCK_TITLES.some(t => title.includes(t)))
+  const title = (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "")
+    .toLowerCase()
+    .trim();
+  if (BLOCK_TITLES.some((t) => title.includes(t)))
     return { blocked: true, reason: `block title: "${title}"` };
 
-  const sig = BLOCK_BODY_SIGNALS.find(s => html.includes(s));
-  if (sig)
-    return { blocked: true, reason: `body signal: ${sig}` };
+  const sig = BLOCK_BODY_SIGNALS.find((s) => html.includes(s));
+  if (sig) return { blocked: true, reason: `body signal: ${sig}` };
 
-  if (html.length < 3_000 && !html.includes("__NEXT_DATA__") && !html.includes("zillowstatic.com"))
+  if (
+    html.length < 3_000 &&
+    !html.includes("__NEXT_DATA__") &&
+    !html.includes("zillowstatic.com")
+  )
     return { blocked: true, reason: `too short (${html.length} chars)` };
 
   return { blocked: false, reason: "" };
@@ -442,11 +261,11 @@ export class ZillowScraper extends BaseScraper {
     logger.info(`[${this.sourceName}] Starting off-market scrape (Oxylabs)`);
 
     this.visited.clear();
-    this.results     = [];
+    this.results = [];
     this.allListings = [];
 
     const zillowCfg = config.sources.zillow;
-    const markets   = zillowCfg.markets;
+    const markets = zillowCfg.markets;
 
     const rejected: Array<{ listing: RawListing; reason: string }> = [];
 
@@ -457,20 +276,26 @@ export class ZillowScraper extends BaseScraper {
 
     for (const market of markets) {
       if (this.results.length >= this.options.maxListings) {
-        logger.info(`[${this.sourceName}] maxListings (${this.options.maxListings}) reached — stopping`);
+        logger.info(
+          `[${this.sourceName}] maxListings (${this.options.maxListings}) reached — stopping`,
+        );
         break;
       }
 
-      logger.info(`[${this.sourceName}] ── Market: ${market.name} (${market.listingType}) ──`);
+      logger.info(
+        `[${this.sourceName}] ── Market: ${market.name} (${market.listingType}) ──`,
+      );
 
       let stopPaging = false;
 
       // Reverse pagination to get oldest first (page 20 -> 1)
       for (let page = zillowCfg.maxPagesPerMarket; page >= 1; page--) {
-        if (stopPaging)                                    break;
+        if (stopPaging) break;
         if (this.results.length >= this.options.maxListings) break;
 
-        logger.info(`[${this.sourceName}] ${market.name} — page ${page}/${zillowCfg.maxPagesPerMarket}`);
+        logger.info(
+          `[${this.sourceName}] ${market.name} — page ${page}/${zillowCfg.maxPagesPerMarket}`,
+        );
 
         let pageListings: RawListing[] = [];
         try {
@@ -478,11 +303,15 @@ export class ZillowScraper extends BaseScraper {
           pageListings = result.listings;
           if (result.stop) stopPaging = true;
         } catch (err) {
-          logger.error(`[${this.sourceName}] ${market.name} page ${page} error: ${err}`);
+          logger.error(
+            `[${this.sourceName}] ${market.name} page ${page} error: ${err}`,
+          );
           continue;
         }
 
-        logger.info(`[${this.sourceName}] ${market.name} page ${page}: ${pageListings.length} raw listing(s)`);
+        logger.info(
+          `[${this.sourceName}] ${market.name} page ${page}: ${pageListings.length} raw listing(s)`,
+        );
 
         this.allListings.push(...pageListings);
 
@@ -490,18 +319,20 @@ export class ZillowScraper extends BaseScraper {
           if (this.results.length >= this.options.maxListings) break;
 
           if (!listing.url) {
-            rejected.push({ listing, reason: "no_url" }); continue;
+            rejected.push({ listing, reason: "no_url" });
+            continue;
           }
-          
+
           if (previouslySeen.has(listing.url)) {
             skippedAsSeen++;
             continue;
           }
 
           if (this.visited.has(listing.url)) {
-            rejected.push({ listing, reason: "already_seen" }); continue;
+            rejected.push({ listing, reason: "already_seen" });
+            continue;
           }
-          
+
           processedThisBatch++;
           allSeenUrls.add(listing.url);
 
@@ -510,7 +341,7 @@ export class ZillowScraper extends BaseScraper {
             rejected.push({ listing, reason: "filtered" });
             logger.debug(
               `[${this.sourceName}] ✗ Filtered: ${listing.address} ` +
-              `@ ${listing.price ?? "no price"} (zestimate: ${(listing as any).zestimate ?? "none"})`
+                `@ ${listing.price ?? "no price"} (zestimate: ${(listing as any).zestimate ?? "none"})`,
             );
             continue;
           }
@@ -519,21 +350,27 @@ export class ZillowScraper extends BaseScraper {
           this.results.push(listing);
           logger.info(
             `[${this.sourceName}] ✓ [${this.results.length}/${this.options.maxListings}] ` +
-            `[] ${listing.address ?? listing.title} ` +
-            `@ ${listing.price != null ? "$" + listing.price.toLocaleString() : "no price"} ` +
-            ((listing as any).zestimate ? `| Zestimate $${(listing as any).zestimate.toLocaleString()}` : "| no Zestimate")
+              `[] ${listing.address ?? listing.title} ` +
+              `@ ${listing.price != null ? "$" + listing.price.toLocaleString() : "no price"} ` +
+              ((listing as any).zestimate
+                ? `| Zestimate $${(listing as any).zestimate.toLocaleString()}`
+                : "| no Zestimate"),
           );
-          
+
           if (processedThisBatch >= BACKFILL_BATCH_SIZE) {
-             logger.info(`[zillow] Reached backfill batch limit of ${BACKFILL_BATCH_SIZE}. Stopping processing.`);
-             break;
+            logger.info(
+              `[zillow] Reached backfill batch limit of ${BACKFILL_BATCH_SIZE}. Stopping processing.`,
+            );
+            break;
           }
         }
-        
+
         if (processedThisBatch >= BACKFILL_BATCH_SIZE) break;
 
         if (pageListings.length === 0) {
-          logger.info(`[${this.sourceName}] ${market.name} — no listings on page ${page}, skipping to next older page`);
+          logger.info(
+            `[${this.sourceName}] ${market.name} — no listings on page ${page}, skipping to next older page`,
+          );
         }
 
         await sleep(jitter(BETWEEN_PAGE_MS));
@@ -542,7 +379,7 @@ export class ZillowScraper extends BaseScraper {
 
       logger.info(
         `[${this.sourceName}] ${market.name} done — ` +
-        `${this.results.length} total accepted so far`
+          `${this.results.length} total accepted so far`,
       );
 
       // Pause between markets to avoid hammering Oxylabs
@@ -553,9 +390,9 @@ export class ZillowScraper extends BaseScraper {
 
     logger.info(
       `[${this.sourceName}] Finished all markets — ` +
-      `${this.results.length} accepted, ${rejected.length} rejected, skipped ${skippedAsSeen} already-seen`
+        `${this.results.length} accepted, ${rejected.length} rejected, skipped ${skippedAsSeen} already-seen`,
     );
-    
+
     // ── Save updated tracker to DB ─────────────────────────────
     await saveSeenToDb(this.sourceName, allSeenUrls, processedThisBatch);
 
@@ -564,14 +401,14 @@ export class ZillowScraper extends BaseScraper {
       `${this.sourceName}.json`,
       JSON.stringify(
         {
-          accepted:    this.results,
+          accepted: this.results,
           rejected,
           allListings: this.allListings,
           generatedAt: new Date().toISOString(),
         },
         null,
-        2
-      )
+        2,
+      ),
     );
 
     return this.results;
@@ -580,20 +417,26 @@ export class ZillowScraper extends BaseScraper {
   // ── scrapeMarketPage ──────────────────────────────────────────────────────
 
   protected async scrapeMarketPage(
-    market:     MarketConfig,
+    market: MarketConfig,
     pageNumber: number,
     ignorePriceFilter: boolean = false,
-    applyDateFilter: boolean = true
+    applyDateFilter: boolean = true,
   ): Promise<{ listings: RawListing[]; stop: boolean }> {
-
-    const pageUrl = buildPageUrl(market.baseUrl, market.listingType, pageNumber, ignorePriceFilter);
-    const slug    = marketSlug(market);
+    const pageUrl = buildPageUrl(
+      market.baseUrl,
+      market.listingType,
+      pageNumber,
+      ignorePriceFilter,
+    );
+    const slug = marketSlug(market);
 
     logger.info(`[zillow] ${market.name} page ${pageNumber} → ${pageUrl}`);
 
     const html = await oxylabsFetch(pageUrl, this.sessionId);
     if (!html) {
-      logger.warn(`[zillow] No HTML for ${market.name} page ${pageNumber} — skipping page. Cooling off for ${POST_FAIL_COOLDOWN_MS / 1_000}s`);
+      logger.warn(
+        `[zillow] No HTML for ${market.name} page ${pageNumber} — skipping page. Cooling off for ${POST_FAIL_COOLDOWN_MS / 1_000}s`,
+      );
       this.sessionId = `zillow_${Date.now()}_${Math.floor(Math.random() * 9_999)}`;
       await sleep(POST_FAIL_COOLDOWN_MS);
       return { listings: [], stop: false };
@@ -605,49 +448,65 @@ export class ZillowScraper extends BaseScraper {
 
     const { blocked, reason } = detectBlock(html);
     if (blocked) {
-      logger.error(`[zillow] Blocked on ${market.name} page ${pageNumber}: ${reason}`);
+      logger.error(
+        `[zillow] Blocked on ${market.name} page ${pageNumber}: ${reason}`,
+      );
       this.sessionId = `zillow_${Date.now()}_${Math.floor(Math.random() * 9_999)}`;
       saveFile(`zillow_blocked_p${pageNumber}_${slug}.html`, html);
       return { listings: [], stop: false };
     }
 
     if (!html.includes("zillowstatic.com") && !html.includes("__NEXT_DATA__")) {
-      logger.error(`[zillow] ${market.name} page ${pageNumber} doesn't look like Zillow`);
+      logger.error(
+        `[zillow] ${market.name} page ${pageNumber} doesn't look like Zillow`,
+      );
       saveFile(`zillow_unexpected_p${pageNumber}_${slug}.html`, html);
       return { listings: [], stop: false };
     }
 
     const json = extractNextData(html);
     if (!json) {
-      logger.warn(`[zillow] No __NEXT_DATA__ on ${market.name} page ${pageNumber}`);
+      logger.warn(
+        `[zillow] No __NEXT_DATA__ on ${market.name} page ${pageNumber}`,
+      );
       saveFile(`zillow_no_next_data_p${pageNumber}_${slug}.html`, html);
       return { listings: [], stop: false };
     }
 
     if (pageNumber <= DEBUG_PAGES) {
-      saveFile(`zillow_json_p${pageNumber}_${slug}.json`, JSON.stringify(json, null, 2));
+      saveFile(
+        `zillow_json_p${pageNumber}_${slug}.json`,
+        JSON.stringify(json, null, 2),
+      );
     }
 
-    const searchJson             = json?.props?.pageProps?.searchPageState ?? json;
-    const { listings, allStale } = parseZillowResults(searchJson, applyDateFilter);
-
-    logger.info(
-      `[zillow] ${market.name} page ${pageNumber}: ` +
-      `${listings.length} listing(s) ` +
-      (applyDateFilter ? `within ${MAX_DAYS_OLD} days` : "(no date filter — full inventory)") +
-      (allStale ? " — all stale" : "")
+    const searchJson = json?.props?.pageProps?.searchPageState ?? json;
+    const { listings, allStale } = parseZillowResults(
+      searchJson,
+      applyDateFilter,
     );
 
-    const withZestimate = listings.filter(l => (l as any).zestimate != null).length;
     logger.info(
       `[zillow] ${market.name} page ${pageNumber}: ` +
-      `${withZestimate}/${listings.length} listings have a Zestimate`
+        `${listings.length} listing(s) ` +
+        (applyDateFilter
+          ? `within ${MAX_DAYS_OLD} days`
+          : "(no date filter — full inventory)") +
+        (allStale ? " — all stale" : ""),
+    );
+
+    const withZestimate = listings.filter(
+      (l) => (l as any).zestimate != null,
+    ).length;
+    logger.info(
+      `[zillow] ${market.name} page ${pageNumber}: ` +
+        `${withZestimate}/${listings.length} listings have a Zestimate`,
     );
 
     // Stamp listingType onto every result so the scorer/DB knows what it is
-    const stamped = listings.map(l => ({
+    const stamped = listings.map((l) => ({
       ...l,
-      source:      this.sourceName,
+      source: this.sourceName,
       listingType: market.listingType,
     }));
 
@@ -656,7 +515,10 @@ export class ZillowScraper extends BaseScraper {
 
   // scrapePage is not used in this override-based scraper but must satisfy
   // the abstract base class contract.
-  protected async scrapePage(_handle: any, _pageNumber: number): Promise<RawListing[]> {
+  protected async scrapePage(
+    _handle: any,
+    _pageNumber: number,
+  ): Promise<RawListing[]> {
     return [];
   }
 
@@ -685,16 +547,21 @@ export class ZillowScraper extends BaseScraper {
         try {
           const dir = path.resolve("logs");
           fs.mkdirSync(dir, { recursive: true });
-          const filename = path.join(dir, `zillow_detail_nextdata_${saveN}.json`);
+          const filename = path.join(
+            dir,
+            `zillow_detail_nextdata_${saveN}.json`,
+          );
           fs.writeFileSync(filename, JSON.stringify(json, null, 2), "utf-8");
-          logger.info(`[zillow] Detail __NEXT_DATA__ saved → logs/zillow_detail_nextdata_${saveN}.json`);
+          logger.info(
+            `[zillow] Detail __NEXT_DATA__ saved → logs/zillow_detail_nextdata_${saveN}.json`,
+          );
 
           // Also log the immediate keys of pageProps so you can see what
           // top-level buckets are available without opening the file.
           const pageProps = json?.props?.pageProps;
           if (pageProps) {
             logger.info(
-              `[zillow] detail pageProps keys: ${Object.keys(pageProps).join(", ")}`
+              `[zillow] detail pageProps keys: ${Object.keys(pageProps).join(", ")}`,
             );
             // If gdpClientCache exists, log its first entry's keys too
             const cache = pageProps.gdpClientCache;
@@ -703,35 +570,39 @@ export class ZillowScraper extends BaseScraper {
               if (firstCacheKey) {
                 logger.info(
                   `[zillow] gdpClientCache["${firstCacheKey}"] keys: ` +
-                  `${Object.keys(cache[firstCacheKey] ?? {}).join(", ")}`
+                    `${Object.keys(cache[firstCacheKey] ?? {}).join(", ")}`,
                 );
                 const prop = cache[firstCacheKey]?.property;
                 if (prop) {
                   logger.info(
-                    `[zillow] gdpClientCache.property keys: ${Object.keys(prop).join(", ")}`
+                    `[zillow] gdpClientCache.property keys: ${Object.keys(prop).join(", ")}`,
                   );
                 }
               }
             }
           }
         } catch (saveErr) {
-          logger.warn(`[zillow] Could not save detail __NEXT_DATA__: ${saveErr}`);
+          logger.warn(
+            `[zillow] Could not save detail __NEXT_DATA__: ${saveErr}`,
+          );
         }
       }
       // ───────────────────────────────────────────────────────────────────────
 
       // Zillow embeds the description in several known locations inside __NEXT_DATA__
       const props = json?.props?.pageProps;
-      
+
       let description = props?.componentProps?.description ?? "";
 
       // Sometimes gdpClientCache is directly under pageProps, sometimes under componentProps
       // and sometimes it is a JSON string rather than an object.
       if (!description) {
-        const rawCache = props?.gdpClientCache ?? props?.componentProps?.gdpClientCache;
+        const rawCache =
+          props?.gdpClientCache ?? props?.componentProps?.gdpClientCache;
         if (rawCache) {
           try {
-            const cache = typeof rawCache === "string" ? JSON.parse(rawCache) : rawCache;
+            const cache =
+              typeof rawCache === "string" ? JSON.parse(rawCache) : rawCache;
             for (const key of Object.keys(cache ?? {})) {
               if (cache[key]?.property?.description) {
                 description = cache[key].property.description;
@@ -746,7 +617,9 @@ export class ZillowScraper extends BaseScraper {
 
       return typeof description === "string" ? description : "";
     } catch (err) {
-      logger.warn(`[zillow] Could not fetch description for ${listingUrl}: ${err}`);
+      logger.warn(
+        `[zillow] Could not fetch description for ${listingUrl}: ${err}`,
+      );
       return "";
     }
   }
@@ -754,7 +627,10 @@ export class ZillowScraper extends BaseScraper {
   // Counter for how many detail __NEXT_DATA__ files have been saved this run
   private _detailSaveCount = 0;
 
-  protected hasMorePages(_pageNumber: number, lastPageResults: RawListing[]): boolean {
+  protected hasMorePages(
+    _pageNumber: number,
+    lastPageResults: RawListing[],
+  ): boolean {
     return lastPageResults.length > 0;
   }
 }

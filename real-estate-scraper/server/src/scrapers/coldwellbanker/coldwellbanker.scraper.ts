@@ -22,10 +22,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import * as https from "https";
+import * as http from "http";
+import * as zlib from "zlib";
 import { RawListing } from "../../types/listing";
 import { BaseScraper, ScraperOptions } from "../base.scraper";
 import { logger } from "../../utils/logger";
 import { sleep, jitter } from "../../utils/browser";
+import { oxylabsFetch as fetchOxylabs } from "../shared/oxylabs";
 
 const CB_BASE = "https://www.coldwellbanker.com";
 
@@ -390,11 +393,10 @@ export class ColdwellBankerScraper extends BaseScraper {
     }
 
     // 3. Last resort: Oxylabs (costs credits — keep rare)
-    const { oxylabsFetch } = await import("../zillow/zillow.scraper");
     logger.warn(
-      `[coldwellbanker] Falling back to shared Oxylabs fetch for ${extractLid(url)}`,
+      `[coldwellbanker] Falling back to Oxylabs fetch for ${extractLid(url)}`,
     );
-    const html = await oxylabsFetch(url);
+    const html = await fetchOxylabs(url, { loggerScope: "coldwellbanker" });
     if (html) {
       const pageProps = extractNextDataJson(html);
       const parsed = parseCbProperty(pageProps ?? {}, url);
