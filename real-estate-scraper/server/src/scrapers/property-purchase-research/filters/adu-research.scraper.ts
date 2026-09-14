@@ -48,14 +48,11 @@ const ADDRESS_LIMIT_SENTINEL =
 const ADDRESS_FETCH_LIMIT = 5;
 const ADDRESS_REQUEST_DELAY = 800;
 
+const SERVER_ROOT = path.resolve(__dirname, "../../../..");
 const SESSION_FILE_DEFAULT = process.env.INVESTORLIFT_SESSION_FILE
   ? path.resolve(process.env.INVESTORLIFT_SESSION_FILE)
-  : path.join(__dirname, "../../..", "investorlift-session.json");
-const SESSION_FILE_FALLBACK = path.join(
-  __dirname,
-  "../../..",
-  "investor-session.json",
-);
+  : path.join(SERVER_ROOT, "investorlift-session.json");
+const SESSION_FILE_FALLBACK = path.join(SERVER_ROOT, "investor-session.json");
 const SESSION_FILE =
   fs.existsSync(SESSION_FILE_FALLBACK) && !fs.existsSync(SESSION_FILE_DEFAULT)
     ? SESSION_FILE_FALLBACK

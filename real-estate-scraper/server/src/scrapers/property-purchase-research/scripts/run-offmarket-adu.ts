@@ -20,6 +20,7 @@ import { fetchDeedTransferDate } from "../core/deed-data-resolver";
 import * as fs from "fs";
 import * as path from "path";
 import { writeAduResearchToSheets } from "../../../utils/google-sheets";
+import { validateIndianaLeadZip } from "../filters/adu-research.scraper";
 
 let capturedCount = 0;
 const seenKeys = new Set<string>();
@@ -32,6 +33,13 @@ function dedupKey(listing: AduResearchListing): string {
 }
 
 async function handleMatch(listing: AduResearchListing) {
+  if (!validateIndianaLeadZip(listing)) {
+    logger.warn(
+      `[runner] Ignoring Indiana lead with non-46xxx ZIP: ${listing.address || listing.url} | zip=${String(listing.zip ?? "(missing)")}`,
+    );
+    return;
+  }
+
   const key = dedupKey(listing);
   if (seenKeys.has(key)) {
     logger.debug(

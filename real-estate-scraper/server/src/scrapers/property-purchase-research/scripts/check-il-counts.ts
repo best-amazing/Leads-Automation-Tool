@@ -3,13 +3,19 @@ import * as fs from "fs";
 import * as path from "path";
 
 const MARKETPLACE_URL = "https://investorlift.com/marketplace/";
-const PROPERTIES_API_URL = "https://investorlift.com/marketplace/api/customer/api/properties";
+const PROPERTIES_API_URL =
+  "https://investorlift.com/marketplace/api/customer/api/properties";
 
-const SESSION_FILE_DEFAULT = path.join(__dirname, "../../..", "investorlift-session.json");
-const SESSION_FILE_FALLBACK = path.join(__dirname, "../../..", "investor-session.json");
-const SESSION_FILE = fs.existsSync(SESSION_FILE_FALLBACK) && !fs.existsSync(SESSION_FILE_DEFAULT)
-  ? SESSION_FILE_FALLBACK
-  : SESSION_FILE_DEFAULT;
+const SERVER_ROOT = path.resolve(__dirname, "../../../..");
+const SESSION_FILE_DEFAULT = path.join(
+  SERVER_ROOT,
+  "investorlift-session.json",
+);
+const SESSION_FILE_FALLBACK = path.join(SERVER_ROOT, "investor-session.json");
+const SESSION_FILE =
+  fs.existsSync(SESSION_FILE_FALLBACK) && !fs.existsSync(SESSION_FILE_DEFAULT)
+    ? SESSION_FILE_FALLBACK
+    : SESSION_FILE_DEFAULT;
 
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
@@ -44,8 +50,10 @@ async function main() {
     });
 
     const page = await context.newPage();
-    console.log("Navigating to marketplace to pass Cloudflare and get cookies...");
-    
+    console.log(
+      "Navigating to marketplace to pass Cloudflare and get cookies...",
+    );
+
     await page.goto(MARKETPLACE_URL, {
       waitUntil: "domcontentloaded",
       timeout: 30_000,
@@ -58,12 +66,16 @@ async function main() {
       try {
         const r = await fetch(url, { credentials: "include" });
         const body = await r.json().catch(() => null);
-        return { status: r.status, count: body?.data?.length, total: body?.meta?.total };
+        return {
+          status: r.status,
+          count: body?.data?.length,
+          total: body?.meta?.total,
+        };
       } catch (err) {
         return { error: String(err) };
       }
     }, `${PROPERTIES_API_URL}?per_page=1`);
-    
+
     console.log(`\nResults for ALL (no status filter):`);
     console.log(`URL: ${PROPERTIES_API_URL}?per_page=1`);
     console.log(resultAll);
@@ -73,7 +85,11 @@ async function main() {
       try {
         const r = await fetch(url, { credentials: "include" });
         const body = await r.json().catch(() => null);
-        return { status: r.status, count: body?.data?.length, total: body?.meta?.total };
+        return {
+          status: r.status,
+          count: body?.data?.length,
+          total: body?.meta?.total,
+        };
       } catch (err) {
         return { error: String(err) };
       }
@@ -82,7 +98,6 @@ async function main() {
     console.log(`\nResults for AVAILABLE (status=available filter):`);
     console.log(`URL: ${PROPERTIES_API_URL}?status=available&per_page=1`);
     console.log(resultAvailable);
-
   } catch (err) {
     console.error("Error running checks:", err);
   } finally {

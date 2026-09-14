@@ -136,6 +136,23 @@ export function buildAduSheetRow(l: AduResearchListing): any[] {
   ];
 }
 
+function buildAduDupKey(listing: AduResearchListing): string | null {
+  if (listing.url) return `url:${listing.url}`;
+  const address = String(listing.address ?? "").trim();
+  const zip = String(listing.zip ?? "").trim();
+  if (!address && !zip) return null;
+  const normalizedAddress = address
+    .replace(/\s+/g, " ")
+    .replace(
+      /\b(st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|ln|lane|ct|court|pl|place|way)\b/gi,
+      "",
+    )
+    .replace(/[^a-z0-9\s]/gi, "")
+    .trim()
+    .toLowerCase();
+  return `addr:${normalizedAddress}|zip:${zip}`;
+}
+
 export async function writeAduResearchToSheets(listings: AduResearchListing[]) {
   if (listings.length === 0) return;
 
@@ -261,13 +278,38 @@ export async function writeAduResearchToSheets(listings: AduResearchListing[]) {
         }
       }
 
-      const newRows = rows.filter((row) => {
-        const link = row[21]; // Link is now at index 21
-        if (link && cachedExistingLinks?.has(link)) {
-          return false;
-        }
-        return true;
-      });
+      const dedupedKeys = new Set<string>();
+      const rowsWithListings = rows.map((row, rowIndex) => ({
+        row,
+        listing: listings[rowIndex],
+      }));
+
+      const newRows = rowsWithListings
+        .filter(({ row, listing }) => {
+          const link = row[21]; // Link is now at index 21
+          if (link && cachedExistingLinks?.has(link)) {
+            return false;
+          }
+
+          const rowKey = link ? `url:${String(link)}` : null;
+          if (rowKey && cachedExistingLinks?.has(rowKey)) {
+            return false;
+          }
+
+          const addressKey = listing ? buildAduDupKey(listing) : null;
+          if (addressKey) {
+            if (cachedExistingLinks?.has(addressKey)) {
+              return false;
+            }
+            if (dedupedKeys.has(addressKey)) {
+              return false;
+            }
+            dedupedKeys.add(addressKey);
+          }
+
+          return true;
+        })
+        .map(({ row }) => row);
 
       if (newRows.length === 0) {
         logger.info(
@@ -330,8 +372,19 @@ export async function writeAduResearchToSheets(listings: AduResearchListing[]) {
       cachedLastRow += newRows.length;
       if (cachedExistingLinks) {
         for (const row of newRows) {
-          if (row[21]) {
-            cachedExistingLinks.add(row[21]);
+          const link = row[21];
+          if (link) {
+            cachedExistingLinks.add(String(link));
+            cachedExistingLinks.add(`url:${String(link)}`);
+          }
+        }
+
+        for (const listing of listings) {
+          if (listing) {
+            const addressKey = buildAduDupKey(listing);
+            if (addressKey) {
+              cachedExistingLinks.add(addressKey);
+            }
           }
         }
       }
