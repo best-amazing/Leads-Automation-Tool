@@ -16,9 +16,16 @@ import { CraigslistAduScraper } from "./craigslist-adu.scraper";
 import { logger } from "../../utils/logger";
 import { getLastBackfillStatus } from "../../utils/backfill-store";
 import { ADU_KEYWORDS, TARGET_STATES } from "./adu-keywords";
-import { appendAduResult, writeAduResults, writeCsvOnly } from "./adu-csv-writer";
+import {
+  appendAduResult,
+  writeAduResults,
+  writeCsvOnly,
+} from "./adu-csv-writer";
 import { AduResearchListing } from "./adu-research.parser";
-import { passesKeywordFilter, passesLocationFilter } from "./adu-research.scraper";
+import {
+  passesKeywordFilter,
+  passesLocationFilter,
+} from "./adu-research.scraper";
 import { fetchDeedTransferDate } from "./deed-data-resolver";
 import * as fs from "fs";
 import * as path from "path";
@@ -27,23 +34,74 @@ import { writeAduResearchToSheets } from "../../utils/google-sheets";
 let capturedCount = 0;
 const seenKeys = new Set<string>();
 
-function dedupKey(listing: AduResearchListing): string {
-  if (listing.address) {
-    return listing.address.replace(/\s+/g, " ").trim().toLowerCase();
+function normalizeStreetToken(value: string): string {
+  return value
+    .replace(/\b(?:street|st)\.?\b/gi, "st")
+    .replace(/\b(?:avenue|ave)\.?\b/gi, "ave")
+    .replace(/\b(?:road|rd)\.?\b/gi, "rd")
+    .replace(/\b(?:boulevard|blvd)\.?\b/gi, "blvd")
+    .replace(/\b(?:drive|dr)\.?\b/gi, "dr")
+    .replace(/\b(?:lane|ln)\.?\b/gi, "ln")
+    .replace(/\b(?:court|ct)\.?\b/gi, "ct")
+    .replace(/\b(?:place|pl)\.?\b/gi, "pl")
+    .replace(/\b(?:way)\.?\b/gi, "way")
+    .replace(/[^a-z0-9\s]/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function stripLocationSuffix(address: string): string {
+  let normalized = address
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const zipMatch = normalized.match(/\b\d{5}(?:-\d{4})?\b/);
+  if (zipMatch) {
+    normalized = normalized
+      .slice(0, zipMatch.index ?? normalized.length)
+      .trim();
   }
-  return listing.url ?? "";
+
+  normalized = normalized
+    .replace(/,\s*[A-Za-z .'-]+,\s*[A-Z]{2}\s*,?\s*$/i, "")
+    .replace(/,\s*[A-Za-z .'-]+\s*,?\s*$/i, "")
+    .replace(/,\s*[A-Z]{2}\s*,?\s*$/i, "")
+    .replace(/\s*,\s*$/g, "")
+    .trim();
+
+  return normalized;
+}
+
+export function dedupKey(
+  listing: Partial<Pick<AduResearchListing, "address" | "url">>,
+): string {
+  if (listing.address) {
+    const streetCore = stripLocationSuffix(listing.address);
+    if (streetCore) {
+      const zip = listing.address.match(/\b\d{5}(?:-\d{4})?\b/)?.[0];
+      return `${normalizeStreetToken(streetCore)}${zip ? `|${zip}` : ""}`;
+    }
+    return normalizeStreetToken(listing.address);
+  }
+  return (listing.url ?? "").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 async function handleMatch(listing: AduResearchListing) {
   const key = dedupKey(listing);
   if (seenKeys.has(key)) {
-    logger.debug(`[runner] Skipping duplicate: ${listing.address || listing.url}`);
+    logger.debug(
+      `[runner] Skipping duplicate: ${listing.address || listing.url}`,
+    );
     return;
   }
   seenKeys.add(key);
 
   capturedCount++;
-  logger.info(`[runner] Match #${capturedCount}: ${listing.address || listing.url}`);
+  logger.info(
+    `[runner] Match #${capturedCount}: ${listing.address || listing.url}`,
+  );
 
   // ── Inline deed transfer date lookup ──────────────────────────────────
   // Requires a real street address: craigslist pins are frequently just the
@@ -51,7 +109,9 @@ async function handleMatch(listing: AduResearchListing) {
   // would attach a stranger's deed date to this lead.
   if (listing.address) {
     try {
-      logger.info(`[runner] Looking up deed transfer date for: ${listing.address}`);
+      logger.info(
+        `[runner] Looking up deed transfer date for: ${listing.address}`,
+      );
       const deedDate = await fetchDeedTransferDate({
         address: listing.address,
         city: listing.city,
@@ -115,29 +175,40 @@ export async function runAduResearch(): Promise<void> {
         const results = await scraper.run();
         allResults.push(...(results as AduResearchListing[]));
         if (global.gc) global.gc();
-        logger.info(`Memory after ${sourceName}: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
+        logger.info(
+          `Memory after ${sourceName}: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`,
+        );
 
         const { processedCount } = await getLastBackfillStatus(sourceName);
 
         if (processedCount >= batchThreshold) {
-          logger.info(`[runner] ${sourceName} backfill hit batch limit, immediately fetching next batch...`);
+          logger.info(
+            `[runner] ${sourceName} backfill hit batch limit, immediately fetching next batch...`,
+          );
           // Small 500ms sleep to avoid hammering the DB
-          await new Promise(r => setTimeout(r, 500));
+          await new Promise((r) => setTimeout(r, 500));
         } else {
-          logger.info(`[runner] ${sourceName} backfill complete or reached end of inventory.`);
+          logger.info(
+            `[runner] ${sourceName} backfill complete or reached end of inventory.`,
+          );
           break;
         }
       }
       return allResults;
     }
 
-    // const coldwellResults = await runContinuous(coldwell);
+    const coldwellResults = await runContinuous(coldwell);
     const redfinResults = await runContinuous(redfin);
     const craigslistResults = await runContinuous(craigslist);
     const zillowResults = await runContinuous(zillow);
     if (global.gc) global.gc();
 
-    const finalResults = [...redfinResults, ...craigslistResults, ...zillowResults ];
+    const finalResults = [
+      ...redfinResults,
+      ...craigslistResults,
+      ...zillowResults,
+      ...coldwellResults,
+    ];
 
     try {
       const DEBUG_DIR = path.resolve("logs");
@@ -150,10 +221,11 @@ export async function runAduResearch(): Promise<void> {
     logger.info("═".repeat(60));
     logger.info(`ADU Research Complete — ${finalResults.length} matches found`);
     if (finalResults.length > 0) {
-      logger.info(`Outputs incrementally streamed to CSV, JSON, and Google Sheets`);
+      logger.info(
+        `Outputs incrementally streamed to CSV, JSON, and Google Sheets`,
+      );
     }
     logger.info("═".repeat(60));
-
   } catch (err: any) {
     logger.error(`ADU Research scraper failed: ${err}`);
     throw err;
