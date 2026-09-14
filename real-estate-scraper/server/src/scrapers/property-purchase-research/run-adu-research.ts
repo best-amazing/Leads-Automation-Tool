@@ -12,6 +12,7 @@ import "dotenv/config";
 import { ZillowAduScraper } from "./zillow-adu.scraper";
 import { RedfinAduScraper } from "./redfin-adu.scraper";
 import { ColdwellBankerAduScraper } from "./coldwellbanker-adu.scraper"; // REMOVED
+import { CreativeListingAduScraper } from "./creative-listing-adu.scraper";
 import { CraigslistAduScraper } from "./craigslist-adu.scraper";
 import { logger } from "../../utils/logger";
 import { getLastBackfillStatus } from "../../utils/backfill-store";
@@ -30,63 +31,10 @@ import { fetchDeedTransferDate } from "./deed-data-resolver";
 import * as fs from "fs";
 import * as path from "path";
 import { writeAduResearchToSheets } from "../../utils/google-sheets";
+import { dedupKey } from "./address-dedupe";
 
 let capturedCount = 0;
 const seenKeys = new Set<string>();
-
-function normalizeStreetToken(value: string): string {
-  return value
-    .replace(/\b(?:street|st)\.?\b/gi, "st")
-    .replace(/\b(?:avenue|ave)\.?\b/gi, "ave")
-    .replace(/\b(?:road|rd)\.?\b/gi, "rd")
-    .replace(/\b(?:boulevard|blvd)\.?\b/gi, "blvd")
-    .replace(/\b(?:drive|dr)\.?\b/gi, "dr")
-    .replace(/\b(?:lane|ln)\.?\b/gi, "ln")
-    .replace(/\b(?:court|ct)\.?\b/gi, "ct")
-    .replace(/\b(?:place|pl)\.?\b/gi, "pl")
-    .replace(/\b(?:way)\.?\b/gi, "way")
-    .replace(/[^a-z0-9\s]/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-}
-
-function stripLocationSuffix(address: string): string {
-  let normalized = address
-    .replace(/\u00a0/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  const zipMatch = normalized.match(/\b\d{5}(?:-\d{4})?\b/);
-  if (zipMatch) {
-    normalized = normalized
-      .slice(0, zipMatch.index ?? normalized.length)
-      .trim();
-  }
-
-  normalized = normalized
-    .replace(/,\s*[A-Za-z .'-]+,\s*[A-Z]{2}\s*,?\s*$/i, "")
-    .replace(/,\s*[A-Za-z .'-]+\s*,?\s*$/i, "")
-    .replace(/,\s*[A-Z]{2}\s*,?\s*$/i, "")
-    .replace(/\s*,\s*$/g, "")
-    .trim();
-
-  return normalized;
-}
-
-export function dedupKey(
-  listing: Partial<Pick<AduResearchListing, "address" | "url">>,
-): string {
-  if (listing.address) {
-    const streetCore = stripLocationSuffix(listing.address);
-    if (streetCore) {
-      const zip = listing.address.match(/\b\d{5}(?:-\d{4})?\b/)?.[0];
-      return `${normalizeStreetToken(streetCore)}${zip ? `|${zip}` : ""}`;
-    }
-    return normalizeStreetToken(listing.address);
-  }
-  return (listing.url ?? "").replace(/\s+/g, " ").trim().toLowerCase();
-}
 
 async function handleMatch(listing: AduResearchListing) {
   const key = dedupKey(listing);
@@ -161,6 +109,11 @@ export async function runAduResearch(): Promise<void> {
     onMatch: handleMatch,
   });
 
+  const creativeListing = new CreativeListingAduScraper({
+    maxListings,
+    onMatch: handleMatch,
+  });
+
   const craigslist = new CraigslistAduScraper({
     maxListings,
     onMatch: handleMatch,
@@ -199,12 +152,14 @@ export async function runAduResearch(): Promise<void> {
 
     const coldwellResults = await runContinuous(coldwell);
     const redfinResults = await runContinuous(redfin);
+    const creativeListingResults = await runContinuous(creativeListing);
     const craigslistResults = await runContinuous(craigslist);
     const zillowResults = await runContinuous(zillow);
     if (global.gc) global.gc();
 
     const finalResults = [
       ...redfinResults,
+      ...creativeListingResults,
       ...craigslistResults,
       ...zillowResults,
       ...coldwellResults,
