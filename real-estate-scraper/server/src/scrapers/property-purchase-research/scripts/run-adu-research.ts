@@ -181,7 +181,7 @@ export async function runAduResearch(): Promise<void> {
     const craigslistResults = await runContinuous(craigslist);
     // const crexiResults = await runContinuous(crexi);
     const realtorResults = await runContinuous(realtor);
-    const offmarketResults = await runContinuous(offmarket);
+    // const offmarketResults = await runContinuous(offmarket);
     const zillowResults = await runContinuous(zillow);
     if (global.gc) global.gc();
 
@@ -191,7 +191,7 @@ export async function runAduResearch(): Promise<void> {
       ...craigslistResults,
       // ...crexiResults,
       ...realtorResults,
-      ...offmarketResults,
+      // ...offmarketResults,
       ...zillowResults,
       // ...coldwellResults,
     ];
