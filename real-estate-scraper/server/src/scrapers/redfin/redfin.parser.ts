@@ -86,7 +86,7 @@ import * as cheerio from "cheerio";
 import { RawListing, PropertyType } from "../../types/listing";
 import { logger }     from "../../utils/logger";
 
-export const MAX_DAYS_OLD = 30;
+export const MAX_DAYS_OLD = 90;
 
 // ── Property type map ─────────────────────────────────────────────────────────
 

@@ -3,6 +3,9 @@
 import { Browser, BrowserContext, Page } from "playwright";
 import { chromium } from "playwright-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 import { config } from "../config";
 import { logger } from "./logger";
 
@@ -253,6 +256,37 @@ const STEALTH_SCRIPT = `
 })();
 `;
 
+// ── Chromium executable resolution ─────────────────────────────────────────
+// playwright-extra's chromium.launch() looks for build-1217 (playwright 1.59).
+// If another build is cached (e.g. chromium-1234), auto-detect the installed
+// executable so scraping works without manual intervention.
+
+function resolveChromiumExecutable(): string | undefined {
+  const envPath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
+  if (envPath && fs.existsSync(envPath)) return envPath;
+
+  const cacheDir = path.join(os.homedir(), ".cache", "ms-playwright");
+  if (!fs.existsSync(cacheDir)) return undefined;
+
+  const dirs = fs.readdirSync(cacheDir).sort();
+  // Pick the highest-numbered chromium-<N> directory (e.g. chromium-1234 > chromium-1217)
+  const chromiumDir = dirs
+    .filter((d) => /^chromium-\d+$/.test(d))
+    .sort((a, b) => {
+      const na = parseInt(a.replace("chromium-", ""), 10);
+      const nb = parseInt(b.replace("chromium-", ""), 10);
+      return nb - na;
+    })[0];
+  if (!chromiumDir) return undefined;
+
+  const chrome = path.join(cacheDir, chromiumDir, "chrome-linux64", "chrome");
+  if (fs.existsSync(chrome)) {
+    logger.info(`[browser] Auto-detected chromium at ${chrome}`);
+    return chrome;
+  }
+  return undefined;
+}
+
 // ── Public interface ──────────────────────────────────────────────────────────
 
 export interface BrowserHandle {
@@ -277,6 +311,7 @@ export async function createBrowser(
 
   const browser = (await (chromium as any).launch({
     headless: headless,
+    executablePath: resolveChromiumExecutable(),
     args: [
       ...(headless ? ["--headless=new"] : []),
       "--no-sandbox",

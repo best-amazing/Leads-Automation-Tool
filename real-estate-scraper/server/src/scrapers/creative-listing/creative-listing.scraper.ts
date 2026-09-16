@@ -49,7 +49,7 @@ import * as http from "http";
 import * as zlib from "zlib";
 import * as fs from "fs";
 import * as path from "path";
-import HttpsProxyAgent from "https-proxy-agent";
+import { HttpsProxyAgent } from "https-proxy-agent";
 
 import { BaseScraper, ScraperOptions } from "../base.scraper";
 import { RawListing } from "../../types/listing";
@@ -82,6 +82,12 @@ const CL_REFRESH_TOKEN = process.env.CL_REFRESH_TOKEN ?? "";
 const CL_COGNITO_CLIENT_ID = process.env.CL_COGNITO_CLIENT_ID ?? "";
 const CL_COGNITO_USERNAME = process.env.CL_COGNITO_USERNAME ?? "";
 const CL_USER_POOL_REGION = process.env.CL_USER_POOL_REGION ?? "us-east-2";
+
+// Optional proxy for geo-restricted endpoints (e.g. creativelisting.com)
+const CL_PROXY_URL = process.env.CL_PROXY_URL ?? "";
+const clProxyAgent: http.Agent | undefined = CL_PROXY_URL
+  ? (new HttpsProxyAgent(CL_PROXY_URL) as unknown as http.Agent)
+  : undefined;
 
 // ── URL builder ───────────────────────────────────────────────────────────────
 
@@ -132,6 +138,7 @@ async function refreshCognitoTokens(): Promise<boolean> {
         path: "/",
         method: "POST",
         family: 4,
+        agent: clProxyAgent,
         headers: {
           "Content-Type": "application/x-amz-json-1.1",
           "X-Amz-Target": "AWSCognitoIdentityProviderService.InitiateAuth",
@@ -240,6 +247,11 @@ interface ApiResponse {
   };
 }
 
+// Discriminated fetch result so callers can tell apart geo-blocks from auth failures
+type ApiFetchResult =
+  | { ok: true; data: ApiResponse }
+  | { ok: false; reason: "geo_blocked" | "auth_error" | "rate_limited" | "error" };
+
 // Minimal shape — we only type what we actually use. The full JSON is richer.
 interface CLDeal {
   id: string;
@@ -290,45 +302,18 @@ interface CLDeal {
   [key: string]: unknown;
 }
 
-async function apiFetch(url: string): Promise<ApiResponse | null> {
+async function apiFetch(url: string): Promise<ApiFetchResult> {
   if (!clTokens.authToken) {
     logger.error(
       "[cl] No auth token — cannot call API. Set CL_AUTH_TOKEN or CL_REFRESH_TOKEN in .env",
     );
-    return null;
+    return { ok: false, reason: "auth_error" };
   }
 
   logger.debug(`[cl] API GET → ${url}`);
 
   return new Promise((resolve) => {
     const parsed = new URL(url);
-    // Proxy selection priority:
-    //  1. PROXY_URL (explicit single proxy)
-    //  2. PROXY_URLS (comma-separated list in .env) — pick one at random
-    //  3. config.proxyUrl (global config)
-    const proxiesEnv = process.env.PROXY_URLS ?? "";
-    const proxies = proxiesEnv
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-
-    let proxyUrl = process.env.PROXY_URL ?? (config as any).proxyUrl ?? "";
-    if (!proxyUrl && proxies.length > 0) {
-      proxyUrl = proxies[Math.floor(Math.random() * proxies.length)];
-    }
-
-    let agent: any = undefined;
-    if (proxyUrl) {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        agent = new (HttpsProxyAgent as any)(proxyUrl);
-        const masked = proxyUrl.replace(/:\/\/([^:]+):([^@]+)@/, "://$1:***@");
-        logger.info(`[cl] Using proxy for API requests: ${masked}`);
-      } catch (err) {
-        logger.warn(`[cl] Could not create proxy agent: ${err}`);
-        agent = undefined;
-      }
-    }
 
     const req = https.request(
       {
@@ -336,7 +321,7 @@ async function apiFetch(url: string): Promise<ApiResponse | null> {
         path: parsed.pathname + parsed.search,
         method: "GET",
         family: 4,
-        agent,
+        agent: clProxyAgent,
         headers: {
           Accept: "application/json, */*",
           "Accept-Encoding": "gzip, deflate, br",
@@ -368,48 +353,67 @@ async function apiFetch(url: string): Promise<ApiResponse | null> {
           );
 
           if (res.statusCode === 401 || res.statusCode === 403) {
-            logger.warn(
-              `[cl] API returned ${res.statusCode} — token may be expired`,
-            );
-            logger.warn(`[cl] Body: ${text.slice(0, 1000)}`);
-            resolve(null);
+            // Distinguish geo-restriction from auth failure — they share the same
+            // status code but have very different remedies.
+            const isGeoBlock =
+              text.includes("United States and Canada") ||
+              text.includes("not available in your region") ||
+              text.includes("geo");
+
+            if (isGeoBlock) {
+              logger.error(
+                `[cl] API geo-blocked (HTTP ${res.statusCode}) — server IP is not resolving as US/Canada.`,
+              );
+              logger.error(
+                "[cl] Fix: route scraper traffic through a US-based proxy or VPN. " +
+                  "Set HTTPS_PROXY / HTTP_PROXY env vars, or configure Oxylabs residential proxies.",
+              );
+              logger.debug(`[cl] Geo-block body: ${text.slice(0, 500)}`);
+              resolve({ ok: false, reason: "geo_blocked" });
+            } else {
+              logger.warn(
+                `[cl] API returned ${res.statusCode} — token may be expired`,
+              );
+              logger.warn(`[cl] Body: ${text.slice(0, 1000)}`);
+              resolve({ ok: false, reason: "auth_error" });
+            }
             return;
           }
           if (res.statusCode === 429) {
             logger.warn("[cl] API rate-limited (429)");
-            resolve(null);
+            resolve({ ok: false, reason: "rate_limited" });
             return;
           }
           if (res.statusCode !== 200) {
             logger.warn(`[cl] API HTTP ${res.statusCode} for ${url}`);
             logger.warn(`[cl] Body: ${text.slice(0, 1000)}`);
-            resolve(null);
+            resolve({ ok: false, reason: "error" });
             return;
           }
 
           try {
             const json = JSON.parse(text) as ApiResponse;
-            resolve(json);
+            resolve({ ok: true, data: json });
           } catch (err) {
             logger.error(`[cl] Failed to parse API response: ${err}`);
             logger.debug(`[cl] Raw: ${text.slice(0, 500)}`);
-            resolve(null);
+            resolve({ ok: false, reason: "error" });
           }
         });
         res.on("error", (err: Error) => {
           logger.error(`[cl] API response error: ${err.message}`);
-          resolve(null);
+          resolve({ ok: false, reason: "error" });
         });
       },
     );
 
     req.setTimeout(REQUEST_TIMEOUT_MS, () => {
       req.destroy(new Error("API request timeout"));
-      resolve(null);
+      resolve({ ok: false, reason: "error" });
     });
     req.on("error", (err: Error) => {
       logger.error(`[cl] API request error: ${err.message}`);
-      resolve(null);
+      resolve({ ok: false, reason: "error" });
     });
     req.end();
   });
@@ -502,7 +506,7 @@ interface CLMarket {
 export class CreativeListingScraper extends BaseScraper {
   readonly sourceName: string = "creativelisting";
 
-  private readonly markets: readonly CLMarket[];
+  protected markets: readonly CLMarket[];
 
   constructor(options: ScraperOptions = {}) {
     super(options);
@@ -525,6 +529,14 @@ export class CreativeListingScraper extends BaseScraper {
       logger.warn(
         "[cl] CL_REFRESH_TOKEN not set — tokens will not auto-refresh. " +
           "Grab awsCognitoRefreshToken from DevTools → Application → Local Storage.",
+      );
+    }
+
+    if (CL_PROXY_URL) {
+      logger.info(`[cl] Using proxy: ${CL_PROXY_URL.replace(/:([^@]+)@/, ':***@')}`);
+    } else {
+      logger.warn(
+        "[cl] CL_PROXY_URL not set — requests will use direct connection (may be geo-blocked).",
       );
     }
 
@@ -587,19 +599,32 @@ export class CreativeListingScraper extends BaseScraper {
       );
 
       let tokenRefreshedThisMarket = false;
+      let marketGeoBlocked = false;
 
       for (let page = 1; page <= this.options.maxPages; page++) {
         if (this.results.length >= this.options.maxListings) break;
+        if (marketGeoBlocked) break;
 
         const url = buildApiUrl({ state: market.stateAbbr, page });
         logger.info(
           `[cl] ${market.name} page ${page}/${this.options.maxPages} → ${url}`,
         );
 
-        let apiResp = await apiFetch(url);
+        let fetchResult = await apiFetch(url);
 
-        // ── Token expired handling: refresh once and retry ─────────────
-        if (apiResp === null && !tokenRefreshedThisMarket && CL_REFRESH_TOKEN) {
+        // ── Geo-block: no amount of token refresh will fix this ────────
+        if (!fetchResult.ok && fetchResult.reason === "geo_blocked") {
+          marketGeoBlocked = true;
+          break;
+        }
+
+        // ── Auth error: refresh once and retry ─────────────────────────
+        if (
+          !fetchResult.ok &&
+          fetchResult.reason === "auth_error" &&
+          !tokenRefreshedThisMarket &&
+          CL_REFRESH_TOKEN
+        ) {
           logger.warn(
             `[cl] ${market.name} p${page}: API returned null — attempting token refresh`,
           );
@@ -608,23 +633,28 @@ export class CreativeListingScraper extends BaseScraper {
           const ok = await refreshCognitoTokens();
           if (ok) {
             await sleep(500);
-            apiResp = await apiFetch(
-              buildApiUrl({ state: market.stateAbbr, page }),
-            );
+            fetchResult = await apiFetch(buildApiUrl({ state: market.stateAbbr, page }));
           }
 
-          if (apiResp === null) {
+          // If still failing after refresh, check if it became a geo-block
+          if (!fetchResult.ok) {
+            if (fetchResult.reason === "geo_blocked") {
+              marketGeoBlocked = true;
+              break;
+            }
             logger.error(
               `[cl] ${market.name} p${page}: still failing after token refresh — ` +
                 `refresh token may be expired. Re-login and update CL_REFRESH_TOKEN in .env`,
             );
             break;
           }
-        } else if (apiResp === null) {
+        } else if (!fetchResult.ok) {
           logger.warn(`[cl] ${market.name} p${page}: no data — skipping`);
           break;
         }
 
+        const apiResp = fetchResult.ok ? fetchResult.data : null;
+        if (!apiResp) break;
         const deals = apiResp.deals ?? [];
         const pagination = apiResp.pagination;
 

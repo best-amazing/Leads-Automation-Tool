@@ -31,6 +31,10 @@ export interface ScraperOptions {
    *  so each run() continues from where the last batch stopped instead of
    *  restarting at page 0 — walks the full result set over multiple runs. */
   persistOffset?: boolean;
+  /** Offmarket only: override the target states (e.g. ["OH", "IN"]) */
+  states?: string[];
+  /** Offmarket only: override the target cities (empty = all) */
+  cities?: string[];
 }
 
 export abstract class BaseScraper {

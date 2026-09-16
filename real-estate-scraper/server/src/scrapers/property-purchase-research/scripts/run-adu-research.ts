@@ -11,9 +11,12 @@
 import "dotenv/config";
 import { ZillowAduScraper } from "../sources/zillow-adu.scraper";
 import { RedfinAduScraper } from "../sources/redfin-adu.scraper";
-import { ColdwellBankerAduScraper } from "../sources/coldwellbanker-adu.scraper";
-import { CreativeListingAduScraper } from "../sources/creative-listing-adu.scraper";
 import { CraigslistAduScraper } from "../sources/craigslist-adu.scraper";
+import { CrexiAduScraper } from "../sources/crexi-adu.scraper";
+import { RealtorAduScraper } from "../sources/realtor-adu.scraper";
+import { CreativeListingAduScraper } from "../sources/creative-listing-adu.scraper";
+import { OffmarketAduScraper } from "../sources/offmarket-adu.scraper";
+import { ColdwellBankerAduScraper } from "../sources/coldwellbanker-adu.scraper";
 import { logger } from "../../../utils/logger";
 import { getLastBackfillStatus } from "../../../utils/backfill-store";
 import { ADU_KEYWORDS, TARGET_STATES } from "../core/adu-keywords";
@@ -101,12 +104,6 @@ export async function runAduResearch(): Promise<void> {
 
   const maxListings = Number(process.env.MAX_LISTINGS ?? 5000);
 
-  // Coldwell Banker removed from the scraper list (2026-08-27).
-  const coldwell = new ColdwellBankerAduScraper({
-    maxListings,
-    onMatch: handleMatch,
-  });
-
   const zillow = new ZillowAduScraper({
     maxListings,
     onMatch: handleMatch,
@@ -123,6 +120,26 @@ export async function runAduResearch(): Promise<void> {
   });
 
   const craigslist = new CraigslistAduScraper({
+    maxListings,
+    onMatch: handleMatch,
+  });
+
+  const crexi = new CrexiAduScraper({
+    maxListings,
+    onMatch: handleMatch,
+  });
+
+  const realtor = new RealtorAduScraper({
+    maxListings,
+    onMatch: handleMatch,
+  });
+
+  const offmarket = new OffmarketAduScraper({
+    maxListings,
+    onMatch: handleMatch,
+  });
+
+  const coldwell = new ColdwellBankerAduScraper({
     maxListings,
     onMatch: handleMatch,
   });
@@ -158,10 +175,13 @@ export async function runAduResearch(): Promise<void> {
       return allResults;
     }
 
-    // const coldwellResults = await runContinuous(coldwell);
+    const coldwellResults = await runContinuous(coldwell);
     const redfinResults = await runContinuous(redfin);
     const creativeListingResults = await runContinuous(creativeListing);
     const craigslistResults = await runContinuous(craigslist);
+    const crexiResults = await runContinuous(crexi);
+    const realtorResults = await runContinuous(realtor);
+    const offmarketResults = await runContinuous(offmarket);
     const zillowResults = await runContinuous(zillow);
     if (global.gc) global.gc();
 
@@ -169,8 +189,11 @@ export async function runAduResearch(): Promise<void> {
       ...redfinResults,
       ...creativeListingResults,
       ...craigslistResults,
+      ...crexiResults,
+      ...realtorResults,
+      ...offmarketResults,
       ...zillowResults,
-      // ...coldwellResults,
+      ...coldwellResults,
     ];
 
     try {

@@ -68,8 +68,9 @@ export const config = {
   allowedLocations: [
     "ohio", "oh", "cleveland", "columbus", "toledo",
     "milwaukee", "wisconsin", "wi",
-    // ── Add common OH/WI cities that appear in LoopNet addresses ──
-    "cincinnati", "akron", "dayton",
+    "indiana", "in", "indianapolis",
+    // ── Add common OH/WI/IN cities that appear in LoopNet addresses ──
+    "cincinnati", "akron", "dayton", "fort wayne",
   ],
 },
 
@@ -129,6 +130,11 @@ export const config = {
           baseUrl:     "https://www.zillow.com/in/",
           listingType: "active" as const,
         },
+        {
+          name:        "Wisconsin - Active",
+          baseUrl:     "https://www.zillow.com/wi/",
+          listingType: "active" as const,
+        },
       ] as Array<{
         name:        string;
         baseUrl:     string;
@@ -145,6 +151,7 @@ export const config = {
         "https://www.realtor.com/realestateandhomes-search/Cleveland_OH/?price_max=300000&type=single_family,multi_family",
         "https://www.realtor.com/realestateandhomes-search/Toledo_OH/?price_max=300000&type=single_family,multi_family",
         "https://www.realtor.com/realestateandhomes-search/Milwaukee_WI/?price_max=300000&type=single_family,multi_family",
+        "https://www.realtor.com/realestateandhomes-search/Indianapolis_IN/?price_max=300000&type=single_family,multi_family",
       ]),
       maxPagesPerUrl:   Number(process.env.REALTOR_MAX_PAGES    ?? 10),
       detailFetchLimit: Number(process.env.REALTOR_DETAIL_LIMIT ?? 50),
@@ -155,6 +162,8 @@ export const config = {
         { name: "Cleveland, OH",  regionId: 4145,  regionType: 6 },
         { name: "Columbus, OH",   regionId: 4664,  regionType: 6 },
         { name: "Toledo, OH",     regionId: 19458, regionType: 6 },
+        { name: "Indianapolis, IN", regionId: 9196, regionType: 6 },
+        { name: "Milwaukee, WI",  regionId: 12644, regionType: 6 },
       ] as Array<{ name: string; regionId: number; regionType: number }>,
 
       uipt: [1, 4] as number[],
@@ -172,6 +181,8 @@ export const config = {
         "https://www.crexi.com/properties/OH/Toledo",
         "https://www.crexi.com/properties/WI/Milwaukee",
         "https://www.crexi.com/properties/WI/Multifamily",
+        "https://www.crexi.com/properties/IN/Indianapolis",
+        "https://www.crexi.com/properties/IN/Multifamily",
       ]),
     },
 
@@ -184,6 +195,9 @@ export const config = {
         "https://www.loopnet.com/search/multifamily-properties/toledo-oh/for-sale/",
         "https://www.loopnet.com/search/multifamily-properties/milwaukee-wi/for-sale/",
         "https://www.loopnet.com/search/apartment-buildings/wi/for-sale/",
+        "https://www.loopnet.com/search/multifamily-properties/in/for-sale/",
+        "https://www.loopnet.com/search/apartment-buildings/in/for-sale/",
+        "https://www.loopnet.com/search/multifamily-properties/indianapolis-in/for-sale/",
       ]),
       maxPagesPerUrl: Number(process.env.LOOPNET_MAX_PAGES ?? 3),
     },
@@ -192,6 +206,7 @@ export const config = {
       markets: [
         { name: "Ohio",      stateAbbr: "OH" },
         { name: "Wisconsin", stateAbbr: "WI" },
+        { name: "Indiana",   stateAbbr: "IN" },
       ] as Array<{ name: string; stateAbbr: string }>,
 
       // Set to 0 to skip detail page fetches (faster, uses fewer Oxylabs credits).

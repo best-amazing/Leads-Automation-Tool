@@ -1,5 +1,7 @@
+// src/scrapers/property-purchase-research/sources/offmarket-adu.scraper.ts
+
 import { RawListing } from "../../../types/listing";
-import { CreativeListingScraper } from "../../creative-listing/creative-listing.scraper";
+import { OffmarketScraper } from "../../offmarket/offmarket.scraper";
 import { ScraperOptions } from "../../base.scraper";
 import { AduResearchListing } from "../core/adu-research.parser";
 import {
@@ -8,24 +10,39 @@ import {
   passesPropertyCriteria,
 } from "../filters/adu-research.scraper";
 import { logger } from "../../../utils/logger";
-import { ADU_KEYWORDS } from "../core/adu-keywords";
+import { ADU_KEYWORDS, TARGET_STATES } from "../core/adu-keywords";
 
-export class CreativeListingAduScraper extends CreativeListingScraper {
-  readonly sourceName: string = "creative-listing-adu";
+export class OffmarketAduScraper extends OffmarketScraper {
+  readonly sourceName: string = "offmarket-adu";
 
   constructor(options: ScraperOptions = {}) {
-    super(options);
-    // Explicitly query our target states so we don't hit the API's global pagination limit.
-    this.markets = [
-      { name: "Ohio", stateAbbr: "OH" },
-      { name: "Indiana", stateAbbr: "IN" },
-      { name: "Wisconsin", stateAbbr: "WI" },
-    ];
+    // offmarket.com geo-blocks non-US IPs; the rotating PROXY_URLS pool is
+    // currently dead for this site, so fall back to the Creative Listing US
+    // residential proxy (known to work from the count script).
+    const proxyUrl =
+      options.proxyUrl !== undefined
+        ? options.proxyUrl
+        : process.env.CL_PROXY_URL || null;
+
+    super({ ...options, states: TARGET_STATES, cities: [], proxyUrl });
+  }
+
+  /**
+   * Bypass the base price/location/relevance filter — the ADU keyword +
+   * criteria pipeline decides what matches. We still want every offmarket
+   * listing that survives the scraper's own state/detail enrichment.
+   */
+  protected passesFilter(_listing: RawListing): boolean {
+    return true;
+  }
+
+  protected isRelevant(_listing: RawListing): boolean {
+    return true;
   }
 
   async run(): Promise<RawListing[]> {
     logger.info(
-      `[${this.sourceName}] Starting ADU research scrape via Creative Listing`,
+      `[${this.sourceName}] Starting ADU research scrape via offmarket.com (states: ${TARGET_STATES.join(", ")})`,
     );
 
     const rawResults = await super.run();

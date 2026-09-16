@@ -50,23 +50,20 @@ const STATE_FULL_NAME: Record<string, string> = {
 // listings.  Without ?state= the location sidebar won't highlight correctly.
 //
 // Fallback: if OFFMARKET_SEARCH_URL is set explicitly, honour it (single-URL
-// mode).  Otherwise, derive one URL per entry in FILTER_STATES.
+// mode).  Otherwise, derive one URL per entry in this.filterStates (from
+// constructor options or OFFMARKET_STATES env).
 
-const FILTER_STATES: string[] = process.env.OFFMARKET_STATES
-  ? process.env.OFFMARKET_STATES.split(",").map((s) => s.trim().toUpperCase())
-  : ["OH", "WI"];
+const FILTER_STATES_DEFAULT: string[] = ["OH", "WI"];
 
-const FILTER_CITIES: string[] = process.env.OFFMARKET_CITIES
-  ? process.env.OFFMARKET_CITIES.split(",").map((s) => s.trim().toLowerCase())
-  : [];
+const FILTER_CITIES_DEFAULT: string[] = [];
 
 // Build state-filtered search URLs using both ?state=XX and &lp_s_loc=name.
-function buildSearchUrls(): string[] {
+function buildSearchUrls(states: string[]): string[] {
   if (process.env.OFFMARKET_SEARCH_URL) {
     return [process.env.OFFMARKET_SEARCH_URL];
   }
 
-  return FILTER_STATES.map((st) => {
+  return states.map((st) => {
     const abbr     = st.toUpperCase();
     const fullName = STATE_FULL_NAME[abbr];
 
@@ -87,8 +84,6 @@ function buildSearchUrls(): string[] {
   });
 }
 
-const SEARCH_URLS = buildSearchUrls();
-
 const DETAIL_DELAY_MS = 4_000;
 const MAX_RETRIES     = 3;
 const THIRTY_DAYS_MS  = 30 * 24 * 60 * 60 * 1000;
@@ -107,7 +102,11 @@ function isWithinThirtyDays(dateVal: string | number | undefined): boolean {
 
 // ── Location filter ────────────────────────────────────────────────────────
 
-function passesLocationFilter(listing: Partial<RawListing> & { url: string }): boolean {
+function passesLocationFilter(
+  listing: Partial<RawListing> & { url: string },
+  filterStates: string[],
+  filterCities: string[],
+): boolean {
   const state =
     (listing as any).state ??
     extractStateFromUrl(listing.url);
@@ -117,9 +116,9 @@ function passesLocationFilter(listing: Partial<RawListing> & { url: string }): b
     return true;
   }
 
-  if (!FILTER_STATES.includes(state.toUpperCase())) return false;
+  if (!filterStates.includes(state.toUpperCase())) return false;
 
-  if (FILTER_CITIES.length === 0) return true;
+  if (filterCities.length === 0) return true;
 
   const haystack = [
     (listing as any).city,
@@ -131,7 +130,7 @@ function passesLocationFilter(listing: Partial<RawListing> & { url: string }): b
     .join(" ")
     .toLowerCase();
 
-  return FILTER_CITIES.some((city) => haystack.includes(city));
+  return filterCities.some((city) => haystack.includes(city));
 }
 
 // ── Per-state scrape session ───────────────────────────────────────────────
@@ -147,15 +146,35 @@ interface StateSession {
 // ── Scraper ────────────────────────────────────────────────────────────────
 
 export class OffmarketScraper extends BaseScraper {
-  readonly sourceName = "offmarket";
+  readonly sourceName: string = "offmarket";
 
   private cookiesWarmed = false;
 
   private _sessions: StateSession[] = [];
   private _sessionsInitialized = false;
 
+  protected filterStates: string[];
+  protected filterCities: string[];
+  protected searchUrls: string[];
+
   constructor(options: ScraperOptions = {}) {
     super(options);
+
+    this.filterStates = (
+      options.states ??
+      (process.env.OFFMARKET_STATES
+        ? process.env.OFFMARKET_STATES.split(",").map((s) => s.trim().toUpperCase())
+        : FILTER_STATES_DEFAULT)
+    ).map((s: string) => s.toUpperCase());
+
+    this.filterCities = (
+      options.cities ??
+      (process.env.OFFMARKET_CITIES
+        ? process.env.OFFMARKET_CITIES.split(",").map((s) => s.trim().toLowerCase())
+        : FILTER_CITIES_DEFAULT)
+    ).map((s: string) => s.toLowerCase());
+
+    this.searchUrls = buildSearchUrls(this.filterStates);
 
     if (!process.env.PROXY_URL) {
       logger.warn(
@@ -164,10 +183,10 @@ export class OffmarketScraper extends BaseScraper {
       );
     }
 
-    logger.info(`[offmarket] State filter:  ${FILTER_STATES.join(", ")}`);
-    logger.info(`[offmarket] Search URLs:   ${SEARCH_URLS.join(" | ")}`);
-    if (FILTER_CITIES.length) {
-      logger.info(`[offmarket] City filter:   ${FILTER_CITIES.join(", ")}`);
+    logger.info(`[offmarket] State filter:  ${this.filterStates.join(", ")}`);
+    logger.info(`[offmarket] Search URLs:   ${this.searchUrls.join(" | ")}`);
+    if (this.filterCities.length) {
+      logger.info(`[offmarket] City filter:   ${this.filterCities.join(", ")}`);
     }
   }
 
@@ -206,7 +225,9 @@ export class OffmarketScraper extends BaseScraper {
 
   // ── Block detection ───────────────────────────────────────────────────────
 
-  private detectBlock(html: string): "wordfence" | "rate_limit" | "none" {
+  private detectBlock(
+    html: string
+  ): "wordfence" | "rate_limit" | "challenge" | "none" {
     const lower = html.toLowerCase();
     if (lower.includes("too many requests") || lower.includes("rate-limited"))
       return "rate_limit";
@@ -216,6 +237,13 @@ export class OffmarketScraper extends BaseScraper {
       lower.includes("access from your area has been temporarily limited")
     )
       return "wordfence";
+    if (
+      lower.includes("checking your browser") ||
+      (lower.includes("cf-chl-") &&
+        (lower.includes("challenge") || lower.includes("turnstile"))) ||
+      lower.includes("cf-chl-opt")
+    )
+      return "challenge";
     return "none";
   }
 
@@ -253,6 +281,35 @@ export class OffmarketScraper extends BaseScraper {
           this.saveDebug(html, `rate_limit_${attempt}`);
           if (attempt < MAX_RETRIES) await sleep(wait);
           continue;
+        }
+
+        if (blockType === "challenge") {
+          logger.warn(
+            `[offmarket] Cloudflare bot-check on attempt ${attempt}. Waiting for it to clear (max 45s)…`
+          );
+          this.saveDebug(html, `cf_challenge_${attempt}`);
+          // The interstitial auto-resolves client-side; poll until the listing
+          // cards render in place instead of tearing down the page.
+          let resolved = false;
+          for (let i = 0; i < 45; i++) {
+            await sleep(1000);
+            try {
+              await page.waitForSelector("[data-posturl]", { timeout: 1000 });
+              resolved = true;
+              break;
+            } catch {}
+          }
+          if (!resolved && attempt < MAX_RETRIES) {
+            await sleep(10_000 * attempt);
+            continue;
+          }
+          if (resolved) {
+            const resolvedHtml = await page.content();
+            if (this.detectBlock(resolvedHtml) !== "none") {
+              if (attempt < MAX_RETRIES) continue;
+            }
+            return resolvedHtml;
+          }
         }
 
         return html;
@@ -367,7 +424,7 @@ export class OffmarketScraper extends BaseScraper {
 
     // ── Initialise sessions on first call ────────────────────────────────
     if (!this._sessionsInitialized) {
-      this._sessions = SEARCH_URLS.map((url) => ({
+      this._sessions = this.searchUrls.map((url) => ({
         searchUrl:    url,
         pagInfo:      null,
         ajaxPage:     null,
@@ -515,7 +572,22 @@ export class OffmarketScraper extends BaseScraper {
             timeout:   45_000,
           });
           await sleep(1500);
-          const detailHtml = await detailPage.content();
+          let detailHtml = await detailPage.content();
+
+          if (this.detectBlock(detailHtml) === "challenge") {
+            logger.warn(`[offmarket] CF challenge on detail page — waiting…`);
+            for (let i = 0; i < 25; i++) {
+              await sleep(1000);
+              try {
+                await detailPage.waitForSelector(
+                  "main, article, .wp-post-image, img",
+                  { timeout: 1000 }
+                );
+                break;
+              } catch {}
+            }
+            detailHtml = await detailPage.content();
+          }
 
           if (this.detectBlock(detailHtml) === "none") {
             detail = parseOffmarketDetailPage(detailHtml, item.url);
@@ -538,7 +610,7 @@ export class OffmarketScraper extends BaseScraper {
       };
 
       // ── Location filter (cheapest check — runs first) ─────────────────
-      if (!passesLocationFilter(merged)) {
+      if (!passesLocationFilter(merged, this.filterStates, this.filterCities)) {
         logger.debug(
           `[offmarket] ✗ Location (state:${(merged as any).state}): ${item.url}`
         );

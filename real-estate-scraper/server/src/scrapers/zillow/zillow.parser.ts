@@ -3,7 +3,7 @@
 import { RawListing } from "../../types/listing";
 import { logger }     from "../../utils/logger";
 
-export const MAX_DAYS_OLD = 30;
+export const MAX_DAYS_OLD = 90;
 
 // ── Price parsing ─────────────────────────────────────────────────────────────
 //

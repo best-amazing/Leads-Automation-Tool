@@ -73,7 +73,7 @@ import { logger }                   from "../../utils/logger";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-export const MAX_DAYS_OLD     = 30;
+export const MAX_DAYS_OLD     = 90;
 export const RESULTS_PER_PAGE = 42;
 
 // ── Shared types ──────────────────────────────────────────────────────────────
