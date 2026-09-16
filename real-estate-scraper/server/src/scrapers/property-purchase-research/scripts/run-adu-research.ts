@@ -175,7 +175,7 @@ export async function runAduResearch(): Promise<void> {
       return allResults;
     }
 
-    const coldwellResults = await runContinuous(coldwell);
+    // const coldwellResults = await runContinuous(coldwell);
     const redfinResults = await runContinuous(redfin);
     const creativeListingResults = await runContinuous(creativeListing);
     const craigslistResults = await runContinuous(craigslist);
@@ -193,7 +193,7 @@ export async function runAduResearch(): Promise<void> {
       ...realtorResults,
       ...offmarketResults,
       ...zillowResults,
-      ...coldwellResults,
+      // ...coldwellResults,
     ];
 
     try {
