@@ -104,10 +104,10 @@ export async function runAduResearch(): Promise<void> {
 
   const maxListings = Number(process.env.MAX_LISTINGS ?? 5000);
 
-  const zillow = new ZillowAduScraper({
-    maxListings,
-    onMatch: handleMatch,
-  });
+  // const zillow = new ZillowAduScraper({
+  //   maxListings,
+  //   onMatch: handleMatch,
+  // });
 
   const redfin = new RedfinAduScraper({
     maxListings,
@@ -175,14 +175,14 @@ export async function runAduResearch(): Promise<void> {
       return allResults;
     }
 
-    // const coldwellResults = await runContinuous(coldwell);
+    const coldwellResults = await runContinuous(coldwell);
     const redfinResults = await runContinuous(redfin);
     const creativeListingResults = await runContinuous(creativeListing);
     const craigslistResults = await runContinuous(craigslist);
     // const crexiResults = await runContinuous(crexi);
     const realtorResults = await runContinuous(realtor);
     // const offmarketResults = await runContinuous(offmarket);
-    const zillowResults = await runContinuous(zillow);
+    // const zillowResults = await runContinuous(zillow);
     if (global.gc) global.gc();
 
     const finalResults = [
@@ -193,7 +193,7 @@ export async function runAduResearch(): Promise<void> {
       ...realtorResults,
       // ...offmarketResults,
       ...zillowResults,
-      // ...coldwellResults,
+      ...coldwellResults,
     ];
 
     try {

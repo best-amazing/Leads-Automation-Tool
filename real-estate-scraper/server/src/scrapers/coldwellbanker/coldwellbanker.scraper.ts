@@ -163,7 +163,7 @@ export async function discoverTargetListingUrls(
 
   if (mode === "full") {
     childSitemaps = childSitemaps.filter((u) =>
-      /sitemap-listings-(oh|in)-\d+\.xml$/.test(u),
+      /sitemap-listings-(oh|in|wi)-\d+\.xml$/.test(u),
     );
     logger.info(
       `[coldwellbanker] full mode: ${childSitemaps.length} target chunk(s)`,
@@ -177,7 +177,7 @@ export async function discoverTargetListingUrls(
       const xml = await httpGetWithRetry(sm, `chunk ${sm.split("/").pop()}`);
       fetched++;
       for (const u of extractLocs(xml)) {
-        if (/^https:\/\/www\.coldwellbanker\.com\/(oh|in)\/.+\/lid-/.test(u))
+        if (/^https:\/\/www\.coldwellbanker\.com\/(oh|in|wi)\/.+\/lid-/.test(u))
           urls.add(u);
       }
     } catch (err) {
