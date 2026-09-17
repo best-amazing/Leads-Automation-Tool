@@ -192,7 +192,7 @@ export async function runAduResearch(): Promise<void> {
       // ...crexiResults,
       ...realtorResults,
       // ...offmarketResults,
-      ...zillowResults,
+      // ...zillowResults,
       ...coldwellResults,
     ];
 
