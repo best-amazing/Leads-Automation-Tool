@@ -45,7 +45,9 @@
     "verify:zillow": "node --max-old-space-size=4096 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/verify-zillow-ordering.ts",
     "reprocess:il-logs": "node --max-old-space-size=4096 -r ./polyfill-file.js -r ts-node/register scripts/reprocess-il-logs.ts",
     "check:il-counts": "node --max-old-space-size=4096 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/check-il-counts.ts",
-    "backfill:deed-dates": "node --max-old-space-size=4096 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/backfill-sheet-deed-dates.ts"
+    "backfill:deed-dates": "node --max-old-space-size=4096 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/backfill-sheet-deed-dates.ts",
+    "backfill:dedupe-keys": "node --max-old-space-size=4096 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/scripts/backfill-dedupe-keys.ts",
+    "sheet:remove-duplicates": "node --max-old-space-size=4096 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/scripts/remove-duplicate-sheet-rows.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.13.0",

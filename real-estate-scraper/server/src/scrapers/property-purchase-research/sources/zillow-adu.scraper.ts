@@ -33,8 +33,9 @@ const ZILLOW_DIAG_LIMIT = 10;
 const BACKFILL_BATCH_SIZE = Number(process.env.ADU_BACKFILL_BATCH_SIZE ?? 500);
 
 // Micro-concurrency: fetch this many detail pages at the same time.
-// Kept at 2 to stay within Render's 512 MB RAM (each HTML page is ~1-2 MB).
-const DETAIL_CONCURRENCY = Number(process.env.ADU_DETAIL_CONCURRENCY ?? 2);
+// Each task releases its HTML (~1-2 MB) after parsing, so 5 in-flight
+// pages stays comfortably within Render's 512 MB RAM.
+const DETAIL_CONCURRENCY = Number(process.env.ADU_DETAIL_CONCURRENCY ?? 5);
 
 // Hard per-step deadline: guarantees a stuck call can never freeze the whole
 // run. Logs which listing/step hung, then the loop moves on.
@@ -248,6 +249,45 @@ export class ZillowAduScraper extends ZillowScraper {
             continue;
           }
 
+          // 2b. Title/address keyword pre-check — needs no detail fetch.
+          const titleHaystack =
+            `${preFilter.title ?? ""} ${preFilter.address ?? ""}`.toLowerCase();
+          const titleMatchedKeyword = ADU_KEYWORDS.find((kw) => {
+            const regex = new RegExp(`\\b${kw}\\b`, "i");
+            return regex.test(titleHaystack);
+          });
+
+          if (titleMatchedKeyword) {
+            const enriched = {
+              ...preFilter,
+              matchedKeyword: titleMatchedKeyword,
+            } as AduResearchListing;
+            this.results.push(enriched);
+            aduRunState.matched = this.results.length;
+            logger.info(
+              `[${this.sourceName}] ✓ MATCHED ADU KEYWORD (title/address): ${titleMatchedKeyword}`,
+            );
+            if (this.options.onMatch) {
+              try {
+                const MATCH_TIMEOUT_MS = Number(
+                  process.env.ADU_MATCH_TIMEOUT_MS ?? 300_000,
+                );
+                await raceTimeout(
+                  this.options.onMatch(enriched),
+                  MATCH_TIMEOUT_MS,
+                  `onMatch ${rawListing.url}`,
+                );
+              } catch (err) {
+                logger.warn(
+                  `[${this.sourceName}] ${rawListing.url}: ${err instanceof Error ? err.message : err}`,
+                );
+              }
+            }
+            lastProgressAt = Date.now();
+            aduRunState.lastProgressAt = lastProgressAt;
+            continue;
+          }
+
           // Listing passed cheap filters — queue it for detail fetch
           pendingDetails.push({ rawListing, preFilter });
         }
@@ -267,6 +307,7 @@ export class ZillowAduScraper extends ZillowScraper {
                     `(daysOnZillow=${rawListing.daysOnZillow ?? "?"})`,
                 );
 
+                let didMatchKeyword = false;
                 let description = "";
                 let units: number | undefined;
                 let yearBuilt: number | undefined;
@@ -381,6 +422,7 @@ export class ZillowAduScraper extends ZillowScraper {
 
                 if (matchedKeyword) {
                   enriched.matchedKeyword = matchedKeyword;
+                  didMatchKeyword = true;
                   this.results.push(enriched);
                   aduRunState.matched = this.results.length;
                   logger.info(
@@ -408,7 +450,9 @@ export class ZillowAduScraper extends ZillowScraper {
                   );
                 }
 
-                await sleep(jitter(BETWEEN_DETAIL_MS));
+                if (didMatchKeyword) {
+                  await sleep(jitter(BETWEEN_DETAIL_MS));
+                }
                 lastProgressAt = Date.now();
                 aduRunState.lastProgressAt = lastProgressAt;
                 aduRunState.listingsProcessed = processedThisBatch;
