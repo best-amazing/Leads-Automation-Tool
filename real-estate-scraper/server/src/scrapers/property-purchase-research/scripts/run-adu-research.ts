@@ -35,10 +35,10 @@ import { fetchDeedTransferDate } from "../core/deed-data-resolver";
 import * as fs from "fs";
 import * as path from "path";
 import { writeAduResearchToSheets } from "../../../utils/google-sheets";
-import { dedupKey } from "../filters/address-dedupe";
+import { AduDedupeTracker } from "../core/adu-dedupe-tracker";
 
 let capturedCount = 0;
-const seenKeys = new Set<string>();
+const tracker = new AduDedupeTracker();
 
 async function handleMatch(listing: AduResearchListing) {
   if (!validateIndianaLeadZip(listing)) {
@@ -48,14 +48,12 @@ async function handleMatch(listing: AduResearchListing) {
     return;
   }
 
-  const key = dedupKey(listing);
-  if (seenKeys.has(key)) {
+  if (!(await tracker.track(listing))) {
     logger.debug(
       `[runner] Skipping duplicate: ${listing.address || listing.url}`,
     );
     return;
   }
-  seenKeys.add(key);
 
   capturedCount++;
   logger.info(

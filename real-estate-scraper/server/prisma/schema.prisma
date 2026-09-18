@@ -272,3 +272,15 @@ model BackfillCursor {
 
   @@index([source])
 }
+
+// One row per emitted ADU research dedup key. Persists the normalized
+// "street|zip" (or URL fallback) key so the same property is never written
+// twice to outputs across runs AND across platforms/sources. Unlike the
+// in-memory seenKeys used by older runners, this survives process restarts
+// and is shared by every ADU runner script.
+model AduDedupeKey {
+  dedupKey  String   @id
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}

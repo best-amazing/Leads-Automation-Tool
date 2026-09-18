@@ -23,26 +23,18 @@ import { appendAduResult } from "../core/adu-csv-writer";
 import { AduResearchListing } from "../core/adu-research.parser";
 import { fetchDeedTransferDate } from "../core/deed-data-resolver";
 import { writeAduResearchToSheets } from "../../../utils/google-sheets";
+import { AduDedupeTracker } from "../core/adu-dedupe-tracker";
 
 let capturedCount = 0;
-const seenKeys = new Set<string>();
-
-function dedupKey(listing: AduResearchListing): string {
-  if (listing.address) {
-    return listing.address.replace(/\s+/g, " ").trim().toLowerCase();
-  }
-  return listing.url ?? "";
-}
+const tracker = new AduDedupeTracker();
 
 async function handleMatch(listing: AduResearchListing) {
-  const key = dedupKey(listing);
-  if (seenKeys.has(key)) {
+  if (!(await tracker.track(listing))) {
     logger.debug(
       `[runner] Skipping duplicate: ${listing.address || listing.url}`,
     );
     return;
   }
-  seenKeys.add(key);
 
   capturedCount++;
   logger.info(
