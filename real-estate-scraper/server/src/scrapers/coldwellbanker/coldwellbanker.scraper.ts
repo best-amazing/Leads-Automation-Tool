@@ -177,7 +177,7 @@ export async function discoverTargetListingUrls(
       const xml = await httpGetWithRetry(sm, `chunk ${sm.split("/").pop()}`);
       fetched++;
       for (const u of extractLocs(xml)) {
-        if (/^https:\/\/www\.coldwellbanker\.com\/(oh|in|wi)\/.+\/lid-/.test(u))
+        if (/^https:\/\/www\.coldwellbanker\.com\/(oh|in|wi|ia)\/.+\/lid-/.test(u))
           urls.add(u);
       }
     } catch (err) {
