@@ -25,6 +25,32 @@ import { AduDedupeTracker } from '../core/adu-dedupe-tracker';
 const tracker = new AduDedupeTracker();
 let capturedCount = 0;
 
+// ── Per-source throttle ─────────────────────────────────────────────────────
+// Some sources (e.g. Coldwell Banker) rate-limit aggressively. This ensures
+// that even with concurrency=5, jobs for the same source are spaced out.
+const SOURCE_MIN_DELAY_MS: Record<string, number> = {
+  'coldwellbanker-adu': 5_000,  // 5s between CB fetches
+  'craigslist-adu': 2_000,      // 2s between CL fetches
+};
+const lastJobFinished: Record<string, number> = {};
+
+async function throttleForSource(source: string): Promise<void> {
+  const minDelay = SOURCE_MIN_DELAY_MS[source];
+  if (!minDelay) return; // no throttle for this source
+
+  const lastFinish = lastJobFinished[source] ?? 0;
+  const elapsed = Date.now() - lastFinish;
+  if (elapsed < minDelay) {
+    const waitMs = minDelay - elapsed;
+    logger.debug(`[worker] Throttling ${source} for ${waitMs}ms`);
+    await sleep(waitMs);
+  }
+}
+
+function markSourceDone(source: string): void {
+  lastJobFinished[source] = Date.now();
+}
+
 async function handleMatch(listing: AduResearchListing) {
   if (!validateIndianaLeadZip(listing)) {
     logger.warn(`[worker] Ignoring Indiana lead with non-46xxx ZIP: ${listing.address || listing.url} | zip=${String(listing.zip ?? '(missing)')}`);
@@ -229,27 +255,36 @@ async function processInvestorLift(job: Job) {
 
 // Create and export the worker
 export const worker = createDescriptionWorker(async (job) => {
-  logger.info(`[worker] Processing job ${job.id} for source ${job.data.source}`);
-  
-  if (job.data.source === 'zillow-adu') {
-    await processZillow(job);
-  } else if (job.data.source === 'craigslist-adu') {
-    await processCraigslist(job);
-  } else if (job.data.source === 'coldwellbanker-adu') {
-    await processColdwellBanker(job);
-  } else if (job.data.source === 'investorlift-adu') {
-    await processInvestorLift(job);
-  } else if (
-    job.data.source === 'redfin-adu' ||
-    job.data.source === 'creative-listing-adu' ||
-    job.data.source === 'crexi-adu' ||
-    job.data.source === 'offmarket-adu'
-  ) {
-    // These "fast" scrapers already did all the heavy lifting upfront.
-    // They just enqueue the final listing here to be written to Google Sheets.
-    await handleMatch(job.data.listing);
-  } else {
-    logger.warn(`[worker] Unknown source ${job.data.source}`);
+  const source = job.data.source;
+  logger.info(`[worker] Processing job ${job.id} for source ${source}`);
+
+  // Respect per-source rate limits before starting work
+  await throttleForSource(source);
+
+  try {
+    if (source === 'zillow-adu') {
+      await processZillow(job);
+    } else if (source === 'craigslist-adu') {
+      await processCraigslist(job);
+    } else if (source === 'coldwellbanker-adu') {
+      await processColdwellBanker(job);
+    } else if (source === 'investorlift-adu') {
+      await processInvestorLift(job);
+    } else if (
+      source === 'redfin-adu' ||
+      source === 'creative-listing-adu' ||
+      source === 'crexi-adu' ||
+      source === 'offmarket-adu'
+    ) {
+      // These "fast" scrapers already did all the heavy lifting upfront.
+      // They just enqueue the final listing here to be written to Google Sheets.
+      await handleMatch(job.data.listing);
+    } else {
+      logger.warn(`[worker] Unknown source ${source}`);
+    }
+  } finally {
+    // Mark completion time so the next job for this source respects the delay
+    markSourceDone(source);
   }
 }, {
   concurrency: Number(process.env.ADU_DETAIL_CONCURRENCY ?? 5)
