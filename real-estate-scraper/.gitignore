@@ -9,7 +9,7 @@ build/
 .env
 .env.*
 !.env.example
-amazing-properties-*.json
+**/amazing-properties-*.json
 *.pem
 
 # Session and authentication files

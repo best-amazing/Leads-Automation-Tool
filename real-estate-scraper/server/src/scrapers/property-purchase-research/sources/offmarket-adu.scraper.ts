@@ -9,6 +9,7 @@ import {
   passesKeywordFilter,
   passesPropertyCriteria,
 } from "../filters/adu-research.scraper";
+import { descriptionQueue } from '../../../utils/queue';
 import { logger } from "../../../utils/logger";
 import { ADU_KEYWORDS, TARGET_STATES } from "../core/adu-keywords";
 
@@ -86,10 +87,11 @@ export class OffmarketAduScraper extends OffmarketScraper {
       `[${this.sourceName}] ✓ ${filtered.length} listings passed ADU filters (out of ${aduListings.length} total)`,
     );
 
-    if (this.options.onMatch) {
-      for (const item of filtered) {
-        await this.options.onMatch(item);
-      }
+    for (const item of filtered) {
+      await descriptionQueue.add('fetch-description', {
+        source: this.sourceName,
+        listing: item
+      });
     }
 
     return filtered;

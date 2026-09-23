@@ -24,6 +24,15 @@ import { logger } from "../../../utils/logger";
 import { runAduResearch } from "./run-adu-research";
 import { aduRunState } from "../core/adu-run-state";
 
+// ── BullMQ description worker ─────────────────────────────────────────────
+// Importing the worker module starts the BullMQ consumer in this same process.
+// It listens to the Redis-backed description queue and processes jobs that the
+// scrapers enqueue (detail-page fetches, Google Sheets writes, etc.).
+// No separate terminal / process needed.
+import { worker as descriptionWorker } from "./description-worker";
+logger.info(`[adu-cron] BullMQ description worker attached (id: ${descriptionWorker.name})`);
+
+
 const SCHEDULE = process.env.ADU_CRON_SCHEDULE || "*/10 * * * *";
 const TIMEZONE = process.env.ADU_CRON_TIMEZONE || "Africa/Lagos";
 

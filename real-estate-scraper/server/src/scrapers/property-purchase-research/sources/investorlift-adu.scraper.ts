@@ -16,6 +16,7 @@ import {
   parseAduApiResponse,
 } from "../core/adu-research.parser";
 import { ADU_KEYWORDS } from "../core/adu-keywords";
+import { descriptionQueue } from "../../../utils/queue";
 import {
   passesLocationFilter,
   passesKeywordFilter,
@@ -275,106 +276,20 @@ export class InvestorLiftAduScraper extends BaseScraper {
 
     const passed = listings.filter((l) => this.passesFilter(l));
     logger.info(
-      `[investorlift-adu] ${passed.length} passed location filter (out of ${listings.length}).`,
+      `[${this.sourceName}] ${passed.length} passed location filter (out of ${listings.length}).`,
     );
 
-    logger.info(
-      `[investorlift-adu] Reverse-processing to enrich newest properties first.`,
-    );
-
-    const toEnrich = [...passed].reverse();
-
-    let enriched = 0;
-    for (const listing of toEnrich) {
-      if (enriched >= ADDRESS_FETCH_LIMIT) {
-        logger.info(
-          `[investorlift-adu] Reached address fetch limit (${ADDRESS_FETCH_LIMIT}). Skipping remaining.`,
-        );
-        break;
-      }
-
-      const listingId = extractListingId(listing.url);
-
-      if (listingId && (!listing.address || listing.address.length < 5)) {
-        try {
-          const address = await this.fetchFullAddress(listingId);
-          if (address) {
-            listing.address = address;
-            enriched++;
-            logger.info(
-              `[investorlift-adu] 📍 Resolved address: ${address} [Daily total: ${enriched}/${ADDRESS_FETCH_LIMIT}]`,
-            );
-            await sleep(ADDRESS_REQUEST_DELAY);
-          }
-        } catch (err: any) {
-          if (err.name === "DailyLimitReachedError") {
-            logger.warn(
-              "[investorlift-adu] Daily address limit reached from API. Stopping enrichment.",
-            );
-            break;
-          }
-          if (err.name === "SessionExpiredError") {
-            logger.warn("[investorlift-adu] Session expired during address fetch.");
-            break;
-          }
-          logger.error(`[investorlift-adu] Failed to fetch address: ${err}`);
-        }
-      } else {
-        logger.debug(
-          `[investorlift-adu] Skipping address fetch (already has address or missing ID)`,
-        );
-      }
-    }
-
-    logger.info(`[investorlift-adu] Evaluating ADU criteria...`);
-
-    const aduListings: AduResearchListing[] = passed.map((l) => {
-      const titlePart = l.title ?? "";
-      const descriptionPart = l.description ?? "";
-      const addressPart = l.address ?? "";
-
-      const haystack = [titlePart, descriptionPart, addressPart]
-        .join(" ")
-        .toLowerCase();
-
-      const matchedKeyword = ADU_KEYWORDS.find((kw) => {
-        const regex = new RegExp(
-          `\\b${kw.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&")}\\b`,
-          "i",
-        );
-        return regex.test(haystack);
-      });
-
-      let zip: string | undefined;
-      if (l.address) {
-        const match = l.address.match(/\b\d{5}(-\d{4})?\b/);
-        if (match) zip = match[0];
-      }
-
-      return {
-        ...l,
+    // Instead of enriching sequentially and holding up the main process,
+    // we enqueue them for the BullMQ worker to handle the address fetching.
+    for (const listing of passed) {
+      await descriptionQueue.add('fetch-description', {
         source: this.sourceName,
-        totalBedrooms: l.bedrooms,
-        matchedKeyword,
-        zip,
-      } as AduResearchListing;
-    });
-
-    const finalFiltered = aduListings.filter(
-      (l) => passesKeywordFilter(l) && passesPropertyCriteria(l),
-    );
-
-    logger.info(
-      `[investorlift-adu] ✓ ${finalFiltered.length} passed ADU criteria.`,
-    );
-
-    if (this.options.onMatch) {
-      for (const item of finalFiltered) {
-        await this.options.onMatch(item);
-      }
+        listing
+      });
     }
 
-    return finalFiltered;
+    // We return empty since the worker handles the rest (including onMatch)
+    return [];
   }
 
   // ── Main scrape ────────────────────────────────────────────────────────

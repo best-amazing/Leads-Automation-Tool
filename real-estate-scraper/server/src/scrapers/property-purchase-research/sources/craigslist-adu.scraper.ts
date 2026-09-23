@@ -19,6 +19,7 @@ import {
 import { ADU_KEYWORDS, TARGET_STATES } from "../core/adu-keywords";
 import { sleep, jitter } from "../../../utils/browser";
 import { config } from "../../../config";
+import { descriptionQueue } from "../../../utils/queue";
 
 const BETWEEN_DETAIL_MS = 1_000;
 const BACKFILL_BATCH_SIZE = Number(process.env.ADU_BACKFILL_BATCH_SIZE ?? 500);
@@ -224,98 +225,17 @@ export class CraigslistAduScraper {
           pendingDetails.push({ rawListing, preFilter });
         }
 
-        // ── Phase 2: Fetch detail pages with micro-concurrency ───────────────
+        // ── Phase 2: Enqueue detail fetch ───────────────
         if (pendingDetails.length > 0) {
-          logger.info(
-            `[${this.sourceName}] ${cityName} offset ${offset}: ` +
-              `${pendingDetails.length} listings need detail fetch (concurrency=${DETAIL_CONCURRENCY})`,
-          );
+          logger.info(`[${this.sourceName}] ${cityName} offset ${offset}: Enqueuing ${pendingDetails.length} listings to BullMQ`);
 
-          const detailTasks = pendingDetails.map(
-            ({ rawListing, preFilter }, idx) => {
-              return async () => {
-                logger.info(
-                  `[${this.sourceName}] [${idx + 1}/${pendingDetails.length}] Fetching description: ${rawListing.url}`,
-                );
-
-                let description = "";
-                let detail = {};
-
-                try {
-                  const FETCH_TIMEOUT_MS = Number(
-                    process.env.ADU_FETCH_TIMEOUT_MS ?? 180_000,
-                  );
-                  const detailHtml = await raceTimeout(
-                    oxylabsFetch(rawListing.url!),
-                    FETCH_TIMEOUT_MS,
-                    `detail fetch ${rawListing.url}`,
-                  );
-                  if (detailHtml) {
-                    detail = parseCraigslistDetailPage(detailHtml);
-                    description = (detail as any).description || "";
-                  }
-                } catch (err) {
-                  logger.warn(
-                    `[${this.sourceName}] ${rawListing.url}: ${err instanceof Error ? err.message : err}`,
-                  );
-                }
-
-                const enriched: AduResearchListing = {
-                  ...preFilter,
-                  ...detail,
-                  description,
-                } as AduResearchListing;
-
-                // Re-check property criteria now that description is available
-                // (the pre-detail check only had title + address)
-                if (!passesPropertyCriteria(enriched)) {
-                  return;
-                }
-
-                // Keyword check
-                const haystack = [
-                  enriched.title,
-                  enriched.description,
-                  enriched.address,
-                ]
-                  .join(" ")
-                  .toLowerCase();
-                const matchedKeyword = ADU_KEYWORDS.find((kw) => {
-                  const regex = new RegExp(`\\b${kw}\\b`, "i");
-                  return regex.test(haystack);
-                });
-
-                if (matchedKeyword) {
-                  enriched.matchedKeyword = matchedKeyword;
-                  this.results.push(enriched);
-                  aduRunState.matched = this.results.length;
-                  logger.info(
-                    `[${this.sourceName}] ✓ MATCHED ADU KEYWORD: ${matchedKeyword}`,
-                  );
-                  if (this.options.onMatch) {
-                    try {
-                      const MATCH_TIMEOUT_MS = Number(
-                        process.env.ADU_MATCH_TIMEOUT_MS ?? 300_000,
-                      );
-                      await raceTimeout(
-                        this.options.onMatch(enriched),
-                        MATCH_TIMEOUT_MS,
-                        `onMatch ${rawListing.url}`,
-                      );
-                    } catch (err) {
-                      logger.warn(
-                        `[${this.sourceName}] ${rawListing.url}: ${err instanceof Error ? err.message : err}`,
-                      );
-                    }
-                  }
-                }
-
-                await sleep(jitter(BETWEEN_DETAIL_MS));
-              };
-            },
-          );
-
-          await runPool(detailTasks, DETAIL_CONCURRENCY);
+          for (const { rawListing, preFilter } of pendingDetails) {
+            await descriptionQueue.add('fetch-description', {
+              source: 'craigslist-adu',
+              url: rawListing.url,
+              preFilter
+            });
+          }
         }
 
         // If no new listings were on this page, or we're hitting completely stale listings, we can stop pagination for this city.

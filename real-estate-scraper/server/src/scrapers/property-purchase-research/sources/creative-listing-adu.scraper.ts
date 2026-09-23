@@ -9,6 +9,7 @@ import {
 } from "../filters/adu-research.scraper";
 import { logger } from "../../../utils/logger";
 import { ADU_KEYWORDS } from "../core/adu-keywords";
+import { descriptionQueue } from "../../../utils/queue";
 
 export class CreativeListingAduScraper extends CreativeListingScraper {
   readonly sourceName: string = "creative-listing-adu";
@@ -69,10 +70,11 @@ export class CreativeListingAduScraper extends CreativeListingScraper {
       `[${this.sourceName}] ✓ ${filtered.length} listings passed ADU filters (out of ${aduListings.length} total)`,
     );
 
-    if (this.options.onMatch) {
-      for (const item of filtered) {
-        await this.options.onMatch(item);
-      }
+    for (const item of filtered) {
+      await descriptionQueue.add('fetch-description', {
+        source: this.sourceName,
+        listing: item
+      });
     }
 
     return filtered;

@@ -44,6 +44,7 @@ import {
   saveSeenListings as saveSeenToDb,
 } from "../../../utils/backfill-store";
 import { ADU_KEYWORDS } from "../core/adu-keywords";
+import { descriptionQueue } from "../../../utils/queue";
 
 const BACKFILL_BATCH_SIZE = Number(process.env.CB_BACKFILL_BATCH_SIZE ?? 500);
 const CB_LOOKBACK_DAYS = Number(process.env.CB_LOOKBACK_DAYS ?? 90);
@@ -100,35 +101,16 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
     // the next run instead of being burned as "seen" unprocessed.
     const completedLids = new Set<string>();
 
-    // ── Concurrent detail fetch with polite pacing ────────────────────────
-    let cursor = 0;
-    const worker = async (): Promise<void> => {
-      while (cursor < work.length && processedThisBatch < BACKFILL_BATCH_SIZE) {
-        const url = work[cursor++];
-        try {
-          const listing = await this.fetchListingDetail(url);
-          completedLids.add(extractLid(url));
-          if (listing) {
-            await this.ingestAduListing(listing as AduResearchListing);
-          }
-        } catch (err) {
-          logger.warn(
-            `[${this.sourceName}] ${url}: ${err instanceof Error ? err.message : err}`,
-          );
-        }
-        processedThisBatch++;
-        if (processedThisBatch % 25 === 0) {
-          logger.info(
-            `[${this.sourceName}] progress ${processedThisBatch}/${work.length} ` +
-              `(matches: ${this.results.length})`,
-          );
-        }
-        await sleep(jitter(DEFAULT_CB_DELAY_MS));
-      }
-    };
-
-    const workerCount = Math.min(CB_CONCURRENCY, work.length);
-    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+    // ── Enqueue detail fetch to BullMQ ────────────────────────────────────
+    for (let i = 0; i < work.length && processedThisBatch < BACKFILL_BATCH_SIZE; i++) {
+      const url = work[i];
+      await descriptionQueue.add('fetch-description', {
+        source: this.sourceName,
+        url
+      });
+      completedLids.add(extractLid(url));
+      processedThisBatch++;
+    }
 
     logger.info(
       `[${this.sourceName}] Processed ${processedThisBatch} new listing(s), ` +

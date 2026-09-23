@@ -20,6 +20,7 @@ import {
 } from "../../../utils/backfill-store";
 import { ADU_KEYWORDS, TARGET_STATES } from "../core/adu-keywords";
 import { sleep, jitter } from "../../../utils/browser";
+import { descriptionQueue } from "../../../utils/queue";
 
 // Pause between detail-page fetches to avoid hammering Oxylabs
 const BETWEEN_DETAIL_MS = 1_000;
@@ -292,181 +293,22 @@ export class ZillowAduScraper extends ZillowScraper {
           pendingDetails.push({ rawListing, preFilter });
         }
 
-        // ── Phase 2: Fetch detail pages with micro-concurrency ───────────────
+        // ── Phase 2: Fetch detail pages via BullMQ Queue ───────────────
         if (pendingDetails.length > 0) {
           logger.info(
-            `[${this.sourceName}] ${market.name} page ${page}: ` +
-              `${pendingDetails.length} listings need detail fetch (concurrency=${DETAIL_CONCURRENCY})`,
+            `[${this.sourceName}] ${market.name} page ${page}: Enqueuing ` +
+              `${pendingDetails.length} listings to BullMQ queue`
           );
 
-          const detailTasks = pendingDetails.map(
-            ({ rawListing, preFilter }, idx) => {
-              return async () => {
-                logger.info(
-                  `[${this.sourceName}] [${idx + 1}/${pendingDetails.length}] Fetching description: ${rawListing.address ?? rawListing.url} ` +
-                    `(daysOnZillow=${rawListing.daysOnZillow ?? "?"})`,
-                );
-
-                let didMatchKeyword = false;
-                let description = "";
-                let units: number | undefined;
-                let yearBuilt: number | undefined;
-                let schoolRating: string | undefined;
-                let status: string | undefined;
-                let lotSqft: number | undefined;
-
-                try {
-                  const FETCH_TIMEOUT_MS = Number(
-                    process.env.ADU_FETCH_TIMEOUT_MS ?? 180_000,
-                  );
-                  let html: string | null = await raceTimeout(
-                    oxylabsFetch(rawListing.url!, (this as any).sessionId),
-                    FETCH_TIMEOUT_MS,
-                    `detail fetch ${rawListing.url}`,
-                  );
-                  logger.debug(
-                    `[${this.sourceName}] [#${idx}] fetched, html=${html ? html.length : 0} chars`,
-                  );
-                  if (html) {
-                    const json = extractNextData(html);
-                    html = null; // Release ~1-2 MB HTML string for GC
-                    if (json) {
-                      const props = json?.props?.pageProps;
-
-                      // Extract description
-                      description = props?.componentProps?.description ?? "";
-                      if (!description) {
-                        const rawCache =
-                          props?.gdpClientCache ??
-                          props?.componentProps?.gdpClientCache;
-                        if (rawCache) {
-                          try {
-                            const cache =
-                              typeof rawCache === "string"
-                                ? JSON.parse(rawCache)
-                                : rawCache;
-                            for (const key of Object.keys(cache ?? {})) {
-                              const propData = cache[key]?.property;
-                              if (propData) {
-                                if (propData.description)
-                                  description = propData.description;
-
-                                // Extract units, yearBuilt, schoolRating from gdpClientCache
-                                if (propData.yearBuilt)
-                                  yearBuilt = Number(propData.yearBuilt);
-                                if (propData.homeStatus)
-                                  status = propData.homeStatus;
-                                if (propData.lotAreaValue) {
-                                  if (propData.lotAreaUnit === "acres")
-                                    lotSqft = Math.round(
-                                      propData.lotAreaValue * 43560,
-                                    );
-                                  else
-                                    lotSqft = Math.round(propData.lotAreaValue);
-                                }
-
-                                // Schools
-                                if (
-                                  Array.isArray(propData.schools) &&
-                                  propData.schools.length > 0
-                                ) {
-                                  const hs = propData.schools.find(
-                                    (s: any) => s.level === "High",
-                                  );
-                                  if (hs && hs.rating)
-                                    schoolRating = `${hs.rating}/10`;
-                                  else if (propData.schools[0].rating)
-                                    schoolRating = `${propData.schools[0].rating}/10`;
-                                }
-
-                                break;
-                              }
-                            }
-                          } catch {}
-                        }
-                      }
-                    }
-                  }
-                } catch (err) {
-                  logger.warn(
-                    `[${this.sourceName}] ${rawListing.url}: ${err instanceof Error ? err.message : err}`,
-                  );
-                }
-
-                logger.debug(
-                  `[${this.sourceName}] [#${idx}] parsed, desc=${description.length} chars`,
-                );
-
-                const enriched: AduResearchListing = {
-                  ...preFilter,
-                  description,
-                  units,
-                  yearBuilt: yearBuilt ?? preFilter.yearBuilt,
-                  schoolRating,
-                  status: status ?? preFilter.status,
-                  lotSqft: lotSqft ?? preFilter.lotSqft,
-                } as AduResearchListing;
-
-                // Now filter by keywords (requires description from detail page)
-                const haystack = [
-                  enriched.title,
-                  enriched.description,
-                  enriched.address,
-                ]
-                  .join(" ")
-                  .toLowerCase();
-                const matchedKeyword = ADU_KEYWORDS.find((kw) => {
-                  const regex = new RegExp(`\\b${kw}\\b`, "i");
-                  return regex.test(haystack);
-                });
-
-                if (matchedKeyword) {
-                  enriched.matchedKeyword = matchedKeyword;
-                  didMatchKeyword = true;
-                  this.results.push(enriched);
-                  aduRunState.matched = this.results.length;
-                  logger.info(
-                    `[${this.sourceName}] ✓ MATCHED ADU KEYWORD: ${matchedKeyword}`,
-                  );
-                  if (this.options.onMatch) {
-                    try {
-                      const MATCH_TIMEOUT_MS = Number(
-                        process.env.ADU_MATCH_TIMEOUT_MS ?? 300_000,
-                      );
-                      await raceTimeout(
-                        this.options.onMatch(enriched),
-                        MATCH_TIMEOUT_MS,
-                        `onMatch ${rawListing.url}`,
-                      );
-                    } catch (err) {
-                      logger.warn(
-                        `[${this.sourceName}] ${rawListing.url}: ${err instanceof Error ? err.message : err}`,
-                      );
-                    }
-                  }
-                } else {
-                  logger.debug(
-                    `[${this.sourceName}] [#${idx}] no keyword match`,
-                  );
-                }
-
-                if (didMatchKeyword) {
-                  await sleep(jitter(BETWEEN_DETAIL_MS));
-                }
-                lastProgressAt = Date.now();
-                aduRunState.lastProgressAt = lastProgressAt;
-                aduRunState.listingsProcessed = processedThisBatch;
-                aduRunState.rssMB = Math.round(
-                  process.memoryUsage().rss / 1024 / 1024,
-                );
-                aduRunState.heapMB = Math.round(
-                  process.memoryUsage().heapUsed / 1024 / 1024,
-                );
-              };
-            },
-          );
-
-          await runPool(detailTasks, DETAIL_CONCURRENCY);
+          for (const { rawListing, preFilter } of pendingDetails) {
+            await descriptionQueue.add('fetch-description', {
+              source: 'zillow-adu',
+              url: rawListing.url,
+              preFilter,
+              sessionId: (this as any).sessionId
+            });
+          }
+          lastProgressAt = Date.now();
         }
 
         if (pageListings.length === 0) {
