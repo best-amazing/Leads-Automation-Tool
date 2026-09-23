@@ -21,6 +21,7 @@ export class CreativeListingAduScraper extends CreativeListingScraper {
       { name: "Ohio", stateAbbr: "OH" },
       { name: "Indiana", stateAbbr: "IN" },
       { name: "Wisconsin", stateAbbr: "WI" },
+      { name: "Iowa", stateAbbr: "IA" },
     ];
   }
 

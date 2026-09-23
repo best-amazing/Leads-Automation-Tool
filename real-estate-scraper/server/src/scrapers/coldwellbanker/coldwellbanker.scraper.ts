@@ -163,7 +163,7 @@ export async function discoverTargetListingUrls(
 
   if (mode === "full") {
     childSitemaps = childSitemaps.filter((u) =>
-      /sitemap-listings-(oh|in|wi)-\d+\.xml$/.test(u),
+      /sitemap-listings-(oh|in|wi|ia)-\d+\.xml$/.test(u),
     );
     logger.info(
       `[coldwellbanker] full mode: ${childSitemaps.length} target chunk(s)`,
