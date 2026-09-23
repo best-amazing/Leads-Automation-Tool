@@ -180,7 +180,7 @@ export async function runAduResearch(): Promise<void> {
     // const crexiResults = await runContinuous(crexi);
     // const realtorResults = await runContinuous(realtor);
     // const offmarketResults = await runContinuous(offmarket);
-    const zillowResults = await runContinuous(zillow);
+    // const zillowResults = await runContinuous(zillow);
     if (global.gc) global.gc();
 
     const finalResults = [
@@ -190,7 +190,7 @@ export async function runAduResearch(): Promise<void> {
       // ...crexiResults,
       // ...realtorResults,
       // ...offmarketResults,
-      ...zillowResults,
+      // ...zillowResults,
       ...coldwellResults,
     ];
 
