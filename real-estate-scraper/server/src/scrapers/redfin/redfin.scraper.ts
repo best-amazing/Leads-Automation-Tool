@@ -88,7 +88,6 @@ import * as http  from "http";
 import * as zlib  from "zlib";
 import * as fs    from "fs";
 import * as path  from "path";
-
 import { BaseScraper, ScraperOptions }  from "../base.scraper";
 import { RawListing }                   from "../../types/listing";
 import { logger }                       from "../../utils/logger";

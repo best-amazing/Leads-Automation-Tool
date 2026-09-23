@@ -32,6 +32,7 @@ const BETWEEN_PAGE_MS = 3_000;
 const ZILLOW_DIAG_LIMIT = 10;
 
 const BACKFILL_BATCH_SIZE = Number(process.env.ADU_BACKFILL_BATCH_SIZE ?? 500);
+const ZILLOW_LOOKBACK_DAYS = Number(process.env.ZILLOW_LOOKBACK_DAYS ?? 90);
 
 // Micro-concurrency: fetch this many detail pages at the same time.
 // Each task releases its HTML (~1-2 MB) after parsing, so 5 in-flight
@@ -234,7 +235,16 @@ export class ZillowAduScraper extends ZillowScraper {
           } as AduResearchListing;
 
           // ── CHEAP FILTERS FIRST (no network call) ──────────────────
-          // 1. Location filter — only OH and IN
+          // 0. 90-day lookback — skip listings older than ZILLOW_LOOKBACK_DAYS
+          const dom = preFilter.daysOnMarket;
+          if (typeof dom === "number" && dom > ZILLOW_LOOKBACK_DAYS) {
+            logger.debug(
+              `[${this.sourceName}] [#${processedThisBatch}] skipped — ${dom} days on market > ${ZILLOW_LOOKBACK_DAYS}d limit`,
+            );
+            continue;
+          }
+
+          // 1. Location filter
           if (!passesLocationFilter(preFilter)) {
             logger.debug(
               `[${this.sourceName}] [#${processedThisBatch}] skipped — location filter`,
