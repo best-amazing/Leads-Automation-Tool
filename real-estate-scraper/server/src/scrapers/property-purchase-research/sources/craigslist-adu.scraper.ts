@@ -123,7 +123,9 @@ export class CraigslistAduScraper {
     let processedThisBatch = 0;
     let skippedAsSeen = 0;
 
-    for (const [cityName, baseUrl] of Object.entries(craigslistSources)) {
+    const sourcesArray = Object.entries(craigslistSources).sort(() => Math.random() - 0.5);
+
+    for (const [cityName, baseUrl] of sourcesArray) {
       if (typeof baseUrl !== "string") continue; // guard in case of other properties
 
       const cityState = CITY_TO_STATE[cityName];

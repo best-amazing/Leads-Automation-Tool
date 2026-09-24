@@ -89,6 +89,9 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
         `(batch cap ${Math.min(BACKFILL_BATCH_SIZE, this.options.maxListings)})`,
     );
 
+    // Shuffle the queue so we get a mix of states (Ohio, Indiana, Iowa, etc)
+    queue.sort(() => Math.random() - 0.5);
+
     const work = queue.slice(
       0,
       Math.min(BACKFILL_BATCH_SIZE, this.options.maxListings),

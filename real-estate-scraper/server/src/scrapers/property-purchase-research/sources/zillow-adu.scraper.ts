@@ -132,14 +132,15 @@ export class ZillowAduScraper extends ZillowScraper {
     const zillowCfg = config.sources.zillow;
     const markets = zillowCfg.markets;
 
-    // Persistent backfill tracker — skips listings already processed in
-    // previous batches and lets runContinuous() advance one batch at a time.
     const previouslySeen = await loadSeenFromDb(this.sourceName);
     const allSeenUrls = new Set(previouslySeen);
     let processedThisBatch = 0;
     let skippedAsSeen = 0;
 
-    for (const market of markets) {
+    // Shuffle markets so we don't always get stuck processing Ohio first
+    const shuffledMarkets = [...markets].sort(() => Math.random() - 0.5);
+
+    for (const market of shuffledMarkets) {
       if (processedThisBatch >= BACKFILL_BATCH_SIZE) break;
       logger.info(
         `[${this.sourceName}] ── Market: ${market.name} (${market.listingType}) ──`,
