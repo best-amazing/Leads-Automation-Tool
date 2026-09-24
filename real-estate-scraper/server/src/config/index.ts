@@ -124,23 +124,33 @@ export const config = {
     zillow: {
       markets: [
         {
-          name:        "Ohio - Active",
-          baseUrl:     "https://www.zillow.com/oh/",
+          name:        "Columbus, OH - Active",
+          baseUrl:     "https://www.zillow.com/columbus-oh/",
           listingType: "active" as const,
         },
         {
-          name:        "Indiana - Active",
-          baseUrl:     "https://www.zillow.com/in/",
+          name:        "Cleveland, OH - Active",
+          baseUrl:     "https://www.zillow.com/cleveland-oh/",
           listingType: "active" as const,
         },
         {
-          name:        "Wisconsin - Active",
-          baseUrl:     "https://www.zillow.com/wi/",
+          name:        "Toledo, OH - Active",
+          baseUrl:     "https://www.zillow.com/toledo-oh/",
           listingType: "active" as const,
         },
         {
-          name:        "Iowa - Active",
-          baseUrl:     "https://www.zillow.com/ia/",
+          name:        "Indianapolis, IN - Active",
+          baseUrl:     "https://www.zillow.com/indianapolis-in/",
+          listingType: "active" as const,
+        },
+        {
+          name:        "Milwaukee, WI - Active",
+          baseUrl:     "https://www.zillow.com/milwaukee-wi/",
+          listingType: "active" as const,
+        },
+        {
+          name:        "Des Moines, IA - Active",
+          baseUrl:     "https://www.zillow.com/des-moines-ia/",
           listingType: "active" as const,
         },
       ] as Array<{
