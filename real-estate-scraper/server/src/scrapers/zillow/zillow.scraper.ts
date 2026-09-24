@@ -115,9 +115,11 @@ function buildPageUrl(
     filterState.price = { max: config.filter.maxPrice };
   }
 
+  // Force chronological order using the newer Zillow API format
+  filterState.sort = { value: "days" };
+
   const state: Record<string, any> = {
     filterState,
-    sortSelection: { value: "days" },
   };
 
   if (pageNumber > 1) state.pagination = { currentPage: pageNumber };
