@@ -40,6 +40,7 @@ const CITY_TO_STATE: Record<string, string> = {
   indianapolis: "IN",
   fortwayne: "IN",
   desmoines: "IA",
+  chicago: "IL",
 };
 
 function raceTimeout<T>(

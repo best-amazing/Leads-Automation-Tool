@@ -69,7 +69,8 @@ export const config = {
     "ohio", "oh", "cleveland", "columbus", "toledo",
     "milwaukee", "wisconsin", "wi",
     "indiana", "in", "indianapolis",
-    // ── Add common OH/WI/IN/IA cities that appear in LoopNet addresses ──
+    "illinois", "il", "chicago",
+    // ── Add common OH/WI/IN/IA/IL cities that appear in LoopNet addresses ──
     "cincinnati", "akron", "dayton", "fort wayne", "des moines",
     "iowa", "ia",
   ],
@@ -119,6 +120,7 @@ export const config = {
       indianapolis: "https://indianapolis.craigslist.org/search/rea",
       fortwayne: "https://fortwayne.craigslist.org/search/rea",
       desmoines: "https://desmoines.craigslist.org/search/rea",
+      chicago: "https://chicago.craigslist.org/search/rea",
     },
 
     zillow: {
@@ -153,6 +155,11 @@ export const config = {
           baseUrl:     "https://www.zillow.com/des-moines-ia/",
           listingType: "active" as const,
         },
+        {
+          name:        "Chicago, IL - Active",
+          baseUrl:     "https://www.zillow.com/chicago-il/",
+          listingType: "active" as const,
+        },
       ] as Array<{
         name:        string;
         baseUrl:     string;
@@ -171,6 +178,7 @@ export const config = {
         "https://www.realtor.com/realestateandhomes-search/Milwaukee_WI/?price_max=300000&type=single_family,multi_family",
         "https://www.realtor.com/realestateandhomes-search/Indianapolis_IN/?price_max=300000&type=single_family,multi_family",
         "https://www.realtor.com/realestateandhomes-search/Des-Moines_IA/?price_max=300000&type=single_family,multi_family",
+        "https://www.realtor.com/realestateandhomes-search/Chicago_IL/?price_max=300000&type=single_family,multi_family",
       ]),
       maxPagesPerUrl:   Number(process.env.REALTOR_MAX_PAGES    ?? 10),
       detailFetchLimit: Number(process.env.REALTOR_DETAIL_LIMIT ?? 50),
@@ -183,6 +191,7 @@ export const config = {
         { name: "Toledo, OH",     regionId: 19458, regionType: 6 },
         { name: "Indianapolis, IN", regionId: 9196, regionType: 6 },
         { name: "Milwaukee, WI",  regionId: 12644, regionType: 6 },
+        { name: "Chicago, IL",    regionId: 29470, regionType: 6 },
       ] as Array<{ name: string; regionId: number; regionType: number }>,
 
       uipt: [1, 4] as number[],
@@ -204,6 +213,8 @@ export const config = {
         "https://www.crexi.com/properties/IN/Multifamily",
         "https://www.crexi.com/properties/IA/Des-Moines",
         "https://www.crexi.com/properties/IA/Multifamily",
+        "https://www.crexi.com/properties/IL/Chicago",
+        "https://www.crexi.com/properties/IL/Multifamily",
       ]),
     },
 
@@ -232,6 +243,7 @@ export const config = {
         { name: "Wisconsin", stateAbbr: "WI" },
         { name: "Indiana",   stateAbbr: "IN" },
         { name: "Iowa",      stateAbbr: "IA" },
+        { name: "Illinois",  stateAbbr: "IL" },
       ] as Array<{ name: string; stateAbbr: string }>,
 
       // Set to 0 to skip detail page fetches (faster, uses fewer Oxylabs credits).

@@ -22,6 +22,7 @@ export class CreativeListingAduScraper extends CreativeListingScraper {
       { name: "Indiana", stateAbbr: "IN" },
       { name: "Wisconsin", stateAbbr: "WI" },
       { name: "Iowa", stateAbbr: "IA" },
+      { name: "Illinois", stateAbbr: "IL" },
     ].sort(() => Math.random() - 0.5);
   }
 

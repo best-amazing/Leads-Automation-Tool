@@ -144,7 +144,7 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
       return;
     }
 
-    // Stage 1: location (OH/IN) — URLs are state-scoped but verify parsed state
+    // Stage 1: location — URLs are state-scoped but verify parsed state
     if (!passesLocationFilter(listing)) return;
     // Stage 2: hard property criteria (price/beds/baths/year/type exclusions)
     if (!passesPropertyCriteria(listing)) return;
