@@ -3,7 +3,21 @@ import { Queue, Worker, QueueOptions, WorkerOptions, Processor } from 'bullmq';
 import IORedis from 'ioredis';
 import { logger } from './logger';
 
-const REDIS_URL = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
+const configuredRedisUrl = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
+
+function normalizeRedisUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    if (url.protocol === 'redis:' && url.hostname.endsWith('.upstash.io')) {
+      url.protocol = 'rediss:';
+    }
+    return url.toString();
+  } catch {
+    return value;
+  }
+}
+
+const REDIS_URL = normalizeRedisUrl(configuredRedisUrl);
 
 // Initialize Redis connection for the Queue (producer side).
 // BullMQ requires maxRetriesPerRequest to be null.
@@ -30,7 +44,7 @@ export const descriptionQueue = new Queue(DESCRIPTION_QUEUE_NAME, {
 /**
  * Helper to create a worker for the description queue.
  * Each Worker needs its own IORedis instance (BullMQ requirement).
- */
+*/
 export function createDescriptionWorker(
   processor: Processor,
   options?: Omit<WorkerOptions, 'connection'>
