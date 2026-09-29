@@ -27,7 +27,6 @@ export const redisConnection = new IORedis(REDIS_URL, {
 
 export const DESCRIPTION_QUEUE_NAME = 'description-fetch-queue';
 
-// The centralized queue for all description fetching
 export const descriptionQueue = new Queue(DESCRIPTION_QUEUE_NAME, {
   connection: redisConnection,
   defaultJobOptions: {
@@ -36,8 +35,8 @@ export const descriptionQueue = new Queue(DESCRIPTION_QUEUE_NAME, {
       type: 'exponential',
       delay: 5000,
     },
-    removeOnComplete: 1000,
-    removeOnFail: 5000,
+    removeOnComplete: true,
+    removeOnFail: true,
   }
 });
 
@@ -56,6 +55,7 @@ export function createDescriptionWorker(
   const worker = new Worker(DESCRIPTION_QUEUE_NAME, processor, {
     connection: workerConnection,
     concurrency: 5, // Default concurrency
+    metrics: { maxDataPoints: 0 },
     ...options,
   });
 

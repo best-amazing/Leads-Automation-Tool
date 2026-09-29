@@ -311,14 +311,18 @@ export class ZillowAduScraper extends ZillowScraper {
               `${pendingDetails.length} listings to BullMQ queue`
           );
 
-          for (const { rawListing, preFilter } of pendingDetails) {
-            await descriptionQueue.add('fetch-description', {
+          const jobsToAdd = pendingDetails.map(({ rawListing, preFilter }) => ({
+            name: 'fetch-description',
+            data: {
               source: 'zillow-adu',
               url: rawListing.url,
               preFilter,
               sessionId: (this as any).sessionId
-            });
-          }
+            }
+          }));
+
+          await descriptionQueue.addBulk(jobsToAdd);
+          
           lastProgressAt = Date.now();
         }
 
