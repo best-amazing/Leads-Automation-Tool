@@ -176,6 +176,8 @@ export function writeAduResults(
   };
 
   fs.writeFileSync(jsonPath, JSON.stringify(jsonPayload, null, 2), "utf-8");
+  // This full rewrite supersedes any in-memory append cache for the same file
+  if (jsonCache?.path === jsonPath) jsonCache = null;
   logger.info(
     `[adu-research] JSON written: ${jsonPath} (${listings.length} items)`,
   );
@@ -214,16 +216,23 @@ export function appendAduResult(
   const dataRow = mapRow(listing);
   fs.appendFileSync(csvPath, dataRow + "\n", "utf-8");
 
-  let jsonPayload = {
-    generatedAt: new Date().toISOString(),
-    totalMatches: 0,
-    listings: [] as any[],
-  };
-  if (fs.existsSync(jsonPath)) {
-    try {
-      jsonPayload = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
-    } catch {}
+  // Load the day's JSON once per process, then keep it in memory — re-reading
+  // and re-parsing the whole file on every match made each append slower.
+  if (!jsonCache || jsonCache.path !== jsonPath) {
+    flushJsonCache();
+    let payload = {
+      generatedAt: new Date().toISOString(),
+      totalMatches: 0,
+      listings: [] as any[],
+    };
+    if (fs.existsSync(jsonPath)) {
+      try {
+        payload = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
+      } catch {}
+    }
+    jsonCache = { path: jsonPath, payload };
   }
+  const jsonPayload = jsonCache.payload;
 
   jsonPayload.listings.push({
     address: displayAddress(listing),
@@ -246,5 +255,33 @@ export function appendAduResult(
   jsonPayload.totalMatches = jsonPayload.listings.length;
   jsonPayload.generatedAt = new Date().toISOString();
 
-  fs.writeFileSync(jsonPath, JSON.stringify(jsonPayload, null, 2), "utf-8");
+  // Debounced write: a burst of matches costs one serialization, not one each.
+  if (!jsonFlushTimer) {
+    jsonFlushTimer = setTimeout(flushJsonCache, JSON_FLUSH_MS);
+    jsonFlushTimer.unref();
+  }
 }
+
+const JSON_FLUSH_MS = 5_000;
+let jsonCache: { path: string; payload: any } | null = null;
+let jsonFlushTimer: NodeJS.Timeout | null = null;
+
+function flushJsonCache(): void {
+  if (jsonFlushTimer) {
+    clearTimeout(jsonFlushTimer);
+    jsonFlushTimer = null;
+  }
+  if (!jsonCache) return;
+  try {
+    fs.writeFileSync(
+      jsonCache.path,
+      JSON.stringify(jsonCache.payload, null, 2),
+      "utf-8",
+    );
+  } catch (err) {
+    logger.warn(`[adu-research] JSON write failed: ${err}`);
+  }
+}
+
+// Synchronous write on exit so a pending debounce never drops matches.
+process.on("exit", flushJsonCache);

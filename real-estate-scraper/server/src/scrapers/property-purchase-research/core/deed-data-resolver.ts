@@ -21,6 +21,16 @@ const OGRIP_URL =
   process.env.OGRIP_PARCELS_URL ||
   "https://services2.arcgis.com/MlJ0G8iWUyC7jAmu/arcgis/rest/services/OhioStatewidePacels_full_view/FeatureServer/0";
 const OGRIP_SALE_DATE_FIELD = process.env.OGRIP_SALE_DATE_FIELD || "SALEDATE";
+// The default OGRIP service only covers Ohio parcels — querying it for other
+// states always misses and just burns a request (up to a 10s timeout).
+const OGRIP_STATES = (process.env.OGRIP_STATES || "OH")
+  .split(",")
+  .map((s) => s.trim().toUpperCase())
+  .filter(Boolean);
+
+function ogripCoversState(state: string | undefined): boolean {
+  return OGRIP_STATES.includes((state || "OH").trim().toUpperCase());
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -183,7 +193,11 @@ export async function fetchDeedTransferDate(
   // Coordinates-only path (no address): skip geocoding + ATTOM, go straight
   // to the parcel service (craigslist 2025+ exposes a pin but no address).
   if (!input.address) {
-    if (input.latitude != null && input.longitude != null) {
+    if (
+      input.latitude != null &&
+      input.longitude != null &&
+      ogripCoversState(input.state)
+    ) {
       const ogripDate = await getFromOgrip(input.latitude, input.longitude);
       if (ogripDate) {
         logger.info(`[deed-resolver] ✓ OGRIP matched (lat/lon): ${ogripDate}`);
@@ -244,7 +258,11 @@ export async function fetchDeedTransferDate(
     }
   }
 
-  // 4. Try OGRIP fallback with point geometry
+  // 4. Try OGRIP fallback with point geometry (only where it has coverage)
+  if (!ogripCoversState(state)) {
+    logger.debug(`[deed-resolver] No deed date found for "${input.address}"`);
+    return null;
+  }
   const ogripDate = await getFromOgrip(lat, lon);
   if (ogripDate) {
     logger.info(

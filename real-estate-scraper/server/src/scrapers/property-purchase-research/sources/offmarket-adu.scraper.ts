@@ -11,7 +11,7 @@ import {
 } from "../filters/adu-research.scraper";
 import { descriptionQueue } from '../../../utils/queue';
 import { logger } from "../../../utils/logger";
-import { ADU_KEYWORDS, TARGET_STATES } from "../core/adu-keywords";
+import { findAduKeyword, TARGET_STATES } from "../core/adu-keywords";
 
 export class OffmarketAduScraper extends OffmarketScraper {
   readonly sourceName: string = "offmarket-adu";
@@ -53,13 +53,7 @@ export class OffmarketAduScraper extends OffmarketScraper {
         .join(" ")
         .toLowerCase();
 
-      const matchedKeyword = ADU_KEYWORDS.find((kw) => {
-        const regex = new RegExp(
-          `\\b${kw.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&")}\\b`,
-          "i",
-        );
-        return regex.test(haystack);
-      });
+      const matchedKeyword = findAduKeyword(haystack);
 
       let zip: string | undefined;
       if (listing.address) {
@@ -87,11 +81,13 @@ export class OffmarketAduScraper extends OffmarketScraper {
       `[${this.sourceName}] ✓ ${filtered.length} listings passed ADU filters (out of ${aduListings.length} total)`,
     );
 
-    for (const item of filtered) {
-      await descriptionQueue.add('fetch-description', {
-        source: this.sourceName,
-        listing: item
-      });
+    if (filtered.length > 0) {
+      await descriptionQueue.addBulk(
+        filtered.map((item) => ({
+          name: 'fetch-description',
+          data: { source: this.sourceName, listing: item },
+        })),
+      );
     }
 
     return filtered;

@@ -29,7 +29,7 @@ import {
   loadSeenListings as loadSeenFromDb,
   saveSeenListings as saveSeenToDb,
 } from "../../../utils/backfill-store";
-import { ADU_KEYWORDS, TARGET_STATES } from "../core/adu-keywords";
+import { findAduKeyword, TARGET_STATES } from "../core/adu-keywords";
 import {
   AduResearchListing,
   parseAduApiResponse,
@@ -203,10 +203,7 @@ export function passesKeywordFilter(listing: AduResearchListing): boolean {
     .join(" ")
     .toLowerCase();
 
-  const matchedKeyword = ADU_KEYWORDS.find((kw) => {
-    const regex = new RegExp(`\\b${kw}\\b`, "i");
-    return regex.test(haystack);
-  });
+  const matchedKeyword = findAduKeyword(haystack);
 
   const passed = !!matchedKeyword;
 
@@ -270,7 +267,8 @@ export function passesPropertyCriteria(listing: AduResearchListing): boolean {
       passed = false;
       failReason = "property type (not SFH/Multi)";
     } else if (
-      haystack.includes("hoa") ||
+      // Word boundary so "shoal" / "Hoagland" don't false-positive
+      /\bhoa\b/.test(haystack) ||
       haystack.includes("homeowners association") ||
       haystack.includes("home owner association") ||
       haystack.includes("home owner's association") ||

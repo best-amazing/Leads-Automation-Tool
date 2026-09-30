@@ -8,7 +8,7 @@ import {
   passesPropertyCriteria,
 } from "../filters/adu-research.scraper";
 import { logger } from "../../../utils/logger";
-import { ADU_KEYWORDS } from "../core/adu-keywords";
+import { findAduKeyword } from "../core/adu-keywords";
 import { descriptionQueue } from "../../../utils/queue";
 
 export class CreativeListingAduScraper extends CreativeListingScraper {
@@ -38,13 +38,7 @@ export class CreativeListingAduScraper extends CreativeListingScraper {
         .join(" ")
         .toLowerCase();
 
-      const matchedKeyword = ADU_KEYWORDS.find((kw) => {
-        const regex = new RegExp(
-          `\\b${kw.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&")}\\b`,
-          "i",
-        );
-        return regex.test(haystack);
-      });
+      const matchedKeyword = findAduKeyword(haystack);
 
       let zip: string | undefined;
       if (listing.address) {
@@ -72,11 +66,13 @@ export class CreativeListingAduScraper extends CreativeListingScraper {
       `[${this.sourceName}] ✓ ${filtered.length} listings passed ADU filters (out of ${aduListings.length} total)`,
     );
 
-    for (const item of filtered) {
-      await descriptionQueue.add('fetch-description', {
-        source: this.sourceName,
-        listing: item
-      });
+    if (filtered.length > 0) {
+      await descriptionQueue.addBulk(
+        filtered.map((item) => ({
+          name: 'fetch-description',
+          data: { source: this.sourceName, listing: item },
+        })),
+      );
     }
 
     return filtered;

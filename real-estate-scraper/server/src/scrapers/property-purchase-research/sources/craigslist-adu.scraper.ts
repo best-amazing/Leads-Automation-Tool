@@ -233,13 +233,12 @@ export class CraigslistAduScraper {
         if (pendingDetails.length > 0) {
           logger.info(`[${this.sourceName}] ${cityName} offset ${offset}: Enqueuing ${pendingDetails.length} listings to BullMQ`);
 
-          for (const { rawListing, preFilter } of pendingDetails) {
-            await descriptionQueue.add('fetch-description', {
-              source: 'craigslist-adu',
-              url: rawListing.url,
-              preFilter
-            });
-          }
+          await descriptionQueue.addBulk(
+            pendingDetails.map(({ rawListing, preFilter }) => ({
+              name: 'fetch-description',
+              data: { source: 'craigslist-adu', url: rawListing.url, preFilter },
+            })),
+          );
         }
 
         // If no new listings were on this page, or we're hitting completely stale listings, we can stop pagination for this city.

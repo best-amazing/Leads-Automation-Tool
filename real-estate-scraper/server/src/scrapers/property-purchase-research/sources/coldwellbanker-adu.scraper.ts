@@ -43,10 +43,11 @@ import {
   loadSeenListings as loadSeenFromDb,
   saveSeenListings as saveSeenToDb,
 } from "../../../utils/backfill-store";
-import { ADU_KEYWORDS } from "../core/adu-keywords";
+import { findAduKeyword } from "../core/adu-keywords";
 import { descriptionQueue } from "../../../utils/queue";
 
-const BACKFILL_BATCH_SIZE = Number(process.env.CB_BACKFILL_BATCH_SIZE ?? 500);
+export const CB_BACKFILL_BATCH_SIZE = Number(process.env.CB_BACKFILL_BATCH_SIZE ?? 500);
+const BACKFILL_BATCH_SIZE = CB_BACKFILL_BATCH_SIZE;
 const CB_LOOKBACK_DAYS = Number(process.env.CB_LOOKBACK_DAYS ?? 90);
 
 export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
@@ -105,15 +106,17 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
     const completedLids = new Set<string>();
 
     // ── Enqueue detail fetch to BullMQ ────────────────────────────────────
-    for (let i = 0; i < work.length && processedThisBatch < BACKFILL_BATCH_SIZE; i++) {
-      const url = work[i];
-      await descriptionQueue.add('fetch-description', {
-        source: this.sourceName,
-        url
-      });
-      completedLids.add(extractLid(url));
-      processedThisBatch++;
+    const batch = work.slice(0, BACKFILL_BATCH_SIZE);
+    if (batch.length > 0) {
+      await descriptionQueue.addBulk(
+        batch.map((url) => ({
+          name: 'fetch-description',
+          data: { source: this.sourceName, url },
+        })),
+      );
     }
+    for (const url of batch) completedLids.add(extractLid(url));
+    processedThisBatch = batch.length;
 
     logger.info(
       `[${this.sourceName}] Processed ${processedThisBatch} new listing(s), ` +
@@ -154,13 +157,7 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
     const haystack = [listing.title, listing.description, listing.address]
       .join(" ")
       .toLowerCase();
-    listing.matchedKeyword = ADU_KEYWORDS.find((kw) => {
-      const regex = new RegExp(
-        `\\b${kw.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&")}\\b`,
-        "i",
-      );
-      return regex.test(haystack);
-    });
+    listing.matchedKeyword = findAduKeyword(haystack);
 
     this.visited.add(extractLid(listing.url));
     this.results.push(listing);

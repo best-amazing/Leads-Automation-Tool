@@ -18,7 +18,7 @@ import {
   loadSeenListings as loadSeenFromDb,
   saveSeenListings as saveSeenToDb,
 } from "../../../utils/backfill-store";
-import { ADU_KEYWORDS, TARGET_STATES } from "../core/adu-keywords";
+import { findAduKeyword, TARGET_STATES } from "../core/adu-keywords";
 import { sleep, jitter } from "../../../utils/browser";
 import { descriptionQueue } from "../../../utils/queue";
 
@@ -193,6 +193,8 @@ export class ZillowAduScraper extends ZillowScraper {
           rawListing: RawListing;
           preFilter: AduResearchListing;
         }> = [];
+        // Matched on title/address alone — enqueued for emission, no fetch.
+        const titleMatches: AduResearchListing[] = [];
 
         for (const rawListing of pageListings) {
           if (rawScannedForMarket >= this.options.maxListings) break;
@@ -264,10 +266,7 @@ export class ZillowAduScraper extends ZillowScraper {
           // 2b. Title/address keyword pre-check — needs no detail fetch.
           const titleHaystack =
             `${preFilter.title ?? ""} ${preFilter.address ?? ""}`.toLowerCase();
-          const titleMatchedKeyword = ADU_KEYWORDS.find((kw) => {
-            const regex = new RegExp(`\\b${kw}\\b`, "i");
-            return regex.test(titleHaystack);
-          });
+          const titleMatchedKeyword = findAduKeyword(titleHaystack);
 
           if (titleMatchedKeyword) {
             const enriched = {
@@ -279,22 +278,9 @@ export class ZillowAduScraper extends ZillowScraper {
             logger.info(
               `[${this.sourceName}] ✓ MATCHED ADU KEYWORD (title/address): ${titleMatchedKeyword}`,
             );
-            if (this.options.onMatch) {
-              try {
-                const MATCH_TIMEOUT_MS = Number(
-                  process.env.ADU_MATCH_TIMEOUT_MS ?? 300_000,
-                );
-                await raceTimeout(
-                  this.options.onMatch(enriched),
-                  MATCH_TIMEOUT_MS,
-                  `onMatch ${rawListing.url}`,
-                );
-              } catch (err) {
-                logger.warn(
-                  `[${this.sourceName}] ${rawListing.url}: ${err instanceof Error ? err.message : err}`,
-                );
-              }
-            }
+            // Emit through the worker (deed lookup + outputs) instead of
+            // blocking the page walk on it.
+            titleMatches.push(enriched);
             lastProgressAt = Date.now();
             aduRunState.lastProgressAt = lastProgressAt;
             continue;
@@ -305,21 +291,27 @@ export class ZillowAduScraper extends ZillowScraper {
         }
 
         // ── Phase 2: Fetch detail pages via BullMQ Queue ───────────────
-        if (pendingDetails.length > 0) {
+        if (pendingDetails.length > 0 || titleMatches.length > 0) {
           logger.info(
             `[${this.sourceName}] ${market.name} page ${page}: Enqueuing ` +
-              `${pendingDetails.length} listings to BullMQ queue`
+              `${pendingDetails.length} detail fetch(es) + ${titleMatches.length} title match(es) to BullMQ queue`
           );
 
-          const jobsToAdd = pendingDetails.map(({ rawListing, preFilter }) => ({
-            name: 'fetch-description',
-            data: {
-              source: 'zillow-adu',
-              url: rawListing.url,
-              preFilter,
-              sessionId: (this as any).sessionId
-            }
-          }));
+          const jobsToAdd = [
+            ...pendingDetails.map(({ rawListing, preFilter }) => ({
+              name: 'fetch-description',
+              data: {
+                source: 'zillow-adu',
+                url: rawListing.url,
+                preFilter,
+                sessionId: (this as any).sessionId
+              }
+            })),
+            ...titleMatches.map((listing) => ({
+              name: 'fetch-description',
+              data: { source: 'zillow-adu', listing },
+            })),
+          ];
 
           await descriptionQueue.addBulk(jobsToAdd);
           

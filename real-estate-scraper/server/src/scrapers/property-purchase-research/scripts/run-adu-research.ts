@@ -16,7 +16,10 @@ import { CrexiAduScraper } from "../sources/crexi-adu.scraper";
 import { RealtorAduScraper } from "../sources/realtor-adu.scraper";
 import { CreativeListingAduScraper } from "../sources/creative-listing-adu.scraper";
 import { OffmarketAduScraper } from "../sources/offmarket-adu.scraper";
-import { ColdwellBankerAduScraper } from "../sources/coldwellbanker-adu.scraper";
+import {
+  ColdwellBankerAduScraper,
+  CB_BACKFILL_BATCH_SIZE,
+} from "../sources/coldwellbanker-adu.scraper";
 import { logger } from "../../../utils/logger";
 import { getLastBackfillStatus } from "../../../utils/backfill-store";
 import { ADU_KEYWORDS, TARGET_STATES } from "../core/adu-keywords";
@@ -34,7 +37,11 @@ import {
 import { fetchDeedTransferDate } from "../core/deed-data-resolver";
 import * as fs from "fs";
 import * as path from "path";
-import { writeAduResearchToSheets } from "../../../utils/google-sheets";
+import {
+  flushAduSheetWrites,
+  queueAduSheetWrite,
+} from "../../../utils/google-sheets";
+import { descriptionQueue } from "../../../utils/queue";
 import { AduDedupeTracker } from "../core/adu-dedupe-tracker";
 
 let capturedCount = 0;
@@ -89,7 +96,7 @@ async function handleMatch(listing: AduResearchListing) {
   }
 
   appendAduResult(listing);
-  await writeAduResearchToSheets([listing]);
+  queueAduSheetWrite(listing);
 }
 
 export async function runAduResearch(): Promise<void> {
@@ -143,10 +150,17 @@ export async function runAduResearch(): Promise<void> {
   });
 
   try {
-    async function runContinuous(scraper: any): Promise<AduResearchListing[]> {
+    // Backpressure: once this many jobs are waiting/delayed, stop enqueueing
+    // further batches this run — the next cron tick resumes from the stored
+    // seen-set, so the queue never grows faster than the worker drains it.
+    const maxBacklog = Number(process.env.ADU_MAX_QUEUE_BACKLOG ?? 2000);
+
+    async function runContinuous(
+      scraper: any,
+      batchThreshold = Number(process.env.ADU_BACKFILL_BATCH_SIZE ?? 500),
+    ): Promise<AduResearchListing[]> {
       const sourceName = scraper.sourceName;
       const allResults: AduResearchListing[] = [];
-      const batchThreshold = Number(process.env.ADU_BACKFILL_BATCH_SIZE ?? 500);
       while (true) {
         const results = await scraper.run();
         allResults.push(...(results as AduResearchListing[]));
@@ -157,7 +171,16 @@ export async function runAduResearch(): Promise<void> {
 
         const { processedCount } = await getLastBackfillStatus(sourceName);
 
-        if (processedCount >= batchThreshold) {
+        const backlog =
+          (await descriptionQueue.getWaitingCount()) +
+          (await descriptionQueue.getDelayedCount());
+
+        if (processedCount >= batchThreshold && backlog >= maxBacklog) {
+          logger.info(
+            `[runner] ${sourceName} paused — queue backlog ${backlog} >= ${maxBacklog}; resuming next run.`,
+          );
+          break;
+        } else if (processedCount >= batchThreshold) {
           logger.info(
             `[runner] ${sourceName} backfill hit batch limit, immediately fetching next batch...`,
           );
@@ -173,7 +196,9 @@ export async function runAduResearch(): Promise<void> {
       return allResults;
     }
 
-    const coldwellResults = await runContinuous(coldwell);
+    // Coldwell caps each batch at CB_BACKFILL_BATCH_SIZE, so compare against
+    // that — against ADU_BACKFILL_BATCH_SIZE it never ran a second batch.
+    const coldwellResults = await runContinuous(coldwell, CB_BACKFILL_BATCH_SIZE);
     const redfinResults = await runContinuous(redfin);
     const creativeListingResults = await runContinuous(creativeListing);
     const craigslistResults = await runContinuous(craigslist);
@@ -182,6 +207,7 @@ export async function runAduResearch(): Promise<void> {
     // const offmarketResults = await runContinuous(offmarket);
     const zillowResults = await runContinuous(zillow);
     if (global.gc) global.gc();
+    await flushAduSheetWrites();
 
     const finalResults = [
       ...redfinResults,

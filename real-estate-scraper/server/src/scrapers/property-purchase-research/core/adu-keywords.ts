@@ -63,3 +63,18 @@ export const ADU_KEYWORDS = [
  * US state abbreviations to filter listings by geography.
  */
 export const TARGET_STATES = ["OH", "IN", "WI", "IA", "IL"];
+
+// Compiled once at load (in ADU_KEYWORDS priority order) instead of building
+// a fresh RegExp per keyword per listing.
+const ADU_KEYWORD_PATTERNS = ADU_KEYWORDS.map((kw) => ({
+  kw,
+  re: new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i"),
+}));
+
+/**
+ * Returns the highest-priority ADU keyword found in `text`, or undefined.
+ * Priority follows ADU_KEYWORDS order, not position in the text.
+ */
+export function findAduKeyword(text: string): string | undefined {
+  return ADU_KEYWORD_PATTERNS.find(({ re }) => re.test(text))?.kw;
+}

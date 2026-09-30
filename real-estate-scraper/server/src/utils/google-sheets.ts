@@ -153,7 +153,75 @@ function buildAduDupKey(listing: AduResearchListing): string | null {
   return `addr:${normalizedAddress}|zip:${zip}`;
 }
 
-export async function writeAduResearchToSheets(listings: AduResearchListing[]) {
+// Sheets client + target tab id are resolved once per process (reset on error)
+// instead of re-authenticating and re-fetching spreadsheet metadata per write.
+let cachedSheetsClient: ReturnType<typeof google.sheets> | null = null;
+let cachedSheetId: number | undefined;
+
+// Writes are serialized: each write computes its target row from cachedLastRow,
+// so two concurrent writes would otherwise land on (and overwrite) the same row.
+let sheetsWriteChain: Promise<void> = Promise.resolve();
+
+export function writeAduResearchToSheets(
+  listings: AduResearchListing[],
+): Promise<void> {
+  const run = sheetsWriteChain.then(() => writeAduResearchToSheetsNow(listings));
+  sheetsWriteChain = run.catch(() => {});
+  return run;
+}
+
+// ── Buffered writer ─────────────────────────────────────────────────────────
+// Matches are collected and flushed as one append every ADU_SHEETS_FLUSH_SIZE
+// rows or ADU_SHEETS_FLUSH_MS, keeping well under the Sheets write quota.
+const SHEETS_FLUSH_SIZE = Number(process.env.ADU_SHEETS_FLUSH_SIZE ?? 20);
+const SHEETS_FLUSH_MS = Number(process.env.ADU_SHEETS_FLUSH_MS ?? 15_000);
+let sheetsBuffer: AduResearchListing[] = [];
+let sheetsFlushTimer: NodeJS.Timeout | null = null;
+let sheetsExitHooked = false;
+
+export function queueAduSheetWrite(listing: AduResearchListing): void {
+  sheetsBuffer.push(listing);
+  hookSheetsFlushOnExit();
+  if (sheetsBuffer.length >= SHEETS_FLUSH_SIZE) {
+    void flushAduSheetWrites();
+  } else if (!sheetsFlushTimer) {
+    sheetsFlushTimer = setTimeout(() => void flushAduSheetWrites(), SHEETS_FLUSH_MS);
+  }
+}
+
+export async function flushAduSheetWrites(): Promise<void> {
+  if (sheetsFlushTimer) {
+    clearTimeout(sheetsFlushTimer);
+    sheetsFlushTimer = null;
+  }
+  const batch = sheetsBuffer;
+  sheetsBuffer = [];
+  if (batch.length > 0) {
+    await writeAduResearchToSheets(batch).catch((err) =>
+      logger.error(`[sheets] Buffered flush failed: ${err}`),
+    );
+  } else {
+    await sheetsWriteChain;
+  }
+}
+
+function hookSheetsFlushOnExit(): void {
+  if (sheetsExitHooked) return;
+  sheetsExitHooked = true;
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.once(signal, () => {
+      logger.info(`[sheets] ${signal} — flushing ${sheetsBuffer.length} buffered row(s)`);
+      // Best effort: other shutdown handlers may exit first. Cap the wait so a
+      // hung Sheets call can't block shutdown.
+      Promise.race([
+        flushAduSheetWrites(),
+        new Promise((r) => setTimeout(r, 10_000)),
+      ]).finally(() => process.exit(0));
+    });
+  }
+}
+
+async function writeAduResearchToSheetsNow(listings: AduResearchListing[]) {
   if (listings.length === 0) return;
 
   const spreadsheetId = process.env.SPREADSHEET_ID;
@@ -179,23 +247,28 @@ export async function writeAduResearchToSheets(listings: AduResearchListing[]) {
 
   while (attempt < maxRetries) {
     try {
-      const auth = new google.auth.GoogleAuth({
-        keyFile: keyPath,
-        scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-      });
+      if (!cachedSheetsClient) {
+        const auth = new google.auth.GoogleAuth({
+          keyFile: keyPath,
+          scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+        });
+        cachedSheetsClient = google.sheets({ version: "v4", auth });
+        cachedSheetId = undefined;
+      }
+      const sheets = cachedSheetsClient;
 
-      const sheets = google.sheets({ version: "v4", auth });
-
-      // Check if sheet exists
-      const meta = await sheets.spreadsheets.get({ spreadsheetId });
-      let sheetExists = false;
-      let sheetId: number | undefined;
-      meta.data.sheets?.forEach((s) => {
-        if (s.properties?.title === sheetName) {
-          sheetExists = true;
-          sheetId = s.properties.sheetId ?? undefined;
-        }
-      });
+      // Check if sheet exists (once per process)
+      let sheetExists = cachedSheetId !== undefined;
+      let sheetId: number | undefined = cachedSheetId;
+      if (!sheetExists) {
+        const meta = await sheets.spreadsheets.get({ spreadsheetId });
+        meta.data.sheets?.forEach((s) => {
+          if (s.properties?.title === sheetName) {
+            sheetExists = true;
+            sheetId = s.properties.sheetId ?? undefined;
+          }
+        });
+      }
 
       if (!sheetExists) {
         logger.info(`[sheets] Creating new sheet "${sheetName}"`);
@@ -217,6 +290,7 @@ export async function writeAduResearchToSheets(listings: AduResearchListing[]) {
           createRes.data.replies?.[0]?.addSheet?.properties?.sheetId ??
           undefined;
       }
+      cachedSheetId = sheetId;
 
       const headers = ADU_SHEET_HEADERS;
 
@@ -397,6 +471,8 @@ export async function writeAduResearchToSheets(listings: AduResearchListing[]) {
     } catch (error: any) {
       attempt++;
       stateLoaded = false; // reload true sheet state before retrying
+      cachedSheetsClient = null;
+      cachedSheetId = undefined;
       logger.error(
         `[sheets] Failed to write to Google Sheets (attempt ${attempt}/${maxRetries}): ${error.message}`,
       );

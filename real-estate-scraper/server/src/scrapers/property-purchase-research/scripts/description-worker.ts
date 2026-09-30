@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { Job } from 'bullmq';
+import { DelayedError, Job } from 'bullmq';
 import { createDescriptionWorker } from '../../../utils/queue';
 import { logger } from '../../../utils/logger';
 import { AduResearchListing } from '../core/adu-research.parser';
@@ -8,8 +8,7 @@ import {
   oxylabsFetch,
   extractNextData,
 } from '../../zillow/zillow.scraper';
-import { sleep, jitter } from '../../../utils/browser';
-import { ADU_KEYWORDS } from '../core/adu-keywords';
+import { findAduKeyword } from '../core/adu-keywords';
 import { parseCraigslistDetailPage } from '../../craigslist/craigslist.parser';
 import { ColdwellBankerAduScraper } from '../sources/coldwellbanker-adu.scraper';
 
@@ -19,36 +18,39 @@ import {
 } from '../filters/adu-research.scraper';
 import { fetchDeedTransferDate } from '../core/deed-data-resolver';
 import { appendAduResult } from '../core/adu-csv-writer';
-import { writeAduResearchToSheets } from '../../../utils/google-sheets';
+import { queueAduSheetWrite } from '../../../utils/google-sheets';
 import { AduDedupeTracker } from '../core/adu-dedupe-tracker';
 
 const tracker = new AduDedupeTracker();
 let capturedCount = 0;
 
 // ── Per-source throttle ─────────────────────────────────────────────────────
-// Some sources (e.g. Coldwell Banker) rate-limit aggressively. This ensures
-// that even with concurrency=5, jobs for the same source are spaced out.
+// Some sources (e.g. Coldwell Banker) rate-limit aggressively. Each job for a
+// throttled source reserves a start slot spaced SOURCE_MIN_DELAY_MS apart. A
+// job whose slot is in the future is moved back to BullMQ's delayed set
+// instead of sleeping, so it never occupies a worker slot while waiting and
+// jobs for other sources keep flowing.
 const SOURCE_MIN_DELAY_MS: Record<string, number> = {
-  'coldwellbanker-adu': 5_000,  // 5s between CB fetches
-  'craigslist-adu': 2_000,      // 2s between CL fetches
+  'coldwellbanker-adu': 5_000,  // 5s between CB fetch starts
+  'craigslist-adu': 2_000,      // 2s between CL fetch starts
 };
-const lastJobFinished: Record<string, number> = {};
+const nextSlotAt: Record<string, number> = {};
+const SLOT_TOLERANCE_MS = 250;
 
-async function throttleForSource(source: string): Promise<void> {
+/** Returns 0 when the job may run now, otherwise the timestamp to delay it to. */
+function reserveSlot(job: Job, source: string): number {
   const minDelay = SOURCE_MIN_DELAY_MS[source];
-  if (!minDelay) return; // no throttle for this source
+  if (!minDelay) return 0; // no throttle for this source
 
-  const lastFinish = lastJobFinished[source] ?? 0;
-  const elapsed = Date.now() - lastFinish;
-  if (elapsed < minDelay) {
-    const waitMs = minDelay - elapsed;
-    logger.debug(`[worker] Throttling ${source} for ${waitMs}ms`);
-    await sleep(waitMs);
+  const now = Date.now();
+  const reserved = job.data._slotAt;
+  if (typeof reserved === 'number' && now >= reserved - SLOT_TOLERANCE_MS) {
+    return 0; // this job's reserved slot has arrived
   }
-}
 
-function markSourceDone(source: string): void {
-  lastJobFinished[source] = Date.now();
+  const slot = Math.max(now, nextSlotAt[source] ?? 0);
+  nextSlotAt[source] = slot + minDelay;
+  return slot - now <= SLOT_TOLERANCE_MS ? 0 : slot;
 }
 
 async function handleMatch(listing: AduResearchListing) {
@@ -88,7 +90,9 @@ async function handleMatch(listing: AduResearchListing) {
   }
 
   appendAduResult(listing);
-  await writeAduResearchToSheets([listing]);
+  // Buffered: flushed to Sheets in batches and serialized, so concurrent
+  // jobs never race on the target row.
+  queueAduSheetWrite(listing);
 }
 
 /**
@@ -165,16 +169,12 @@ async function processZillow(job: Job) {
   } as AduResearchListing;
 
   const haystack = [enriched.title, enriched.description, enriched.address].join(' ').toLowerCase();
-  const matchedKeyword = ADU_KEYWORDS.find((kw) => {
-    const regex = new RegExp(`\\b${kw}\\b`, 'i');
-    return regex.test(haystack);
-  });
+  const matchedKeyword = findAduKeyword(haystack);
 
   if (matchedKeyword) {
     enriched.matchedKeyword = matchedKeyword;
     logger.info(`[${sourceName}-worker] ✓ MATCHED ADU KEYWORD: ${matchedKeyword}`);
     await handleMatch(enriched);
-    await sleep(jitter(1000));
   }
 }
 
@@ -199,6 +199,9 @@ async function processCraigslist(job: Job) {
     }
   } catch (err) {
     logger.warn(`[${sourceName}-worker] ${url}: ${err instanceof Error ? err.message : err}`);
+    // Let BullMQ retry the fetch; only on the final attempt fall through and
+    // match on the search-page title alone.
+    if (job.attemptsMade + 1 < (job.opts.attempts ?? 1)) throw err;
   }
 
   const enriched: AduResearchListing = {
@@ -208,16 +211,12 @@ async function processCraigslist(job: Job) {
   } as AduResearchListing;
 
   const haystack = [enriched.title, enriched.description, enriched.address].join(" ").toLowerCase();
-  const matchedKeyword = ADU_KEYWORDS.find((kw) => {
-    const regex = new RegExp(`\\b${kw}\\b`, "i");
-    return regex.test(haystack);
-  });
+  const matchedKeyword = findAduKeyword(haystack);
 
   if (matchedKeyword) {
     enriched.matchedKeyword = matchedKeyword;
     logger.info(`[${sourceName}-worker] ✓ MATCHED ADU KEYWORD: ${matchedKeyword}`);
     await handleMatch(enriched);
-    await sleep(jitter(1000));
   }
 }
 
@@ -241,10 +240,7 @@ async function processInvestorLift(job: Job) {
   const haystack = [listing.title, listing.description, listing.address]
     .join(' ')
     .toLowerCase();
-  const matchedKeyword = ADU_KEYWORDS.find((kw) => {
-    const regex = new RegExp(`\\b${kw.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')}\\b`, 'i');
-    return regex.test(haystack);
-  });
+  const matchedKeyword = findAduKeyword(haystack);
 
   if (matchedKeyword) {
     listing.matchedKeyword = matchedKeyword;
@@ -254,37 +250,44 @@ async function processInvestorLift(job: Job) {
 }
 
 // Create and export the worker
-export const worker = createDescriptionWorker(async (job) => {
+export const worker = createDescriptionWorker(async (job, token) => {
   const source = job.data.source;
+
+  // Respect per-source rate limits without holding a worker slot
+  const delayUntil = reserveSlot(job, source);
+  if (delayUntil) {
+    logger.debug(`[worker] Throttling ${source} job ${job.id} for ${delayUntil - Date.now()}ms`);
+    await job.updateData({ ...job.data, _slotAt: delayUntil });
+    await job.moveToDelayed(delayUntil, token);
+    throw new DelayedError();
+  }
+
   logger.info(`[worker] Processing job ${job.id} for source ${source}`);
 
-  // Respect per-source rate limits before starting work
-  await throttleForSource(source);
-
-  try {
-    if (source === 'zillow-adu') {
-      await processZillow(job);
-    } else if (source === 'craigslist-adu') {
-      await processCraigslist(job);
-    } else if (source === 'coldwellbanker-adu') {
-      await processColdwellBanker(job);
-    } else if (source === 'investorlift-adu') {
-      await processInvestorLift(job);
-    } else if (
-      source === 'redfin-adu' ||
-      source === 'creative-listing-adu' ||
-      source === 'crexi-adu' ||
-      source === 'offmarket-adu'
-    ) {
-      // These "fast" scrapers already did all the heavy lifting upfront.
-      // They just enqueue the final listing here to be written to Google Sheets.
+  if (source === 'zillow-adu') {
+    if (job.data.listing) {
+      // Already matched on title/address during the search walk — no detail fetch.
       await handleMatch(job.data.listing);
     } else {
-      logger.warn(`[worker] Unknown source ${source}`);
+      await processZillow(job);
     }
-  } finally {
-    // Mark completion time so the next job for this source respects the delay
-    markSourceDone(source);
+  } else if (source === 'craigslist-adu') {
+    await processCraigslist(job);
+  } else if (source === 'coldwellbanker-adu') {
+    await processColdwellBanker(job);
+  } else if (source === 'investorlift-adu') {
+    await processInvestorLift(job);
+  } else if (
+    source === 'redfin-adu' ||
+    source === 'creative-listing-adu' ||
+    source === 'crexi-adu' ||
+    source === 'offmarket-adu'
+  ) {
+    // These "fast" scrapers already did all the heavy lifting upfront.
+    // They just enqueue the final listing here to be written to Google Sheets.
+    await handleMatch(job.data.listing);
+  } else {
+    logger.warn(`[worker] Unknown source ${source}`);
   }
 }, {
   concurrency: Number(process.env.ADU_DETAIL_CONCURRENCY ?? 5)

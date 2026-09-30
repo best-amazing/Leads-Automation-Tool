@@ -281,11 +281,13 @@ export class InvestorLiftAduScraper extends BaseScraper {
 
     // Instead of enriching sequentially and holding up the main process,
     // we enqueue them for the BullMQ worker to handle the address fetching.
-    for (const listing of passed) {
-      await descriptionQueue.add('fetch-description', {
-        source: this.sourceName,
-        listing
-      });
+    if (passed.length > 0) {
+      await descriptionQueue.addBulk(
+        passed.map((listing) => ({
+          name: 'fetch-description',
+          data: { source: this.sourceName, listing },
+        })),
+      );
     }
 
     // We return empty since the worker handles the rest (including onMatch)

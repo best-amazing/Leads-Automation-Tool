@@ -13,7 +13,7 @@
 
 import { RawListing } from "../../../types/listing";
 import { logger } from "../../../utils/logger";
-import { ADU_KEYWORDS } from "./adu-keywords";
+import { findAduKeyword } from "./adu-keywords";
 
 // ── Extended listing type ──────────────────────────────────────────────────
 
@@ -201,10 +201,7 @@ export function mapAduItems(
         const haystack = [item.title, description, address]
           .join(" ")
           .toLowerCase();
-        const matchedKeyword = ADU_KEYWORDS.find((kw) => {
-          const regex = new RegExp(`\\b${kw}\\b`, "i");
-          return regex.test(haystack);
-        });
+        const matchedKeyword = findAduKeyword(haystack);
 
         return {
           source,

@@ -4,7 +4,7 @@ import { ScraperOptions } from "../../base.scraper";
 import { AduResearchListing } from "../core/adu-research.parser";
 import { passesAduFilter } from "../filters/adu-research.scraper";
 import { logger } from "../../../utils/logger";
-import { ADU_KEYWORDS } from "../core/adu-keywords";
+import { findAduKeyword } from "../core/adu-keywords";
 
 export class RealtorAduScraper extends RealtorScraper {
   readonly sourceName = "realtor-adu";
@@ -27,10 +27,7 @@ export class RealtorAduScraper extends RealtorScraper {
         .join(" ")
         .toLowerCase();
 
-      const matchedKeyword = ADU_KEYWORDS.find((kw) => {
-        const regex = new RegExp(`\\b${kw}\\b`, "i");
-        return regex.test(haystack);
-      });
+      const matchedKeyword = findAduKeyword(haystack);
 
       // Extract zip from address
       let zip: string | undefined;
