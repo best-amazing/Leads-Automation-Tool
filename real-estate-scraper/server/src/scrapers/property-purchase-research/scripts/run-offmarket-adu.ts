@@ -16,11 +16,11 @@ import { getLastBackfillStatus } from "../../../utils/backfill-store";
 import { ADU_KEYWORDS, TARGET_STATES } from "../core/adu-keywords";
 import { appendAduResult } from "../core/adu-csv-writer";
 import { AduResearchListing } from "../core/adu-research.parser";
-import { fetchDeedTransferDate } from "../core/deed-data-resolver";
+import { resolvePublicRecords } from "../core/public-records";
 import * as fs from "fs";
 import * as path from "path";
 import { writeAduResearchToSheets } from "../../../utils/google-sheets";
-import { validateLeadZip } from "../filters/adu-research.scraper";
+import { validateLeadZip, passesNewConstructionGate } from "../filters/adu-research.scraper";
 import { AduDedupeTracker } from "../core/adu-dedupe-tracker";
 
 let capturedCount = 0;
@@ -34,6 +34,8 @@ async function handleMatch(listing: AduResearchListing) {
     return;
   }
 
+  if (!passesNewConstructionGate(listing)) return;
+
   if (!(await tracker.track(listing))) {
     logger.debug(
       `[runner] Skipping duplicate: ${listing.address || listing.url}`,
@@ -46,30 +48,10 @@ async function handleMatch(listing: AduResearchListing) {
     `[runner] Match #${capturedCount}: ${listing.address || listing.url}`,
   );
 
-  // ── Inline deed transfer date lookup ──────────────────────────────────
-  if (listing.address) {
-    try {
-      logger.info(
-        `[runner] Looking up deed transfer date for: ${listing.address}`,
-      );
-      const deedDate = await fetchDeedTransferDate({
-        address: listing.address,
-        city: listing.city,
-        state: listing.state,
-        zip: listing.zip,
-        latitude: listing.latitude,
-        longitude: listing.longitude,
-      });
-      if (deedDate) {
-        listing.deedTransferDate = deedDate;
-        logger.info(`[runner] ✓ Deed transfer date: ${deedDate}`);
-      } else {
-        logger.info(`[runner] ✗ No deed transfer date found`);
-      }
-    } catch (err) {
-      logger.warn(`[runner] Deed date lookup failed: ${err}`);
-    }
-  }
+  // Deed date + year built from public records, then the final
+  // new-construction check with the most complete year available.
+  await resolvePublicRecords(listing, "[runner]");
+  if (!passesNewConstructionGate(listing)) return;
 
   appendAduResult(listing);
   await writeAduResearchToSheets([listing]);

@@ -15,8 +15,9 @@ import { ColdwellBankerAduScraper } from '../sources/coldwellbanker-adu.scraper'
 // We need to trigger the same logic as `onMatch` in run-adu-research
 import {
   validateLeadZip,
+  passesNewConstructionGate,
 } from '../filters/adu-research.scraper';
-import { fetchDeedTransferDate } from '../core/deed-data-resolver';
+import { resolvePublicRecords } from '../core/public-records';
 import { appendAduResult } from '../core/adu-csv-writer';
 import { queueAduSheetWrite } from '../../../utils/google-sheets';
 import { AduDedupeTracker } from '../core/adu-dedupe-tracker';
@@ -59,6 +60,8 @@ async function handleMatch(listing: AduResearchListing) {
     return;
   }
 
+  if (!passesNewConstructionGate(listing)) return;
+
   if (!(await tracker.track(listing))) {
     logger.debug(`[worker] Skipping duplicate: ${listing.address || listing.url}`);
     return;
@@ -67,27 +70,10 @@ async function handleMatch(listing: AduResearchListing) {
   capturedCount++;
   logger.info(`[worker] Match #${capturedCount}: ${listing.address || listing.url}`);
 
-  if (listing.address) {
-    try {
-      logger.info(`[worker] Looking up deed transfer date for: ${listing.address}`);
-      const deedDate = await fetchDeedTransferDate({
-        address: listing.address,
-        city: listing.city,
-        state: listing.state,
-        zip: listing.zip,
-        latitude: listing.latitude,
-        longitude: listing.longitude,
-      });
-      if (deedDate) {
-        listing.deedTransferDate = deedDate;
-        logger.info(`[worker] ✓ Deed transfer date: ${deedDate}`);
-      } else {
-        logger.info(`[worker] ✗ No deed transfer date found`);
-      }
-    } catch (err) {
-      logger.warn(`[worker] Deed date lookup failed: ${err}`);
-    }
-  }
+  // Deed date + year built from public records, then the final
+  // new-construction check with the most complete year available.
+  await resolvePublicRecords(listing, '[worker]');
+  if (!passesNewConstructionGate(listing)) return;
 
   appendAduResult(listing);
   // Buffered: flushed to Sheets in batches and serialized, so concurrent
@@ -125,31 +111,32 @@ async function processZillow(job: Job) {
       if (json) {
         const props = json?.props?.pageProps;
         description = props?.componentProps?.description ?? '';
-        if (!description) {
-          const rawCache = props?.gdpClientCache ?? props?.componentProps?.gdpClientCache;
-          if (rawCache) {
-            try {
-              const cache = typeof rawCache === 'string' ? JSON.parse(rawCache) : rawCache;
-              for (const key of Object.keys(cache ?? {})) {
-                const propData = cache[key]?.property;
-                if (propData) {
-                  if (propData.description) description = propData.description;
-                  if (propData.yearBuilt) yearBuilt = Number(propData.yearBuilt);
-                  if (propData.homeStatus) status = propData.homeStatus;
-                  if (propData.lotAreaValue) {
-                    if (propData.lotAreaUnit === 'acres') lotSqft = Math.round(propData.lotAreaValue * 43560);
-                    else lotSqft = Math.round(propData.lotAreaValue);
-                  }
-                  if (Array.isArray(propData.schools) && propData.schools.length > 0) {
-                    const hs = propData.schools.find((s: any) => s.level === 'High');
-                    if (hs && hs.rating) schoolRating = `${hs.rating}/10`;
-                    else if (propData.schools[0].rating) schoolRating = `${propData.schools[0].rating}/10`;
-                  }
-                  break;
+        // Always read the property cache: it carries yearBuilt (needed for the
+        // new-construction exclusion), status, lot size and schools even when
+        // the description came from componentProps.
+        const rawCache = props?.gdpClientCache ?? props?.componentProps?.gdpClientCache;
+        if (rawCache) {
+          try {
+            const cache = typeof rawCache === 'string' ? JSON.parse(rawCache) : rawCache;
+            for (const key of Object.keys(cache ?? {})) {
+              const propData = cache[key]?.property;
+              if (propData) {
+                if (!description && propData.description) description = propData.description;
+                if (propData.yearBuilt) yearBuilt = Number(propData.yearBuilt);
+                if (propData.homeStatus) status = propData.homeStatus;
+                if (propData.lotAreaValue) {
+                  if (propData.lotAreaUnit === 'acres') lotSqft = Math.round(propData.lotAreaValue * 43560);
+                  else lotSqft = Math.round(propData.lotAreaValue);
                 }
+                if (Array.isArray(propData.schools) && propData.schools.length > 0) {
+                  const hs = propData.schools.find((s: any) => s.level === 'High');
+                  if (hs && hs.rating) schoolRating = `${hs.rating}/10`;
+                  else if (propData.schools[0].rating) schoolRating = `${propData.schools[0].rating}/10`;
+                }
+                break;
               }
-            } catch {}
-          }
+            }
+          } catch {}
         }
       }
     }

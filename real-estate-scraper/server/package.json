@@ -49,7 +49,9 @@
     "backfill:deed-dates": "node --max-old-space-size=4096 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/backfill-sheet-deed-dates.ts",
     "backfill:dedupe-keys": "node --max-old-space-size=4096 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/scripts/backfill-dedupe-keys.ts",
     "sheet:remove-duplicates": "node --max-old-space-size=4096 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/scripts/remove-duplicate-sheet-rows.ts",
-    "check:duplicates": "node --max-old-space-size=4096 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/scripts/check-duplicate-sheet-rows.ts"
+    "check:duplicates": "node --max-old-space-size=4096 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/scripts/check-duplicate-sheet-rows.ts",
+    "sheet:remove-new-construction": "node --max-old-space-size=4096 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/scripts/remove-new-construction-sheet-rows.ts",
+    "check:new-construction": "node --max-old-space-size=4096 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/scripts/check-new-construction-sheet-rows.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.13.0",

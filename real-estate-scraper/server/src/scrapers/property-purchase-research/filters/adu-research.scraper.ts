@@ -264,6 +264,68 @@ export function passesKeywordFilter(listing: AduResearchListing): boolean {
   return passed;
 }
 
+// ── New construction exclusion ──────────────────────────────────────────────
+// We don't purchase new builds. Anything built in or after
+// NEW_CONSTRUCTION_MIN_YEAR (default: last calendar year, so 2025+ in 2026)
+// is excluded, as is any listing described as new / under / future
+// construction.
+const NEW_CONSTRUCTION_MIN_YEAR = Number(
+  process.env.NEW_CONSTRUCTION_MIN_YEAR ?? new Date().getFullYear() - 1,
+);
+
+const NEW_CONSTRUCTION_RE =
+  /\b(new[- ]construction|newly (?:constructed|built)|new[- ]build|to[- ]be[- ]built|under construction|pre[- ]?construction|proposed construction|spec home|est(?:\.|imated)? completion)\b/gi;
+
+// A phrase followed closely by one of these describes an improvement on an
+// older home ("newly built 20x20 garage"), not the house itself.
+const IMPROVEMENT_RE =
+  /^[^.;!]{0,30}?\b(garage|barn|pole barn|shed|deck|porch|patio|addition|fence|driveway|roof|carport|workshop|outbuilding)s?\b/i;
+
+/** Why a listing counts as new construction, or null when it doesn't. */
+export function newConstructionReason(
+  listing: Pick<AduResearchListing, "yearBuilt" | "title" | "description">,
+): string | null {
+  const year = Number(listing.yearBuilt);
+  if (year > 0) {
+    // A known build year is authoritative: recent → excluded; older → the
+    // home isn't new, whatever the marketing copy says ("feels like a
+    // brand-new build").
+    return year >= NEW_CONSTRUCTION_MIN_YEAR
+      ? `new construction (built ${year})`
+      : null;
+  }
+
+  const text = `${listing.title ?? ""} ${listing.description ?? ""}`;
+  for (const m of text.matchAll(NEW_CONSTRUCTION_RE)) {
+    const after = text.slice(m.index! + m[0].length);
+    if (IMPROVEMENT_RE.test(after)) continue;
+    return `new construction ("${m[0].toLowerCase()}")`;
+  }
+  return null;
+}
+
+/**
+ * Final gate before a lead is written: runs once the full description and
+ * the public-record year built are known (earlier filters may have only
+ * seen search-page data).
+ */
+export function passesNewConstructionGate(
+  listing: Partial<
+    Pick<
+      AduResearchListing,
+      "yearBuilt" | "title" | "description" | "address" | "url"
+    >
+  >,
+): boolean {
+  const reason = newConstructionReason(listing);
+  if (reason) {
+    logger.info(
+      `[adu-filter] Excluding ${reason}: ${listing.address || listing.url}`,
+    );
+  }
+  return !reason;
+}
+
 /**
  * Stage 3: Check strict property criteria (Price, Beds, Baths, Year, HOA, etc.)
  */
@@ -323,14 +385,9 @@ export function passesPropertyCriteria(listing: AduResearchListing): boolean {
     ) {
       passed = false;
       failReason = "55+ community";
-    } else if (
-      haystack.includes("new construction") ||
-      haystack.includes("to be built") ||
-      haystack.includes("under construction") ||
-      haystack.includes("pre-construction")
-    ) {
+    } else if (newConstructionReason(listing)) {
       passed = false;
-      failReason = "new construction";
+      failReason = newConstructionReason(listing)!;
     } else if (haystack.includes("auction")) {
       passed = false;
       failReason = "auction";

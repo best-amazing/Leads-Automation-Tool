@@ -127,7 +127,9 @@ export function buildAduSheetRow(l: AduResearchListing): any[] {
     l.ownerEmail || "",
     l.units || "",
     l.totalBedrooms || "",
-    l.yearBuilt || "",
+    // "Unknown" flags leads that passed the new-construction check on
+    // wording alone (no listing or public-record year) for manual review.
+    l.yearBuilt || "Unknown",
     l.schoolRating || "",
     l.deedTransferDate || "", // resolved via ATTOM / OGRIP
     matchedKw,

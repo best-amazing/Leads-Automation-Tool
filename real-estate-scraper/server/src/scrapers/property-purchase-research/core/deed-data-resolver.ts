@@ -39,6 +39,9 @@ interface AttomSaleResponse {
     sale?: {
       saleTransDate?: string;
     };
+    summary?: {
+      yearbuilt?: number;
+    };
   }>;
 }
 
@@ -104,7 +107,19 @@ export async function getFromAttom(
   address1: string,
   address2: string,
 ): Promise<string | null> {
-  if (!ATTOM_API_KEY || !address1 || !address2) return null;
+  return (await getAttomRecord(address1, address2)).saleDate;
+}
+
+/**
+ * One ATTOM /sale/detail call yields both the last sale date and the
+ * property's year built (summary.yearbuilt) — no extra request needed.
+ */
+async function getAttomRecord(
+  address1: string,
+  address2: string,
+): Promise<{ saleDate: string | null; yearBuilt: number | null }> {
+  const empty = { saleDate: null, yearBuilt: null };
+  if (!ATTOM_API_KEY || !address1 || !address2) return empty;
 
   try {
     const params = new URLSearchParams({ address1, address2 });
@@ -120,20 +135,25 @@ export async function getFromAttom(
       },
     );
 
-    const saleDate = res.data?.property?.[0]?.sale?.saleTransDate;
+    const property = res.data?.property?.[0];
+    const saleDate = property?.sale?.saleTransDate;
     if (!saleDate) {
       logger.debug(
         `[deed-resolver] [attom] No saleTransDate in response for "${address1}"`,
       );
     }
-    return normalizeDate(saleDate);
+    const year = Number(property?.summary?.yearbuilt);
+    return {
+      saleDate: normalizeDate(saleDate),
+      yearBuilt: Number.isInteger(year) && year > 1700 ? year : null,
+    };
   } catch (err: any) {
     const status = err.response?.status;
     const msg = err.response?.data?.status?.msg || err.message || err;
     logger.debug(
       `[deed-resolver] [attom] ERROR ${status || "network"}: ${msg}`,
     );
-    return null;
+    return empty;
   }
 }
 
@@ -188,7 +208,25 @@ export async function getFromOgrip(
 export async function fetchDeedTransferDate(
   input: DeedLookupInput,
 ): Promise<string | null> {
+  return (await fetchDeedRecord(input)).deedTransferDate;
+}
+
+export interface DeedRecord {
+  deedTransferDate: string | null;
+  /** Year built from the ATTOM property record, when ATTOM matched. */
+  yearBuilt: number | null;
+}
+
+/** Deed transfer date plus year built, from the same public-record lookups. */
+export async function fetchDeedRecord(
+  input: DeedLookupInput,
+): Promise<DeedRecord> {
   const collapseWs = (s: string) => s.replace(/\s+/g, " ").trim();
+  let yearBuilt: number | null = null;
+  const result = (deedTransferDate: string | null): DeedRecord => ({
+    deedTransferDate,
+    yearBuilt,
+  });
 
   // Coordinates-only path (no address): skip geocoding + ATTOM, go straight
   // to the parcel service (craigslist 2025+ exposes a pin but no address).
@@ -201,13 +239,13 @@ export async function fetchDeedTransferDate(
       const ogripDate = await getFromOgrip(input.latitude, input.longitude);
       if (ogripDate) {
         logger.info(`[deed-resolver] ✓ OGRIP matched (lat/lon): ${ogripDate}`);
-        return ogripDate;
+        return result(ogripDate);
       }
     }
     logger.debug(
       `[deed-resolver] Neither address nor usable coordinates — skipping lookup`,
     );
-    return null;
+    return result(null);
   }
 
   // Build a full address string for geocoding + ATTOM
@@ -249,28 +287,29 @@ export async function fetchDeedTransferDate(
 
   // 3. Try ATTOM first
   if (address1 && address2) {
-    const attomDate = await getFromAttom(address1, address2);
-    if (attomDate) {
+    const attom = await getAttomRecord(address1, address2);
+    yearBuilt = attom.yearBuilt;
+    if (attom.saleDate) {
       logger.info(
-        `[deed-resolver] ✓ ATTOM matched: ${attomDate} for "${input.address}"`,
+        `[deed-resolver] ✓ ATTOM matched: ${attom.saleDate} for "${input.address}"`,
       );
-      return attomDate;
+      return result(attom.saleDate);
     }
   }
 
   // 4. Try OGRIP fallback with point geometry (only where it has coverage)
   if (!ogripCoversState(state)) {
     logger.debug(`[deed-resolver] No deed date found for "${input.address}"`);
-    return null;
+    return result(null);
   }
   const ogripDate = await getFromOgrip(lat, lon);
   if (ogripDate) {
     logger.info(
       `[deed-resolver] ✓ OGRIP matched: ${ogripDate} for "${input.address}"`,
     );
-    return ogripDate;
+    return result(ogripDate);
   }
 
   logger.debug(`[deed-resolver] No deed date found for "${input.address}"`);
-  return null;
+  return result(null);
 }

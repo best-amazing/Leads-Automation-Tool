@@ -4,6 +4,8 @@ import {
   isIndianaZipAllowed,
   validateIndianaLeadZip,
   validateLeadZip,
+  newConstructionReason,
+  passesNewConstructionGate,
 } from "../filters/adu-research.scraper";
 
 const a = { address: "53316 Nadine Street, South Bend, IN, 46637" };
@@ -91,6 +93,41 @@ assert.equal(
   validateLeadZip({ address: "1 Main St, Erie, PA 16501" }),
   false,
   "address-only PA lead outside 15xxx should be rejected",
+);
+
+// ── New construction exclusion ──────────────────────────────────────────────
+const lastYear = new Date().getFullYear() - 1;
+const buildCases: Array<[string, Parameters<typeof newConstructionReason>[0], boolean]> = [
+  ["built last year", { yearBuilt: lastYear }, true],
+  ["built this year", { yearBuilt: lastYear + 1 }, true],
+  ["future build year", { yearBuilt: lastYear + 2 }, true],
+  ["built 2005", { yearBuilt: 2005 }, false],
+  ["year unknown, plain copy", { description: "Charming ranch with guest house" }, false],
+  ["new construction wording", { description: "Gorgeous new construction by Ryan Homes" }, true],
+  ["to-be-built wording", { title: "To-Be-Built ranch with in-law suite" }, true],
+  ["estimated completion", { description: "Est. completion March 2027" }, true],
+  ["newly built", { description: "Newly built home on a quiet street" }, true],
+  ["brand new roof is fine", { description: "Brand new roof and furnace" }, false],
+  ["newer windows is fine", { description: "Newer windows, updated kitchen" }, false],
+  // False positives found in the sheet (rows 396 and 611)
+  ["newly built garage", { description: "A newly built 20x20 two-car garage adds parking" }, false],
+  ["older year beats wording", { yearBuilt: 1993, description: "the worry-free longevity of a brand-new build" }, false],
+  // True positive from the sheet (row 424)
+  ["new construction on acreage", { description: "Exceptional new construction on approximately 3.064 acres" }, true],
+];
+for (const [label, listing, expected] of buildCases) {
+  assert.equal(!!newConstructionReason(listing), expected, `new-construction: ${label}`);
+}
+// The two example leads that slipped through (Coldwell Banker, year built set)
+assert.equal(
+  passesNewConstructionGate({ address: "4316 Dogwood Avenue, Perry, OH, 44081", yearBuilt: 2026 }),
+  false,
+  "4316 Dogwood Ave (built 2026) should be excluded",
+);
+assert.equal(
+  passesNewConstructionGate({ address: "14814 S Parkview Drive, Plainfield, IL, 60544", yearBuilt: 2027 }),
+  false,
+  "14814 S Parkview Dr (built 2027) should be excluded",
 );
 
 console.log("address dedupe checks passed");
