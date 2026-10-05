@@ -8,7 +8,7 @@ const configuredRedisUrl = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
 function normalizeRedisUrl(value: string): string {
   try {
     const url = new URL(value);
-    if (url.protocol === 'redis:' && url.hostname.endsWith('.upstash.io')) {
+    if (url.protocol === 'redis:' && (url.hostname.endsWith('.upstash.io') || url.hostname.endsWith('.redis.io'))) {
       url.protocol = 'rediss:';
     }
     return url.toString();
