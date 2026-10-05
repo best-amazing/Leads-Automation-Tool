@@ -8,7 +8,11 @@ const configuredRedisUrl = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
 function normalizeRedisUrl(value: string): string {
   try {
     const url = new URL(value);
-    if (url.protocol === 'redis:' && (url.hostname.endsWith('.upstash.io') || url.hostname.endsWith('.redis.io'))) {
+    // Upstash always requires TLS. Redis Cloud (.redis.io) is TLS-optional per
+    // database, so its URL scheme is respected as-is: use rediss:// only when
+    // TLS is enabled on the database (forcing it on a plaintext DB fails with
+    // ERR_SSL_PACKET_LENGTH_TOO_LONG).
+    if (url.protocol === 'redis:' && url.hostname.endsWith('.upstash.io')) {
       url.protocol = 'rediss:';
     }
     return url.toString();
