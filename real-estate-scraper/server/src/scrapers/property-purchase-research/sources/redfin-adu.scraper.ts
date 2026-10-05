@@ -9,6 +9,7 @@ import {
 } from "../filters/adu-research.scraper";
 import { logger } from "../../../utils/logger";
 import { findAduKeyword } from "../core/adu-keywords";
+import { ADU_REDFIN_MARKETS } from "../core/adu-markets";
 import { descriptionQueue } from "../../../utils/queue";
 
 export class RedfinAduScraper extends RedfinScraper {
@@ -33,6 +34,9 @@ export class RedfinAduScraper extends RedfinScraper {
       persistOffset: true,
     };
     super(options);
+    // ADU-specific markets in priority order (Ohio first). The persisted
+    // cursor walks them in order, so Ohio is swept before the other states.
+    this.markets = ADU_REDFIN_MARKETS;
   }
 
   async run(): Promise<RawListing[]> {

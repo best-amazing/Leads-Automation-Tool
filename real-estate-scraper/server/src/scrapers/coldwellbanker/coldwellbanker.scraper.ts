@@ -151,7 +151,14 @@ function extractLocs(xml: string): string[] {
  */
 export async function discoverTargetListingUrls(
   mode: CbInventoryMode,
+  states: string[] = ["oh", "in", "wi", "ia", "il"],
 ): Promise<string[]> {
+  const stateAlt = states.map((s) => s.toLowerCase()).join("|");
+  const chunkRe = new RegExp(`sitemap-listings-(${stateAlt})-\\d+\\.xml$`);
+  const listingRe = new RegExp(
+    `^https://www\\.coldwellbanker\\.com/(${stateAlt})/.+/lid-`,
+  );
+
   const indexXml = await httpGetWithRetry(
     SITEMAP_INDEX[mode],
     `sitemap index (${mode})`,
@@ -162,9 +169,7 @@ export async function discoverTargetListingUrls(
   );
 
   if (mode === "full") {
-    childSitemaps = childSitemaps.filter((u) =>
-      /sitemap-listings-(oh|in|wi|ia|il)-\d+\.xml$/.test(u),
-    );
+    childSitemaps = childSitemaps.filter((u) => chunkRe.test(u));
     logger.info(
       `[coldwellbanker] full mode: ${childSitemaps.length} target chunk(s)`,
     );
@@ -177,8 +182,7 @@ export async function discoverTargetListingUrls(
       const xml = await httpGetWithRetry(sm, `chunk ${sm.split("/").pop()}`);
       fetched++;
       for (const u of extractLocs(xml)) {
-        if (/^https:\/\/www\.coldwellbanker\.com\/(oh|in|wi|ia|il)\/.+\/lid-/.test(u))
-          urls.add(u);
+        if (listingRe.test(u)) urls.add(u);
       }
     } catch (err) {
       logger.warn(`[coldwellbanker] Skipping unreadable sitemap ${sm}: ${err}`);

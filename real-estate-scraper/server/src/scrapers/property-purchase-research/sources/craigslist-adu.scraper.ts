@@ -18,8 +18,8 @@ import {
 } from "../../../utils/backfill-store";
 import { ADU_KEYWORDS, TARGET_STATES } from "../core/adu-keywords";
 import { sleep, jitter } from "../../../utils/browser";
-import { config } from "../../../config";
 import { descriptionQueue } from "../../../utils/queue";
+import { ADU_CRAIGSLIST_MARKETS } from "../core/adu-markets";
 
 const BETWEEN_DETAIL_MS = 1_000;
 const BACKFILL_BATCH_SIZE = Number(process.env.ADU_BACKFILL_BATCH_SIZE ?? 500);
@@ -32,16 +32,9 @@ const DETAIL_CONCURRENCY = Number(process.env.ADU_DETAIL_CONCURRENCY ?? 2);
 // Craigslist subdomain → US state. Needed because search results only carry a
 // neighborhood string ("West Bend area"), never a state, and
 // passesLocationFilter requires listing.state to match TARGET_STATES.
-const CITY_TO_STATE: Record<string, string> = {
-  milwaukee: "WI",
-  columbus: "OH",
-  cleveland: "OH",
-  toledo: "OH",
-  indianapolis: "IN",
-  fortwayne: "IN",
-  desmoines: "IA",
-  chicago: "IL",
-};
+const CITY_TO_STATE: Record<string, string> = Object.fromEntries(
+  ADU_CRAIGSLIST_MARKETS.map((m) => [m.city, m.state]),
+);
 
 function raceTimeout<T>(
   promise: Promise<T>,
@@ -118,17 +111,14 @@ export class CraigslistAduScraper {
     this.visited.clear();
     this.results = [];
 
-    const craigslistSources = config.sources.craigslist;
     const previouslySeen = await loadSeenFromDb(this.sourceName);
     const allSeenUrls = new Set(previouslySeen);
     let processedThisBatch = 0;
     let skippedAsSeen = 0;
 
-    const sourcesArray = Object.entries(craigslistSources).sort(() => Math.random() - 0.5);
-
-    for (const [cityName, baseUrl] of sourcesArray) {
-      if (typeof baseUrl !== "string") continue; // guard in case of other properties
-
+    // Priority order (Ohio first) — seen listings are skipped, so the batch
+    // reaches the other markets once Ohio is exhausted.
+    for (const { city: cityName, url: baseUrl } of ADU_CRAIGSLIST_MARKETS) {
       const cityState = CITY_TO_STATE[cityName];
       if (cityState && !TARGET_STATES.includes(cityState)) {
         logger.info(

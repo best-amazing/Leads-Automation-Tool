@@ -9,6 +9,7 @@ import {
 } from "../filters/adu-research.scraper";
 import { logger } from "../../../utils/logger";
 import { findAduKeyword } from "../core/adu-keywords";
+import { ADU_STATE_MARKETS } from "../core/adu-markets";
 import { descriptionQueue } from "../../../utils/queue";
 
 export class CreativeListingAduScraper extends CreativeListingScraper {
@@ -17,13 +18,8 @@ export class CreativeListingAduScraper extends CreativeListingScraper {
   constructor(options: ScraperOptions = {}) {
     super(options);
     // Explicitly query our target states so we don't hit the API's global pagination limit.
-    this.markets = [
-      { name: "Ohio", stateAbbr: "OH" },
-      { name: "Indiana", stateAbbr: "IN" },
-      { name: "Wisconsin", stateAbbr: "WI" },
-      { name: "Iowa", stateAbbr: "IA" },
-      { name: "Illinois", stateAbbr: "IL" },
-    ].sort(() => Math.random() - 0.5);
+    // Priority order: Ohio first, then the expansion states.
+    this.markets = [...ADU_STATE_MARKETS];
   }
 
   async run(): Promise<RawListing[]> {

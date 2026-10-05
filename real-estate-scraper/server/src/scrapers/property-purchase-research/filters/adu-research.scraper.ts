@@ -29,7 +29,11 @@ import {
   loadSeenListings as loadSeenFromDb,
   saveSeenListings as saveSeenToDb,
 } from "../../../utils/backfill-store";
-import { findAduKeyword, TARGET_STATES } from "../core/adu-keywords";
+import {
+  findAduKeyword,
+  STATE_ZIP_PREFIXES,
+  TARGET_STATES,
+} from "../core/adu-keywords";
 import {
   AduResearchListing,
   parseAduApiResponse,
@@ -122,38 +126,73 @@ export function resetDiagCounters(): void {
   _criteriaDiagCount = 0;
 }
 
+/** True when `zipValue` is a 5-digit ZIP starting with one of `prefixes`. */
+export function isZipAllowedForState(
+  state: string,
+  zipValue?: string | number | null,
+): boolean {
+  const prefixes = STATE_ZIP_PREFIXES[state.toUpperCase()];
+  if (!prefixes) return true; // unrestricted state
+  const normalized = String(zipValue ?? "")
+    .trim()
+    .replace(/[^\d]/g, "")
+    .slice(0, 5);
+  return (
+    /^\d{5}$/.test(normalized) && prefixes.some((p) => normalized.startsWith(p))
+  );
+}
+
 export function isIndianaZipAllowed(
   zipValue?: string | number | null,
 ): boolean {
-  const normalized = String(zipValue ?? "")
-    .trim()
-    .replace(/[^\d]/g, "");
-
-  return /^46\d{3}$/.test(normalized);
+  return isZipAllowedForState("IN", zipValue);
 }
 
-export function validateIndianaLeadZip(
+/**
+ * Which ZIP-restricted state a listing is in. Prefers the explicit state
+ * field; falls back to ", XX" / " XX " in the address when it is empty.
+ */
+function restrictedStateOf(
+  listing: Pick<AduResearchListing, "state" | "address">,
+): string | undefined {
+  const restricted = Object.keys(STATE_ZIP_PREFIXES);
+  const stateUpper = (listing.state ?? "").trim().toUpperCase();
+  if (stateUpper) return restricted.find((s) => s === stateUpper);
+
+  const addressUpper = (listing.address ?? "").toUpperCase();
+  return restricted.find(
+    (s) => addressUpper.includes(`, ${s}`) || addressUpper.includes(` ${s} `),
+  );
+}
+
+/**
+ * Per-state ZIP gate (see STATE_ZIP_PREFIXES): e.g. Indiana leads must be
+ * 46xxx, Wisconsin 53xxx. Runs in the location filter and again right before
+ * a lead is written to outputs.
+ */
+export function validateLeadZip(
   listing: Pick<AduResearchListing, "state" | "address" | "zip">,
 ): boolean {
-  const stateUpper = (listing.state ?? "").toUpperCase();
-  const addressUpper = (listing.address ?? "").toUpperCase();
-  const zipValue = listing.zip ?? "";
+  const state = restrictedStateOf(listing);
+  if (!state) return true;
 
-  const isIndiana =
-    stateUpper === "IN" ||
-    addressUpper.includes(", IN") ||
-    addressUpper.includes(" IN ");
-  if (!isIndiana) return true;
+  const zipValue =
+    String(listing.zip ?? "").trim() ||
+    ((listing.address ?? "").match(/\b\d{5}(?:-\d{4})?\b/g) ?? []).pop() ||
+    "";
 
-  const hasIndianaZip = isIndianaZipAllowed(zipValue);
-  if (!hasIndianaZip) {
+  const allowed = isZipAllowedForState(state, zipValue);
+  if (!allowed) {
     logger.warn(
-      `[adu-filter] Indiana lead rejected: zip="${String(zipValue ?? "").trim() || "(missing)"}" address="${(listing.address ?? "(empty)").slice(0, 120)}"`,
+      `[adu-filter] ${state} lead rejected (allowed ZIPs: ${STATE_ZIP_PREFIXES[state].map((p) => `${p}xxx`).join(", ")}): zip="${zipValue || "(missing)"}" address="${(listing.address ?? "(empty)").slice(0, 120)}"`,
     );
   }
 
-  return hasIndianaZip;
+  return allowed;
 }
+
+/** @deprecated Use validateLeadZip — now covers every ZIP-restricted state. */
+export const validateIndianaLeadZip = validateLeadZip;
 
 /**
  * Stage 1: Check if a listing is located in one of TARGET_STATES.
@@ -168,8 +207,8 @@ export function passesLocationFilter(listing: AduResearchListing): boolean {
     return addressUpper.includes(`, ${s}`);
   });
 
-  const isIndianaZipValid = validateIndianaLeadZip(listing);
-  const passed = !!matchedState && isIndianaZipValid;
+  const isZipValid = validateLeadZip(listing);
+  const passed = !!matchedState && isZipValid;
 
   // Diagnostic logging for first N listings
   if (_locationDiagCount < DIAGNOSTIC_LOG_LIMIT) {
@@ -181,7 +220,7 @@ export function passesLocationFilter(listing: AduResearchListing): boolean {
         `zip="${String(listing.zip ?? "(empty)").slice(0, 20)}" | ` +
         `address="${(listing.address ?? "(empty)").slice(0, 80)}" | ` +
         `matched="${matchedState ?? "none"}" | ` +
-        `indianaZipOk=${isIndianaZipValid}`,
+        `zipOk=${isZipValid}`,
     );
   }
 

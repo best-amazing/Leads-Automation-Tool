@@ -18,7 +18,8 @@ import {
   loadSeenListings as loadSeenFromDb,
   saveSeenListings as saveSeenToDb,
 } from "../../../utils/backfill-store";
-import { findAduKeyword, TARGET_STATES } from "../core/adu-keywords";
+import { findAduKeyword } from "../core/adu-keywords";
+import { ADU_ZILLOW_MARKETS } from "../core/adu-markets";
 import { sleep, jitter } from "../../../utils/browser";
 import { descriptionQueue } from "../../../utils/queue";
 
@@ -127,20 +128,19 @@ export class ZillowAduScraper extends ZillowScraper {
       }
     }, 60_000);
 
-    // We import config from base to read markets
+    // Page depth comes from the shared Zillow config; the markets are the
+    // ADU-specific list.
     const { config } = await import("../../../config");
     const zillowCfg = config.sources.zillow;
-    const markets = zillowCfg.markets;
 
     const previouslySeen = await loadSeenFromDb(this.sourceName);
     const allSeenUrls = new Set(previouslySeen);
     let processedThisBatch = 0;
     let skippedAsSeen = 0;
 
-    // Shuffle markets so we don't always get stuck processing Ohio first
-    const shuffledMarkets = [...markets].sort(() => Math.random() - 0.5);
-
-    for (const market of shuffledMarkets) {
+    // Walk markets in priority order (Ohio first): already-seen listings are
+    // skipped, so once Ohio is exhausted the batch flows to the next markets.
+    for (const market of ADU_ZILLOW_MARKETS) {
       if (processedThisBatch >= BACKFILL_BATCH_SIZE) break;
       logger.info(
         `[${this.sourceName}] ── Market: ${market.name} (${market.listingType}) ──`,

@@ -60,9 +60,27 @@ export const ADU_KEYWORDS = [
 ];
 
 /**
- * US state abbreviations to filter listings by geography.
+ * US state abbreviations to filter listings by geography, in priority order:
+ * Ohio first, then the expansion markets once Ohio deals are exhausted.
  */
-export const TARGET_STATES = ["OH", "IN", "WI", "IA", "IL"];
+export const TARGET_STATES = ["OH", "WI", "KY", "IN", "PA", "MI", "IA"];
+
+/**
+ * Allowed ZIP prefixes per state. Leads in a listed state are only written
+ * when their ZIP starts with one of these prefixes (a missing ZIP is
+ * rejected). States not listed here accept any ZIP.
+ */
+export const STATE_ZIP_PREFIXES: Record<string, string[]> = {
+  // Ohio ZIPs span 430xx–459xx; "42" (a Kentucky range) never matches an
+  // Ohio listing but is kept as requested.
+  OH: ["42", "43", "44", "45"],
+  WI: ["53"], // Milwaukee
+  KY: ["40"], // Louisville
+  IN: ["46"], // Indianapolis
+  PA: ["15"], // Pittsburgh
+  MI: ["48", "49"], // Detroit (48xxx), Kalamazoo (49xxx)
+  IA: ["50"], // Waterloo
+};
 
 // Compiled once at load (in ADU_KEYWORDS priority order) instead of building
 // a fresh RegExp per keyword per listing.

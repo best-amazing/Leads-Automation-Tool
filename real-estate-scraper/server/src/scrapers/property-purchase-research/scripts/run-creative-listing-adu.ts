@@ -16,7 +16,7 @@ import { ADU_KEYWORDS, TARGET_STATES } from "../core/adu-keywords";
 import { appendAduResult } from "../core/adu-csv-writer";
 import { AduResearchListing } from "../core/adu-research.parser";
 import { AduDedupeTracker } from "../core/adu-dedupe-tracker";
-import { validateIndianaLeadZip } from "../filters/adu-research.scraper";
+import { validateLeadZip } from "../filters/adu-research.scraper";
 import { fetchDeedTransferDate } from "../core/deed-data-resolver";
 import * as fs from "fs";
 import * as path from "path";
@@ -26,9 +26,9 @@ let capturedCount = 0;
 const tracker = new AduDedupeTracker();
 
 async function handleMatch(listing: AduResearchListing) {
-  if (!validateIndianaLeadZip(listing)) {
+  if (!validateLeadZip(listing)) {
     logger.warn(
-      `[runner] Ignoring Indiana lead with non-46xxx ZIP: ${listing.address || listing.url} | zip=${String(listing.zip ?? "(missing)")}`,
+      `[runner] Ignoring lead outside allowed ZIPs for its state: ${listing.address || listing.url} | zip=${String(listing.zip ?? "(missing)")}`,
     );
     return;
   }

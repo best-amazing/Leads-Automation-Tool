@@ -449,7 +449,7 @@ function slugify(s: string): string {
 export class RedfinScraper extends BaseScraper {
   readonly sourceName: string = "redfin";
 
-  private readonly markets:          readonly Market[];
+  protected markets:                 readonly Market[];
   private readonly uipt:             readonly number[];
   private readonly pageSize:         number;
   private readonly detailFetchLimit: number;

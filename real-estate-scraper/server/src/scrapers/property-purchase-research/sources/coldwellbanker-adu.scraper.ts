@@ -43,7 +43,8 @@ import {
   loadSeenListings as loadSeenFromDb,
   saveSeenListings as saveSeenToDb,
 } from "../../../utils/backfill-store";
-import { findAduKeyword } from "../core/adu-keywords";
+import { findAduKeyword, TARGET_STATES } from "../core/adu-keywords";
+import { statePriority } from "../core/adu-markets";
 import { descriptionQueue } from "../../../utils/queue";
 
 export const CB_BACKFILL_BATCH_SIZE = Number(process.env.CB_BACKFILL_BATCH_SIZE ?? 500);
@@ -72,7 +73,7 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
     const reservedLids = new Set(previouslySeen); // intra-run double-processing guard
 
     // ── Discover + subtract seen BEFORE any expensive fetch ──────────────
-    const discovered = await discoverTargetListingUrls(mode);
+    const discovered = await discoverTargetListingUrls(mode, TARGET_STATES);
     const queue: string[] = [];
     let skippedAsSeen = 0;
     for (const url of discovered) {
@@ -90,8 +91,15 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
         `(batch cap ${Math.min(BACKFILL_BATCH_SIZE, this.options.maxListings)})`,
     );
 
-    // Shuffle the queue so we get a mix of states (Ohio, Indiana, Iowa, etc)
+    // Priority order: all unseen Ohio listings first, then the other target
+    // states. URLs are /<state>/<city>/..., so the first path segment is the
+    // state. Shuffled within a state so batches don't cluster on one city.
     queue.sort(() => Math.random() - 0.5);
+    queue.sort(
+      (a, b) =>
+        statePriority(new URL(a).pathname.split("/")[1]) -
+        statePriority(new URL(b).pathname.split("/")[1]),
+    );
 
     const work = queue.slice(
       0,
