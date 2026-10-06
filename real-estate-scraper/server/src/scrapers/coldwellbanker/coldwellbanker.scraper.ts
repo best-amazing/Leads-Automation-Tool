@@ -198,6 +198,126 @@ export async function discoverTargetListingUrls(
   return [...urls];
 }
 
+// Chunks in which every listing was already seen, by URL → when that was
+// observed. They're skipped for CB_EXHAUSTED_CHUNK_TTL_MS so later batches
+// go straight to chunks that still have unseen listings (once Ohio is fully
+// processed, ~120 exhausted chunks would otherwise be re-read every batch).
+// The TTL lets new listings added to those chunks be picked up later.
+const EXHAUSTED_CHUNK_TTL_MS = Number(
+  process.env.CB_EXHAUSTED_CHUNK_TTL_MS ?? 6 * 60 * 60 * 1000,
+);
+const exhaustedChunks = new Map<string, number>();
+
+/**
+ * Batch-oriented discovery: walks sitemap chunks in `states` priority order,
+ * keeps only listings `filterUnseen` reports as new, and stops as soon as
+ * `limit` are collected. Unlike discoverTargetListingUrls it never holds the
+ * full inventory (~200k URLs) or the full seen set in memory, and it skips
+ * the remaining chunks once a batch is full.
+ *
+ * `filterUnseen` receives listing ids (lid-…) and returns the unseen ones;
+ * errors propagate so a DB outage aborts the batch instead of treating every
+ * listing as new.
+ */
+export async function discoverUnseenListingUrls(
+  mode: CbInventoryMode,
+  states: string[],
+  limit: number,
+  filterUnseen: (lids: string[]) => Promise<string[]>,
+): Promise<{
+  urls: string[];
+  scanned: number;
+  skippedSeen: number;
+  chunksRead: number;
+  chunksTotal: number;
+}> {
+  const order = states.map((s) => s.toLowerCase());
+  const stateAlt = order.join("|");
+  const chunkRe = new RegExp(`sitemap-listings-(${stateAlt})-\\d+\\.xml$`);
+  const listingRe = new RegExp(
+    `^https://www\\.coldwellbanker\\.com/(${stateAlt})/.+/lid-`,
+  );
+  const rank = (state: string | undefined) => {
+    const i = order.indexOf(state ?? "");
+    return i === -1 ? order.length : i;
+  };
+
+  const indexXml = await httpGetWithRetry(
+    SITEMAP_INDEX[mode],
+    `sitemap index (${mode})`,
+  );
+  let childSitemaps = extractLocs(indexXml);
+  if (mode === "full") {
+    // State-keyed chunks: read them in priority order (stable within a state).
+    childSitemaps = childSitemaps
+      .filter((u) => chunkRe.test(u))
+      .sort((a, b) => rank(a.match(chunkRe)?.[1]) - rank(b.match(chunkRe)?.[1]));
+  }
+
+  const picked: string[] = [];
+  const pickedLids = new Set<string>();
+  let scanned = 0;
+  let skippedSeen = 0;
+  let chunksRead = 0;
+  let chunksSkipped = 0;
+
+  for (const sm of childSitemaps) {
+    if (picked.length >= limit) break;
+
+    const exhaustedAt = exhaustedChunks.get(sm);
+    if (exhaustedAt && Date.now() - exhaustedAt < EXHAUSTED_CHUNK_TTL_MS) {
+      chunksSkipped++;
+      continue;
+    }
+
+    let candidates: string[];
+    try {
+      const xml = await httpGetWithRetry(sm, `chunk ${sm.split("/").pop()}`);
+      candidates = extractLocs(xml).filter((u) => listingRe.test(u));
+      chunksRead++;
+    } catch (err) {
+      logger.warn(`[coldwellbanker] Skipping unreadable sitemap ${sm}: ${err}`);
+      continue;
+    }
+    scanned += candidates.length;
+
+    const unseen = new Set(await filterUnseen(candidates.map(extractLid)));
+    if (unseen.size === 0) exhaustedChunks.set(sm, Date.now());
+    else exhaustedChunks.delete(sm);
+    for (const url of candidates) {
+      const lid = extractLid(url);
+      if (!unseen.has(lid)) {
+        skippedSeen++;
+        continue;
+      }
+      if (pickedLids.has(lid)) continue; // same listing in two chunks
+      pickedLids.add(lid);
+      picked.push(url);
+      if (picked.length >= limit) break;
+    }
+
+    // Small politeness pause between chunk fetches
+    await sleep(jitter(150));
+  }
+
+  // new-day/new-week chunks aren't state-keyed: order the batch by priority.
+  const stateOfUrl = (u: string) => new URL(u).pathname.split("/")[1];
+  picked.sort((a, b) => rank(stateOfUrl(a)) - rank(stateOfUrl(b)));
+
+  logger.info(
+    `[coldwellbanker] Batch discovery (${mode}): read ${chunksRead}/${childSitemaps.length} chunk(s) ` +
+      `(${chunksSkipped} skipped as fully seen), ` +
+      `scanned ${scanned} URL(s), ${skippedSeen} already seen, picked ${picked.length}/${limit}`,
+  );
+  return {
+    urls: picked,
+    scanned,
+    skippedSeen,
+    chunksRead,
+    chunksTotal: childSitemaps.length,
+  };
+}
+
 // ── Detail parsing ───────────────────────────────────────────────────────────
 
 interface CbPageProps {

@@ -273,6 +273,18 @@ model BackfillCursor {
   @@index([source])
 }
 
+// One row per listing ID a backfill walk has already processed, per source.
+// Replaces the ever-growing BackfillCursor.seenIds JSON array (188k+ IDs for
+// Coldwell Banker), which had to be loaded and rewritten whole on every batch.
+// Rows are only ever inserted, and lookups check just the IDs at hand.
+model BackfillSeenId {
+  source    String
+  listingId String
+  createdAt DateTime @default(now())
+
+  @@id([source, listingId])
+}
+
 // One row per emitted ADU research dedup key. Persists the normalized
 // "street|zip" (or URL fallback) key so the same property is never written
 // twice to outputs across runs AND across platforms/sources. Unlike the

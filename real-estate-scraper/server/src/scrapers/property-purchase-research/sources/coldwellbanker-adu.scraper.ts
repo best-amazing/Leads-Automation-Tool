@@ -25,7 +25,7 @@ import { RawListing } from "../../../types/listing";
 import {
   ColdwellBankerScraper,
   CbInventoryMode,
-  discoverTargetListingUrls,
+  discoverUnseenListingUrls,
   extractLid,
   DEFAULT_CB_DELAY_MS,
   CB_CONCURRENCY,
@@ -40,11 +40,11 @@ import {
 import { logger } from "../../../utils/logger";
 import { sleep, jitter } from "../../../utils/browser";
 import {
-  loadSeenListings as loadSeenFromDb,
-  saveSeenListings as saveSeenToDb,
+  filterUnseenIds,
+  markSeenIds,
+  saveBackfillStatus,
 } from "../../../utils/backfill-store";
 import { findAduKeyword, TARGET_STATES } from "../core/adu-keywords";
-import { statePriority } from "../core/adu-markets";
 import { descriptionQueue } from "../../../utils/queue";
 
 export const CB_BACKFILL_BATCH_SIZE = Number(process.env.CB_BACKFILL_BATCH_SIZE ?? 500);
@@ -69,52 +69,36 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
     logger.info(
       `[${this.sourceName}] Inventory mode: ${mode}, lookback: ${CB_LOOKBACK_DAYS} days`,
     );
-    const previouslySeen = await loadSeenFromDb(this.sourceName);
-    const reservedLids = new Set(previouslySeen); // intra-run double-processing guard
+    const batchCap = Math.min(BACKFILL_BATCH_SIZE, this.options.maxListings);
 
-    // ── Discover + subtract seen BEFORE any expensive fetch ──────────────
-    const discovered = await discoverTargetListingUrls(mode, TARGET_STATES);
-    const queue: string[] = [];
-    let skippedAsSeen = 0;
-    for (const url of discovered) {
-      const lid = extractLid(url);
-      if (reservedLids.has(lid)) {
-        skippedAsSeen++;
-        continue;
-      }
-      reservedLids.add(lid); // reserve now so concurrent workers can't double-process
-      queue.push(url);
+    // ── Discover only this batch's unseen listings ───────────────────────
+    // Chunks are read in TARGET_STATES priority order (Ohio first) and the
+    // seen check runs per chunk against the DB, so neither the full sitemap
+    // inventory (~200k URLs) nor the full seen set is ever held in memory,
+    // and discovery stops as soon as the batch is full.
+    let batch: string[];
+    try {
+      const discovery = await discoverUnseenListingUrls(
+        mode,
+        TARGET_STATES,
+        batchCap,
+        (lids) => filterUnseenIds(this.sourceName, lids),
+      );
+      batch = discovery.urls;
+      logger.info(
+        `[${this.sourceName}] ${discovery.skippedSeen} already seen, ` +
+          `${batch.length} to process (batch cap ${batchCap})`,
+      );
+    } catch (err) {
+      // Never treat a DB/sitemap failure as "everything is new". Record an
+      // empty batch so runContinuous() stops instead of looping on the
+      // previous batch's processedCount.
+      logger.error(`[${this.sourceName}] Discovery failed, skipping batch: ${err}`);
+      await saveBackfillStatus(this.sourceName, 0).catch(() => {});
+      return this.results;
     }
-    logger.info(
-      `[${this.sourceName}] ${discovered.length} discovered, ` +
-        `${skippedAsSeen} already seen, ${queue.length} to process ` +
-        `(batch cap ${Math.min(BACKFILL_BATCH_SIZE, this.options.maxListings)})`,
-    );
-
-    // Priority order: all unseen Ohio listings first, then the other target
-    // states. URLs are /<state>/<city>/..., so the first path segment is the
-    // state. Shuffled within a state so batches don't cluster on one city.
-    queue.sort(() => Math.random() - 0.5);
-    queue.sort(
-      (a, b) =>
-        statePriority(new URL(a).pathname.split("/")[1]) -
-        statePriority(new URL(b).pathname.split("/")[1]),
-    );
-
-    const work = queue.slice(
-      0,
-      Math.min(BACKFILL_BATCH_SIZE, this.options.maxListings),
-    );
-    let processedThisBatch = 0;
-
-    // Only lids whose fetch attempt COMPLETED (listing parsed, or definitive
-    // no-data such as non-ACTIVE status) may be persisted as seen. Transport
-    // failures throw and stay out of this set, so the listing is retried on
-    // the next run instead of being burned as "seen" unprocessed.
-    const completedLids = new Set<string>();
 
     // ── Enqueue detail fetch to BullMQ ────────────────────────────────────
-    const batch = work.slice(0, BACKFILL_BATCH_SIZE);
     if (batch.length > 0) {
       await descriptionQueue.addBulk(
         batch.map((url) => ({
@@ -123,18 +107,15 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
         })),
       );
     }
-    for (const url of batch) completedLids.add(extractLid(url));
-    processedThisBatch = batch.length;
+    const processedThisBatch = batch.length;
 
     logger.info(
-      `[${this.sourceName}] Processed ${processedThisBatch} new listing(s), ` +
-        `skipped ${skippedAsSeen} already-seen, matched ${this.results.length}`,
+      `[${this.sourceName}] Enqueued ${processedThisBatch} new listing(s), matched ${this.results.length}`,
     );
 
-    // ── Persist updated tracker: previously seen + actually completed only ──
-    const persistedSeen = new Set(previouslySeen);
-    for (const lid of completedLids) persistedSeen.add(lid);
-    await saveSeenToDb(this.sourceName, persistedSeen, processedThisBatch);
+    // ── Persist: mark this batch seen (insert-only) + batch status ───────
+    await markSeenIds(this.sourceName, batch.map(extractLid));
+    await saveBackfillStatus(this.sourceName, processedThisBatch);
 
     return this.results;
   }
