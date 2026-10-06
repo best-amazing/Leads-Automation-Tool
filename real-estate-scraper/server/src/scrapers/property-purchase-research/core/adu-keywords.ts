@@ -60,10 +60,15 @@ export const ADU_KEYWORDS = [
 ];
 
 /**
- * US state abbreviations to filter listings by geography, in priority order:
- * Ohio first, then the expansion markets once Ohio deals are exhausted.
+ * US state abbreviations to filter listings by geography, IN PRIORITY ORDER.
+ * This is the single source of truth for scrape order: every source (Zillow,
+ * Redfin, Craigslist, Creative Listing, Coldwell Banker) walks its markets
+ * sorted by this list, so an earlier state is worked first and later ones
+ * are reached once its unseen inventory is exhausted. To change priority,
+ * reorder this array; to add/drop a state, also add/remove its markets in
+ * adu-markets.ts and its ZIP rule below.
  */
-export const TARGET_STATES = ["OH", "WI", "KY", "IN", "PA", "MI", "IA"];
+export const TARGET_STATES = ["OH", "IN", "WI", "IA", "IL", "KY"];
 
 /**
  * Allowed ZIP prefixes per state. Leads in a listed state are only written
@@ -74,12 +79,11 @@ export const STATE_ZIP_PREFIXES: Record<string, string[]> = {
   // Ohio ZIPs span 430xx–459xx; "42" (a Kentucky range) never matches an
   // Ohio listing but is kept as requested.
   OH: ["42", "43", "44", "45"],
-  WI: ["53"], // Milwaukee
-  KY: ["40"], // Louisville
   IN: ["46"], // Indianapolis
-  PA: ["15"], // Pittsburgh
-  MI: ["48", "49"], // Detroit (48xxx), Kalamazoo (49xxx)
+  WI: ["53"], // Milwaukee
   IA: ["50"], // Waterloo
+  IL: ["60"], // Chicago area
+  KY: ["40"], // Louisville / Lexington
 };
 
 // Compiled once at load (in ADU_KEYWORDS priority order) instead of building

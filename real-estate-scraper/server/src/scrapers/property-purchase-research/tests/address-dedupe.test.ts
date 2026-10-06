@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
 import { dedupKey } from "../filters/address-dedupe";
+import { TARGET_STATES } from "../core/adu-keywords";
+import {
+  ADU_CRAIGSLIST_MARKETS,
+  ADU_REDFIN_MARKETS,
+  ADU_STATE_MARKETS,
+  ADU_ZILLOW_MARKETS,
+} from "../core/adu-markets";
 import {
   isIndianaZipAllowed,
   validateIndianaLeadZip,
@@ -61,12 +68,14 @@ const zipCases: Array<[string, string, boolean]> = [
   ["WI", "54701", false], // Eau Claire
   ["KY", "40202", true],
   ["KY", "41011", false], // Covington
-  ["PA", "15213", true],
-  ["PA", "19103", false], // Philadelphia
-  ["MI", "48201", true], // Detroit
-  ["MI", "49007", true], // Kalamazoo
+  ["IN", "46201", true], // Indianapolis
+  ["IN", "47201", false], // Columbus, IN
   ["IA", "50701", true], // Waterloo
   ["IA", "52401", false], // Cedar Rapids
+  ["IL", "60623", true], // Chicago
+  ["IL", "60544", true], // Plainfield
+  ["IL", "61104", false], // Rockford
+  ["IL", "62701", false], // Springfield
   ["OH", "43215", true], // Columbus
   ["OH", "44114", true], // Cleveland
   ["OH", "45202", true], // Cincinnati
@@ -80,20 +89,34 @@ for (const [state, zip, expected] of zipCases) {
   );
 }
 assert.equal(
-  validateLeadZip({ state: "PA", address: "1 Main St, Pittsburgh, PA" }),
+  validateLeadZip({ state: "KY", address: "1 Main St, Louisville, KY" }),
   false,
   "restricted-state lead with no ZIP should be rejected",
 );
 assert.equal(
-  validateLeadZip({ address: "1 Main St, Pittsburgh, PA 15213" }),
+  validateLeadZip({ address: "1 Main St, Chicago, IL 60623" }),
   true,
   "ZIP and state can be read from the address when fields are empty",
 );
 assert.equal(
-  validateLeadZip({ address: "1 Main St, Erie, PA 16501" }),
+  validateLeadZip({ address: "1 Main St, Rockford, IL 61104" }),
   false,
-  "address-only PA lead outside 15xxx should be rejected",
+  "address-only IL lead outside 60xxx should be rejected",
 );
+
+// ── Scrape priority: every market list follows TARGET_STATES order ─────────
+assert.deepEqual(TARGET_STATES, ["OH", "IN", "WI", "IA", "IL", "KY"]);
+const stateOfName = (n: string) => n.match(/,\s*([A-Z]{2})\b/)?.[1] ?? "";
+const marketOrders: Array<[string, string[]]> = [
+  ["zillow", ADU_ZILLOW_MARKETS.map((m) => stateOfName(m.name))],
+  ["redfin", ADU_REDFIN_MARKETS.map((m) => stateOfName(m.name))],
+  ["craigslist", ADU_CRAIGSLIST_MARKETS.map((m) => m.state)],
+  ["creative-listing", ADU_STATE_MARKETS.map((m) => m.stateAbbr)],
+];
+for (const [source, states] of marketOrders) {
+  const distinct = states.filter((s, i) => states.indexOf(s) === i);
+  assert.deepEqual(distinct, TARGET_STATES, `${source} markets should follow TARGET_STATES order`);
+}
 
 // ── New construction exclusion ──────────────────────────────────────────────
 const lastYear = new Date().getFullYear() - 1;
