@@ -194,6 +194,37 @@ export function validateLeadZip(
 /** @deprecated Use validateLeadZip — now covers every ZIP-restricted state. */
 export const validateIndianaLeadZip = validateLeadZip;
 
+/** Two-letter state of a lead: the state field, else ", XX 12345" in the address. */
+function leadStateOf(
+  listing: Pick<AduResearchListing, "state" | "address">,
+): string | undefined {
+  const field = (listing.state ?? "").trim().toUpperCase();
+  if (/^[A-Z]{2}$/.test(field)) return field;
+  const matches = [
+    ...(listing.address ?? "")
+      .toUpperCase()
+      .matchAll(/,\s*([A-Z]{2})(?=\s*,?\s*\d{5}\b|\s*$)/g),
+  ];
+  return matches.at(-1)?.[1];
+}
+
+/**
+ * Final gate before a lead is written: its state must be in TARGET_STATES.
+ * Catches detail jobs that were queued before TARGET_STATES changed (e.g. a
+ * temporary ADU_TARGET_STATES focus). Leads whose state can't be determined
+ * pass — the location filter already ran when they were queued.
+ */
+export function passesTargetStateGate(
+  listing: Pick<AduResearchListing, "state" | "address" | "url">,
+): boolean {
+  const state = leadStateOf(listing);
+  if (!state || TARGET_STATES.includes(state)) return true;
+  logger.info(
+    `[adu-filter] Excluding lead outside target states (${state} not in ${TARGET_STATES.join(",")}): ${listing.address || listing.url}`,
+  );
+  return false;
+}
+
 /**
  * Stage 1: Check if a listing is located in one of TARGET_STATES.
  * Logs diagnostic details for the first N listings.

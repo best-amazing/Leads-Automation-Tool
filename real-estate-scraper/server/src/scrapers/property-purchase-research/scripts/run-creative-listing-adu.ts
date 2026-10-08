@@ -16,7 +16,7 @@ import { ADU_KEYWORDS, TARGET_STATES } from "../core/adu-keywords";
 import { appendAduResult } from "../core/adu-csv-writer";
 import { AduResearchListing } from "../core/adu-research.parser";
 import { AduDedupeTracker } from "../core/adu-dedupe-tracker";
-import { validateLeadZip, passesNewConstructionGate } from "../filters/adu-research.scraper";
+import { validateLeadZip, passesNewConstructionGate, passesTargetStateGate } from "../filters/adu-research.scraper";
 import { resolvePublicRecords } from "../core/public-records";
 import * as fs from "fs";
 import * as path from "path";
@@ -26,6 +26,8 @@ let capturedCount = 0;
 const tracker = new AduDedupeTracker();
 
 async function handleMatch(listing: AduResearchListing) {
+  if (!passesTargetStateGate(listing)) return;
+
   if (!validateLeadZip(listing)) {
     logger.warn(
       `[runner] Ignoring lead outside allowed ZIPs for its state: ${listing.address || listing.url} | zip=${String(listing.zip ?? "(missing)")}`,

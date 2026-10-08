@@ -34,6 +34,7 @@ import {
   passesLocationFilter,
   validateLeadZip,
   passesNewConstructionGate,
+  passesTargetStateGate,
 } from "../filters/adu-research.scraper";
 import { resolvePublicRecords } from "../core/public-records";
 import * as fs from "fs";
@@ -49,6 +50,8 @@ let capturedCount = 0;
 const tracker = new AduDedupeTracker();
 
 async function handleMatch(listing: AduResearchListing) {
+  if (!passesTargetStateGate(listing)) return;
+
   if (!validateLeadZip(listing)) {
     logger.warn(
       `[runner] Ignoring lead outside allowed ZIPs for its state: ${listing.address || listing.url} | zip=${String(listing.zip ?? "(missing)")}`,

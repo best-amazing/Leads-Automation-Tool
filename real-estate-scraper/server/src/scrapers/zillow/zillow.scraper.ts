@@ -71,10 +71,23 @@ const BACKFILL_BATCH_SIZE = 1000;
 
 export type OffMarketType = "pre_foreclosure" | "foreclosure" | "active";
 
-interface MarketConfig {
+/**
+ * Optional server-side search filters. Zillow serves at most 20 pages
+ * (~820 listings) per search, so narrowing a search (price band, beds, baths)
+ * is the only way to reach listings beyond that window.
+ */
+export interface ZillowSearchFilters {
+  priceMin?: number;
+  priceMax?: number;
+  bedsMin?: number;
+  bathsMin?: number;
+}
+
+export interface MarketConfig {
   name: string;
   baseUrl: string;
   listingType: OffMarketType;
+  searchFilters?: ZillowSearchFilters;
 }
 
 // ── URL builder ───────────────────────────────────────────────────────────────
@@ -96,6 +109,7 @@ function buildPageUrl(
   listingType: OffMarketType,
   pageNumber: number,
   ignorePriceFilter: boolean = false,
+  searchFilters?: ZillowSearchFilters,
 ): string {
   const [basePath] = baseUrl.split("?");
 
@@ -113,6 +127,19 @@ function buildPageUrl(
 
   if (!ignorePriceFilter) {
     filterState.price = { max: config.filter.maxPrice };
+  }
+
+  // Market-specific search narrowing (verified honoured by Zillow, Oct 2026)
+  if (searchFilters) {
+    const { priceMin, priceMax, bedsMin, bathsMin } = searchFilters;
+    if (priceMin != null || priceMax != null) {
+      filterState.price = {
+        ...(priceMin != null ? { min: priceMin } : {}),
+        ...(priceMax != null ? { max: priceMax } : {}),
+      };
+    }
+    if (bedsMin != null) filterState.beds = { min: bedsMin };
+    if (bathsMin != null) filterState.baths = { min: bathsMin };
   }
 
   // Force chronological order using the newer Zillow API format
@@ -423,12 +450,13 @@ export class ZillowScraper extends BaseScraper {
     pageNumber: number,
     ignorePriceFilter: boolean = false,
     applyDateFilter: boolean = true,
-  ): Promise<{ listings: RawListing[]; stop: boolean }> {
+  ): Promise<{ listings: RawListing[]; stop: boolean; totalPages?: number }> {
     const pageUrl = buildPageUrl(
       market.baseUrl,
       market.listingType,
       pageNumber,
       ignorePriceFilter,
+      market.searchFilters,
     );
     const slug = marketSlug(market);
 
@@ -512,7 +540,15 @@ export class ZillowScraper extends BaseScraper {
       listingType: market.listingType,
     }));
 
-    return { listings: stamped, stop: allStale };
+    // Zillow's own page count for this search (capped at 20 by Zillow), so
+    // callers can skip requesting pages that don't exist.
+    const totalPages = Number(searchJson?.cat1?.searchList?.totalPages);
+
+    return {
+      listings: stamped,
+      stop: allStale,
+      totalPages: Number.isFinite(totalPages) && totalPages > 0 ? totalPages : undefined,
+    };
   }
 
   // scrapePage is not used in this override-based scraper but must satisfy

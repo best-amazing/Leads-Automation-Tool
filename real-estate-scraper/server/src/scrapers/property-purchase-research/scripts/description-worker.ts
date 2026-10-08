@@ -16,6 +16,7 @@ import { ColdwellBankerAduScraper } from '../sources/coldwellbanker-adu.scraper'
 import {
   validateLeadZip,
   passesNewConstructionGate,
+  passesTargetStateGate,
 } from '../filters/adu-research.scraper';
 import { resolvePublicRecords } from '../core/public-records';
 import { appendAduResult } from '../core/adu-csv-writer';
@@ -55,6 +56,8 @@ function reserveSlot(job: Job, source: string): number {
 }
 
 async function handleMatch(listing: AduResearchListing) {
+  if (!passesTargetStateGate(listing)) return;
+
   if (!validateLeadZip(listing)) {
     logger.warn(`[worker] Ignoring lead outside allowed ZIPs for its state: ${listing.address || listing.url} | zip=${String(listing.zip ?? '(missing)')}`);
     return;

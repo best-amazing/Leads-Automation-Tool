@@ -149,32 +149,49 @@ export class ZillowAduScraper extends ZillowScraper {
       let stopPaging = false;
       let rawScannedForMarket = 0;
 
+      // Call the protected scrapeMarketPage from the parent class, bypassing
+      // the generic price filter (the market's own searchFilters apply) and
+      // the 30-day freshness cutoff so we backfill the full inventory.
+      const PAGE_TIMEOUT_MS = Number(process.env.ADU_PAGE_TIMEOUT_MS ?? 180_000);
+      type PageResult = { listings: RawListing[]; stop: boolean; totalPages?: number };
+      const fetchPage = (page: number) =>
+        raceTimeout<PageResult>(
+          (this as any).scrapeMarketPage(market, page, true, false),
+          PAGE_TIMEOUT_MS,
+          `scrapeMarketPage ${market.name} p${page}`,
+        );
+
+      // Page 1 first: Zillow reports how many pages this search really has,
+      // so we never pay for requests past the end of the results.
+      let firstPage: PageResult;
+      try {
+        firstPage = await fetchPage(1);
+      } catch (err) {
+        logger.error(`[${this.sourceName}] ${market.name} page 1 error: ${err}`);
+        continue;
+      }
+      if (firstPage.stop && firstPage.listings.length === 0) {
+        logger.warn(`[${this.sourceName}] ${market.name} — page 1 failed, skipping market`);
+        continue;
+      }
+      const lastPage = Math.min(
+        zillowCfg.maxPagesPerMarket,
+        firstPage.totalPages ?? zillowCfg.maxPagesPerMarket,
+      );
+
       // Reverse pagination (oldest first) to backfill inventory across batches
-      for (let page = zillowCfg.maxPagesPerMarket; page >= 1; page--) {
+      for (let page = lastPage; page >= 1; page--) {
         if (stopPaging) break;
         if (rawScannedForMarket >= this.options.maxListings) break;
         if (processedThisBatch >= BACKFILL_BATCH_SIZE) break;
 
         logger.info(
-          `[${this.sourceName}] ${market.name} — page ${page}/${zillowCfg.maxPagesPerMarket}`,
+          `[${this.sourceName}] ${market.name} — page ${page}/${lastPage}`,
         );
 
         let pageListings: RawListing[] = [];
         try {
-          // Call the protected scrapeMarketPage from the parent class, bypassing
-          // price filter and the 30-day freshness cutoff so we backfill the
-          // full inventory (oldest first via reverse pagination).
-          const PAGE_TIMEOUT_MS = Number(
-            process.env.ADU_PAGE_TIMEOUT_MS ?? 180_000,
-          );
-          const result = await raceTimeout<{
-            listings: RawListing[];
-            stop: boolean;
-          }>(
-            (this as any).scrapeMarketPage(market, page, true, false),
-            PAGE_TIMEOUT_MS,
-            `scrapeMarketPage ${market.name} p${page}`,
-          );
+          const result = page === 1 ? firstPage : await fetchPage(page);
           pageListings = result.listings;
           if (result.stop) stopPaging = true;
         } catch (err) {

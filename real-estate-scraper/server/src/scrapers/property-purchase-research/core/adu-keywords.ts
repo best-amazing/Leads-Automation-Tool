@@ -67,8 +67,20 @@ export const ADU_KEYWORDS = [
  * are reached once its unseen inventory is exhausted. To change priority,
  * reorder this array; to add/drop a state, also add/remove its markets in
  * adu-markets.ts and its ZIP rule below.
+ *
+ * Temporary focus: set ADU_TARGET_STATES (e.g. "OH" or "OH,IN") to scrape
+ * only those states, in that order — no code change needed; unset it to
+ * return to the full list.
  */
-export const TARGET_STATES = ["OH", "IN", "WI", "IA", "IL", "KY"];
+const DEFAULT_TARGET_STATES = ["OH", "IN", "WI", "IA", "IL", "KY"];
+
+export const TARGET_STATES: string[] = (() => {
+  const override = (process.env.ADU_TARGET_STATES ?? "")
+    .split(",")
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+  return override.length > 0 ? override : DEFAULT_TARGET_STATES;
+})();
 
 /**
  * Allowed ZIP prefixes per state. Leads in a listed state are only written

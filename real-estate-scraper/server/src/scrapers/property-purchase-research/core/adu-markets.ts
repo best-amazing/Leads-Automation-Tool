@@ -20,21 +20,58 @@ const byStatePriority = <T>(items: T[], stateOf: (m: T) => string): T[] =>
 
 const stateFromName = (name: string) => name.match(/,\s*([A-Z]{2})\b/)?.[1] ?? "";
 
+// ── Zillow ──────────────────────────────────────────────────────────────────
+// Zillow serves at most 20 pages (~820 listings) per search, so one
+// unfiltered search per city only ever reaches its ~820 newest listings
+// (Columbus alone has 2,000+). Each city is therefore searched once per price
+// band, with the ADU criteria (≤ $600k, 3+ beds, 2+ baths — see
+// passesPropertyCriteria) applied server-side, so every band fits inside
+// Zillow's window and every result is a candidate.
+// Bands: ZILLOW_ADU_PRICE_BANDS="min-max,min-max,…" (default 3 bands to $600k).
+const ZILLOW_PRICE_BANDS: Array<[number, number]> = (
+  process.env.ZILLOW_ADU_PRICE_BANDS ?? "0-250000,250000-400000,400000-600000"
+)
+  .split(",")
+  .map((band) => band.split("-").map(Number) as [number, number])
+  .filter(([min, max]) => Number.isFinite(min) && Number.isFinite(max) && max > min);
+
+const ZILLOW_CITIES: Array<{ name: string; slug: string }> = [
+  { name: "Columbus, OH", slug: "columbus-oh" },
+  { name: "Cleveland, OH", slug: "cleveland-oh" },
+  { name: "Toledo, OH", slug: "toledo-oh" },
+  { name: "Cincinnati, OH", slug: "cincinnati-oh" },
+  { name: "Dayton, OH", slug: "dayton-oh" },
+  { name: "Akron, OH", slug: "akron-oh" },
+  { name: "Youngstown, OH", slug: "youngstown-oh" },
+  { name: "Canton, OH", slug: "canton-oh" },
+  { name: "Indianapolis, IN", slug: "indianapolis-in" },
+  { name: "Milwaukee, WI", slug: "milwaukee-wi" },
+  { name: "Waterloo, IA", slug: "waterloo-ia" },
+  { name: "Chicago, IL", slug: "chicago-il" },
+  { name: "Louisville, KY", slug: "louisville-ky" },
+];
+
+const formatK = (n: number) => `$${Math.round(n / 1000)}k`;
+
 export const ADU_ZILLOW_MARKETS: Array<{
   name: string;
   baseUrl: string;
   listingType: "active" | "pre_foreclosure" | "foreclosure";
+  searchFilters: {
+    priceMin: number;
+    priceMax: number;
+    bedsMin: number;
+    bathsMin: number;
+  };
 }> = byStatePriority(
-  [
-    { name: "Columbus, OH - Active", baseUrl: "https://www.zillow.com/columbus-oh/", listingType: "active" as const },
-    { name: "Cleveland, OH - Active", baseUrl: "https://www.zillow.com/cleveland-oh/", listingType: "active" as const },
-    { name: "Toledo, OH - Active", baseUrl: "https://www.zillow.com/toledo-oh/", listingType: "active" as const },
-    { name: "Indianapolis, IN - Active", baseUrl: "https://www.zillow.com/indianapolis-in/", listingType: "active" as const },
-    { name: "Milwaukee, WI - Active", baseUrl: "https://www.zillow.com/milwaukee-wi/", listingType: "active" as const },
-    { name: "Waterloo, IA - Active", baseUrl: "https://www.zillow.com/waterloo-ia/", listingType: "active" as const },
-    { name: "Chicago, IL - Active", baseUrl: "https://www.zillow.com/chicago-il/", listingType: "active" as const },
-    { name: "Louisville, KY - Active", baseUrl: "https://www.zillow.com/louisville-ky/", listingType: "active" as const },
-  ],
+  ZILLOW_CITIES.flatMap((city) =>
+    ZILLOW_PRICE_BANDS.map(([priceMin, priceMax]) => ({
+      name: `${city.name} - Active ${formatK(priceMin)}–${formatK(priceMax)}`,
+      baseUrl: `https://www.zillow.com/${city.slug}/`,
+      listingType: "active" as const,
+      searchFilters: { priceMin, priceMax, bedsMin: 3, bathsMin: 2 },
+    })),
+  ),
   (m) => stateFromName(m.name),
 );
 
@@ -49,6 +86,11 @@ export const ADU_REDFIN_MARKETS: Array<{
     { name: "Columbus, OH", regionId: 4664, regionType: 6 },
     { name: "Cleveland, OH", regionId: 4145, regionType: 6 },
     { name: "Toledo, OH", regionId: 19458, regionType: 6 },
+    { name: "Cincinnati, OH", regionId: 3879, regionType: 6 },
+    { name: "Dayton, OH", regionId: 5413, regionType: 6 },
+    { name: "Akron, OH", regionId: 244, regionType: 6 },
+    { name: "Youngstown, OH", regionId: 21075, regionType: 6 },
+    { name: "Canton, OH", regionId: 3101, regionType: 6 },
     { name: "Indianapolis, IN", regionId: 9170, regionType: 6 },
     { name: "Milwaukee, WI", regionId: 35759, regionType: 6 },
     { name: "Waterloo, IA", regionId: 20487, regionType: 6 },
@@ -67,6 +109,11 @@ export const ADU_CRAIGSLIST_MARKETS: Array<{
     { city: "columbus", state: "OH", url: "https://columbus.craigslist.org/search/rea" },
     { city: "cleveland", state: "OH", url: "https://cleveland.craigslist.org/search/rea" },
     { city: "toledo", state: "OH", url: "https://toledo.craigslist.org/search/rea" },
+    { city: "cincinnati", state: "OH", url: "https://cincinnati.craigslist.org/search/rea" },
+    { city: "dayton", state: "OH", url: "https://dayton.craigslist.org/search/rea" },
+    // Akron and Canton share one Craigslist site
+    { city: "akroncanton", state: "OH", url: "https://akroncanton.craigslist.org/search/rea" },
+    { city: "youngstown", state: "OH", url: "https://youngstown.craigslist.org/search/rea" },
     { city: "indianapolis", state: "IN", url: "https://indianapolis.craigslist.org/search/rea" },
     { city: "milwaukee", state: "WI", url: "https://milwaukee.craigslist.org/search/rea" },
     { city: "waterloo", state: "IA", url: "https://waterloo.craigslist.org/search/rea" },
