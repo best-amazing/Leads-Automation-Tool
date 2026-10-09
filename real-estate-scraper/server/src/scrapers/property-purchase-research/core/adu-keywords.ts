@@ -72,7 +72,21 @@ export const ADU_KEYWORDS = [
  * only those states, in that order — no code change needed; unset it to
  * return to the full list.
  */
-const DEFAULT_TARGET_STATES = ["OH", "IN", "WI", "IA", "IL", "KY"];
+const DEFAULT_TARGET_STATES = [
+  "OH",
+  "IN",
+  "WI",
+  "IA",
+  "IL",
+  "KY",
+  "MI",
+  "PA",
+  "MO",
+  "NE",
+  "KS",
+  "TN",
+  "GA",
+];
 
 export const TARGET_STATES: string[] = (() => {
   const override = (process.env.ADU_TARGET_STATES ?? "")
@@ -85,17 +99,21 @@ export const TARGET_STATES: string[] = (() => {
 /**
  * Allowed ZIP prefixes per state. Leads in a listed state are only written
  * when their ZIP starts with one of these prefixes (a missing ZIP is
- * rejected). States not listed here accept any ZIP.
+ * rejected). States not listed here accept any ZIP — Ohio: all ZIPs.
  */
 export const STATE_ZIP_PREFIXES: Record<string, string[]> = {
-  // Ohio ZIPs span 430xx–459xx; "42" (a Kentucky range) never matches an
-  // Ohio listing but is kept as requested.
-  OH: ["42", "43", "44", "45"],
   IN: ["46"], // Indianapolis
   WI: ["53"], // Milwaukee
-  IA: ["50"], // Waterloo
+  IA: ["50", "52"], // Waterloo, Des Moines (50) · Cedar Rapids (52)
   IL: ["60"], // Chicago area
-  KY: ["40"], // Louisville / Lexington
+  KY: ["40"], // Louisville / Lexington (north-central)
+  MI: ["48", "49"], // Detroit (48) · Kalamazoo (49)
+  PA: ["15"], // Pittsburgh
+  MO: ["63", "64"], // St. Louis (63) · Kansas City (64)
+  NE: ["68"], // Omaha
+  KS: ["66"], // Kansas City, KS
+  TN: ["37"], // Nashville
+  GA: ["30"], // Atlanta
 };
 
 // Compiled once at load (in ADU_KEYWORDS priority order) instead of building

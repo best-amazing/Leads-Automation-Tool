@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { dedupKey } from "../filters/address-dedupe";
-import { TARGET_STATES } from "../core/adu-keywords";
+import { STATE_ZIP_PREFIXES, TARGET_STATES } from "../core/adu-keywords";
 import {
   ADU_CRAIGSLIST_MARKETS,
   ADU_REDFIN_MARKETS,
@@ -71,7 +71,8 @@ const zipCases: Array<[string, string, boolean]> = [
   ["IN", "46201", true], // Indianapolis
   ["IN", "47201", false], // Columbus, IN
   ["IA", "50701", true], // Waterloo
-  ["IA", "52401", false], // Cedar Rapids
+  ["IA", "52401", true], // Cedar Rapids
+  ["IA", "51101", false], // Sioux City
   ["IL", "60623", true], // Chicago
   ["IL", "60544", true], // Plainfield
   ["IL", "61104", false], // Rockford
@@ -79,7 +80,22 @@ const zipCases: Array<[string, string, boolean]> = [
   ["OH", "43215", true], // Columbus
   ["OH", "44114", true], // Cleveland
   ["OH", "45202", true], // Cincinnati
-  ["OH", "12345", false], // not an Ohio-format ZIP
+  ["OH", "12345", true], // Ohio accepts every ZIP
+  ["MI", "48201", true], // Detroit
+  ["MI", "49007", true], // Kalamazoo
+  ["PA", "15213", true], // Pittsburgh
+  ["PA", "19103", false], // Philadelphia
+  ["MO", "63101", true], // St. Louis
+  ["MO", "64105", true], // Kansas City, MO
+  ["MO", "65801", false], // Springfield, MO
+  ["NE", "68102", true], // Omaha
+  ["NE", "69101", false], // North Platte
+  ["KS", "66101", true], // Kansas City, KS
+  ["KS", "67202", false], // Wichita
+  ["TN", "37203", true], // Nashville
+  ["TN", "38103", false], // Memphis
+  ["GA", "30303", true], // Atlanta
+  ["GA", "31401", false], // Savannah
 ];
 for (const [state, zip, expected] of zipCases) {
   assert.equal(
@@ -105,17 +121,28 @@ assert.equal(
 );
 
 // ── Scrape priority: every market list follows TARGET_STATES order ─────────
-assert.deepEqual(TARGET_STATES, ["OH", "IN", "WI", "IA", "IL", "KY"]);
+assert.deepEqual(TARGET_STATES, [
+  "OH", "IN", "WI", "IA", "IL", "KY", "MI", "PA", "MO", "NE", "KS", "TN", "GA",
+]);
 const stateOfName = (n: string) => n.match(/,\s*([A-Z]{2})\b/)?.[1] ?? "";
-const marketOrders: Array<[string, string[]]> = [
-  ["zillow", ADU_ZILLOW_MARKETS.map((m) => stateOfName(m.name))],
-  ["redfin", ADU_REDFIN_MARKETS.map((m) => stateOfName(m.name))],
-  ["craigslist", ADU_CRAIGSLIST_MARKETS.map((m) => m.state)],
-  ["creative-listing", ADU_STATE_MARKETS.map((m) => m.stateAbbr)],
+// [source, states in list order, must cover every target state?]
+const marketOrders: Array<[string, string[], boolean]> = [
+  ["zillow", ADU_ZILLOW_MARKETS.map((m) => stateOfName(m.name)), true],
+  ["redfin", ADU_REDFIN_MARKETS.map((m) => stateOfName(m.name)), true],
+  // Kansas shares the Kansas City Craigslist site (tagged MO), so KS is absent.
+  ["craigslist", ADU_CRAIGSLIST_MARKETS.map((m) => m.state), false],
+  ["creative-listing", ADU_STATE_MARKETS.map((m) => m.stateAbbr), true],
 ];
-for (const [source, states] of marketOrders) {
+for (const [source, states, complete] of marketOrders) {
   const distinct = states.filter((s, i) => states.indexOf(s) === i);
-  assert.deepEqual(distinct, TARGET_STATES, `${source} markets should follow TARGET_STATES order`);
+  const expected = complete
+    ? TARGET_STATES
+    : TARGET_STATES.filter((s) => distinct.includes(s));
+  assert.deepEqual(distinct, expected, `${source} markets should follow TARGET_STATES order`);
+}
+// Every targeted state except Ohio has a ZIP rule
+for (const s of TARGET_STATES.filter((s) => s !== "OH")) {
+  assert.ok(STATE_ZIP_PREFIXES[s], `${s} should have a ZIP rule`);
 }
 
 // ── New construction exclusion ──────────────────────────────────────────────

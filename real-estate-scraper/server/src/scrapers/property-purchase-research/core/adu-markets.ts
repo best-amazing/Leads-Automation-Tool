@@ -47,8 +47,19 @@ const ZILLOW_CITIES: Array<{ name: string; slug: string }> = [
   { name: "Indianapolis, IN", slug: "indianapolis-in" },
   { name: "Milwaukee, WI", slug: "milwaukee-wi" },
   { name: "Waterloo, IA", slug: "waterloo-ia" },
+  { name: "Des Moines, IA", slug: "des-moines-ia" },
+  { name: "Cedar Rapids, IA", slug: "cedar-rapids-ia" },
   { name: "Chicago, IL", slug: "chicago-il" },
   { name: "Louisville, KY", slug: "louisville-ky" },
+  { name: "Detroit, MI", slug: "detroit-mi" },
+  { name: "Kalamazoo, MI", slug: "kalamazoo-mi" },
+  { name: "Pittsburgh, PA", slug: "pittsburgh-pa" },
+  { name: "St. Louis, MO", slug: "st-louis-mo" },
+  { name: "Kansas City, MO", slug: "kansas-city-mo" },
+  { name: "Omaha, NE", slug: "omaha-ne" },
+  { name: "Kansas City, KS", slug: "kansas-city-ks" },
+  { name: "Nashville, TN", slug: "nashville-tn" },
+  { name: "Atlanta, GA", slug: "atlanta-ga" },
 ];
 
 const formatK = (n: number) => `$${Math.round(n / 1000)}k`;
@@ -94,8 +105,19 @@ export const ADU_REDFIN_MARKETS: Array<{
     { name: "Indianapolis, IN", regionId: 9170, regionType: 6 },
     { name: "Milwaukee, WI", regionId: 35759, regionType: 6 },
     { name: "Waterloo, IA", regionId: 20487, regionType: 6 },
+    { name: "Des Moines, IA", regionId: 5415, regionType: 6 },
+    { name: "Cedar Rapids, IA", regionId: 3103, regionType: 6 },
     { name: "Chicago, IL", regionId: 29470, regionType: 6 },
     { name: "Louisville, KY", regionId: 12262, regionType: 6 },
+    { name: "Detroit, MI", regionId: 5665, regionType: 6 },
+    { name: "Kalamazoo, MI", regionId: 10728, regionType: 6 },
+    { name: "Pittsburgh, PA", regionId: 15702, regionType: 6 },
+    { name: "St. Louis, MO", regionId: 16661, regionType: 6 },
+    { name: "Kansas City, MO", regionId: 35751, regionType: 6 },
+    { name: "Omaha, NE", regionId: 9417, regionType: 6 },
+    { name: "Kansas City, KS", regionId: 35754, regionType: 6 },
+    { name: "Nashville, TN", regionId: 13415, regionType: 6 },
+    { name: "Atlanta, GA", regionId: 30756, regionType: 6 },
   ],
   (m) => stateFromName(m.name),
 );
@@ -117,8 +139,21 @@ export const ADU_CRAIGSLIST_MARKETS: Array<{
     { city: "indianapolis", state: "IN", url: "https://indianapolis.craigslist.org/search/rea" },
     { city: "milwaukee", state: "WI", url: "https://milwaukee.craigslist.org/search/rea" },
     { city: "waterloo", state: "IA", url: "https://waterloo.craigslist.org/search/rea" },
+    { city: "desmoines", state: "IA", url: "https://desmoines.craigslist.org/search/rea" },
+    { city: "cedarrapids", state: "IA", url: "https://cedarrapids.craigslist.org/search/rea" },
     { city: "chicago", state: "IL", url: "https://chicago.craigslist.org/search/rea" },
     { city: "louisville", state: "KY", url: "https://louisville.craigslist.org/search/rea" },
+    { city: "detroit", state: "MI", url: "https://detroit.craigslist.org/search/rea" },
+    { city: "kalamazoo", state: "MI", url: "https://kalamazoo.craigslist.org/search/rea" },
+    { city: "pittsburgh", state: "PA", url: "https://pittsburgh.craigslist.org/search/rea" },
+    { city: "stlouis", state: "MO", url: "https://stlouis.craigslist.org/search/rea" },
+    // One site for both sides of Kansas City; Craigslist search results carry
+    // no state, so its leads are tagged MO (Kansas-side 66xxx ZIPs then fail
+    // the MO ZIP rule). Kansas, KS leads still come via Zillow/Redfin/CB.
+    { city: "kansascity", state: "MO", url: "https://kansascity.craigslist.org/search/rea" },
+    { city: "omaha", state: "NE", url: "https://omaha.craigslist.org/search/rea" },
+    { city: "nashville", state: "TN", url: "https://nashville.craigslist.org/search/rea" },
+    { city: "atlanta", state: "GA", url: "https://atlanta.craigslist.org/search/rea" },
   ],
   (m) => m.state,
 );
@@ -130,6 +165,13 @@ const STATE_NAMES: Record<string, string> = {
   IA: "Iowa",
   IL: "Illinois",
   KY: "Kentucky",
+  MI: "Michigan",
+  PA: "Pennsylvania",
+  MO: "Missouri",
+  NE: "Nebraska",
+  KS: "Kansas",
+  TN: "Tennessee",
+  GA: "Georgia",
 };
 
 /** Statewide markets (Creative Listing) in TARGET_STATES priority order. */
