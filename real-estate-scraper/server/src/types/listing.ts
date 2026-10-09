@@ -43,6 +43,10 @@ export interface RawListing {
   squareFeet?: number;
   lotSqft?: number;
   yearBuilt?: number;
+  /** Monthly HOA fee when the source reports one (0 = source says none). */
+  hoaFee?: number;
+  /** The source's own home-type label, e.g. Zillow "SINGLE_FAMILY" / "CONDO". */
+  homeType?: string;
 
   description?: string;
 

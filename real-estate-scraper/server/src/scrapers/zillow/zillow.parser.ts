@@ -143,6 +143,19 @@ export function parseZillowResults(
     // ── Zestimate ─────────────────────────────────────────────────────────
     const zestimate = extractZestimate(item, address);
 
+    // ── Lot size + home type (search results carry both in hdpData) ───────
+    const homeInfo = item.hdpData?.homeInfo ?? {};
+    const lotValue = Number(homeInfo.lotAreaValue);
+    const lotSqft =
+      Number.isFinite(lotValue) && lotValue > 0
+        ? Math.round(
+            String(homeInfo.lotAreaUnit).toLowerCase() === "acres"
+              ? lotValue * 43560
+              : lotValue,
+          )
+        : undefined;
+    const homeType: string | undefined = homeInfo.homeType ?? item.homeType;
+
     results.push({
       url:          `https://www.zillow.com/homedetails/${item.zpid}_zpid/`,
       source:       "zillow",
@@ -153,6 +166,8 @@ export function parseZillowResults(
       bedrooms:     item.beds,
       bathrooms:    item.baths,
       squareFeet:   item.area,
+      lotSqft,
+      homeType,
       propertyType: item.homeType || "unknown",
       description:  "",
       listedAt,

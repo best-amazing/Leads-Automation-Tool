@@ -18,6 +18,7 @@ import { AduResearchListing } from "../core/adu-research.parser";
 import { AduDedupeTracker } from "../core/adu-dedupe-tracker";
 import { validateLeadZip, passesNewConstructionGate, passesTargetStateGate } from "../filters/adu-research.scraper";
 import { resolvePublicRecords } from "../core/public-records";
+import { qualifiesForStrictSheet } from "../core/strict-sheet";
 import * as fs from "fs";
 import * as path from "path";
 import { writeAduResearchToSheets } from "../../../utils/google-sheets";
@@ -56,6 +57,10 @@ async function handleMatch(listing: AduResearchListing) {
 
   appendAduResult(listing);
   await writeAduResearchToSheets([listing]);
+  // Second spreadsheet: same lead, tighter criteria (core/strict-sheet.ts)
+  if (qualifiesForStrictSheet(listing)) {
+    await writeAduResearchToSheets([listing], "strict");
+  }
 }
 
 export async function runCreativeListingAduResearch(): Promise<void> {

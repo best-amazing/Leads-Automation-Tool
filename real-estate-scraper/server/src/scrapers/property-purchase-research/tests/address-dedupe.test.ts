@@ -13,6 +13,7 @@ import {
   validateLeadZip,
   newConstructionReason,
   passesNewConstructionGate,
+  strictCriteriaFailure,
 } from "../filters/adu-research.scraper";
 
 const a = { address: "53316 Nadine Street, South Bend, IN, 46637" };
@@ -179,5 +180,41 @@ assert.equal(
   false,
   "14814 S Parkview Dr (built 2027) should be excluded",
 );
+
+// ── Second spreadsheet (strict criteria) ────────────────────────────────────
+const good = {
+  price: 180_000, bedrooms: 4, bathrooms: 2, squareFeet: 1_800,
+  lotSqft: 0.6 * 43_560, yearBuilt: 1972, homeType: "SINGLE_FAMILY",
+  description: "Main house plus a guest house on a large lot.",
+};
+const strictCases: Array<[string, Record<string, unknown>, boolean]> = [
+  ["meets every criterion", good, true],
+  ["all values unknown (written for review)", { description: "In-law suite" }, true],
+  ["price over $200k", { ...good, price: 205_000 }, false],
+  ["3 beds", { ...good, bedrooms: 3 }, false],
+  ["1.5 baths", { ...good, bathrooms: 1.5 }, false],
+  ["1,400 sqft", { ...good, squareFeet: 1_400 }, false],
+  ["0.4 acre lot", { ...good, lotSqft: 0.4 * 43_560 }, false],
+  ["exactly 0.5 acre lot", { ...good, lotSqft: 0.5 * 43_560 }, true],
+  ["built 1950", { ...good, yearBuilt: 1950 }, false],
+  ["built 1955", { ...good, yearBuilt: 1955 }, true],
+  ["new construction (built this year)", { ...good, yearBuilt: new Date().getFullYear() }, false],
+  ["HOA fee reported", { ...good, hoaFee: 45 }, false],
+  ["HOA fee 0", { ...good, hoaFee: 0 }, true],
+  ["HOA in description", { ...good, description: "Guest house. HOA dues $40/mo." }, false],
+  ["'No HOA' in description", { ...good, description: "Guest house, no HOA!" }, true],
+  ["condo home type", { ...good, homeType: "CONDO" }, false],
+  ["multifamily home type", { ...good, homeType: "MULTI_FAMILY" }, true],
+  ["apartment home type", { ...good, homeType: "APARTMENT" }, true],
+  ["bungalow", { ...good, description: "Charming bungalow with in-law suite" }, false],
+  ["55+ community", { ...good, description: "In-law suite in a 55+ community" }, false],
+  ["auction", { ...good, description: "Selling at auction, guest house" }, false],
+  ["short sale", { ...good, description: "Short sale. In-law suite." }, false],
+  ["vacant land", { ...good, description: "Vacant land, two homes allowed" }, false],
+];
+for (const [label, listing, expected] of strictCases) {
+  const failure = strictCriteriaFailure(listing as any);
+  assert.equal(failure === null, expected, `strict: ${label} (got: ${failure ?? "pass"})`);
+}
 
 console.log("address dedupe checks passed");

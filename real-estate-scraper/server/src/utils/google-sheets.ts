@@ -8,11 +8,6 @@ import * as os from "os";
 import { logger } from "./logger";
 import { AduResearchListing } from "../scrapers/property-purchase-research/core/adu-research.parser";
 
-let cachedExistingLinks: Set<string> | null = null;
-let stateLoaded = false;
-let cachedLastRow = 0;
-let cachedHasTodayData = false;
-
 import * as path from "path";
 
 function getServiceAccountPath(): string {
@@ -155,20 +150,81 @@ function buildAduDupKey(listing: AduResearchListing): string | null {
   return `addr:${normalizedAddress}|zip:${zip}`;
 }
 
-// Sheets client + target tab id are resolved once per process (reset on error)
-// instead of re-authenticating and re-fetching spreadsheet metadata per write.
-let cachedSheetsClient: ReturnType<typeof google.sheets> | null = null;
-let cachedSheetId: number | undefined;
+// ── Spreadsheet targets ─────────────────────────────────────────────────────
+// "main"   — the original property research tab
+// "strict" — the second property research tab (tighter criteria). By default
+//            it's a tab in the same workbook; SPREADSHEET_ID_STRICT /
+//            ADU_STRICT_SHEET_TAB can point it elsewhere.
+export type SheetTarget = "main" | "strict";
 
-// Writes are serialized: each write computes its target row from cachedLastRow,
-// so two concurrent writes would otherwise land on (and overwrite) the same row.
-let sheetsWriteChain: Promise<void> = Promise.resolve();
+function targetConfig(target: SheetTarget): {
+  spreadsheetId: string | undefined;
+  sheetName: string;
+} {
+  if (target === "strict") {
+    return {
+      spreadsheetId: process.env.SPREADSHEET_ID_STRICT || process.env.SPREADSHEET_ID,
+      sheetName:
+        process.env.ADU_STRICT_SHEET_TAB || "Second Property Research Spreadsheet",
+    };
+  }
+  return {
+    spreadsheetId: process.env.SPREADSHEET_ID,
+    sheetName: "New Property Research Tool",
+  };
+}
+
+export function isSheetTargetConfigured(target: SheetTarget): boolean {
+  return !!targetConfig(target).spreadsheetId;
+}
+
+// Per-spreadsheet cached state. Each target has its own existing-link cache,
+// last-row pointer, daily-header flag, write chain and buffer, so duplicates
+// are tracked within each spreadsheet independently.
+interface TargetState {
+  existingLinks: Set<string> | null;
+  stateLoaded: boolean;
+  lastRow: number;
+  hasTodayData: boolean;
+  sheetId: number | undefined;
+  // Writes are serialized per spreadsheet: each write computes its target row
+  // from lastRow, so concurrent writes would otherwise overwrite each other.
+  writeChain: Promise<void>;
+  buffer: AduResearchListing[];
+  flushTimer: NodeJS.Timeout | null;
+}
+
+const targetStates = new Map<SheetTarget, TargetState>();
+
+function stateFor(target: SheetTarget): TargetState {
+  let st = targetStates.get(target);
+  if (!st) {
+    st = {
+      existingLinks: null,
+      stateLoaded: false,
+      lastRow: 0,
+      hasTodayData: false,
+      sheetId: undefined,
+      writeChain: Promise.resolve(),
+      buffer: [],
+      flushTimer: null,
+    };
+    targetStates.set(target, st);
+  }
+  return st;
+}
+
+// Sheets client is resolved once per process (reset on error) instead of
+// re-authenticating per write; it's shared by both spreadsheets.
+let cachedSheetsClient: ReturnType<typeof google.sheets> | null = null;
 
 export function writeAduResearchToSheets(
   listings: AduResearchListing[],
+  target: SheetTarget = "main",
 ): Promise<void> {
-  const run = sheetsWriteChain.then(() => writeAduResearchToSheetsNow(listings));
-  sheetsWriteChain = run.catch(() => {});
+  const st = stateFor(target);
+  const run = st.writeChain.then(() => writeAduResearchToSheetsNow(listings, target));
+  st.writeChain = run.catch(() => {});
   return run;
 }
 
@@ -177,34 +233,42 @@ export function writeAduResearchToSheets(
 // rows or ADU_SHEETS_FLUSH_MS, keeping well under the Sheets write quota.
 const SHEETS_FLUSH_SIZE = Number(process.env.ADU_SHEETS_FLUSH_SIZE ?? 20);
 const SHEETS_FLUSH_MS = Number(process.env.ADU_SHEETS_FLUSH_MS ?? 15_000);
-let sheetsBuffer: AduResearchListing[] = [];
-let sheetsFlushTimer: NodeJS.Timeout | null = null;
 let sheetsExitHooked = false;
 
-export function queueAduSheetWrite(listing: AduResearchListing): void {
-  sheetsBuffer.push(listing);
+export function queueAduSheetWrite(
+  listing: AduResearchListing,
+  target: SheetTarget = "main",
+): void {
+  const st = stateFor(target);
+  st.buffer.push(listing);
   hookSheetsFlushOnExit();
-  if (sheetsBuffer.length >= SHEETS_FLUSH_SIZE) {
-    void flushAduSheetWrites();
-  } else if (!sheetsFlushTimer) {
-    sheetsFlushTimer = setTimeout(() => void flushAduSheetWrites(), SHEETS_FLUSH_MS);
+  if (st.buffer.length >= SHEETS_FLUSH_SIZE) {
+    void flushTarget(target);
+  } else if (!st.flushTimer) {
+    st.flushTimer = setTimeout(() => void flushTarget(target), SHEETS_FLUSH_MS);
   }
 }
 
-export async function flushAduSheetWrites(): Promise<void> {
-  if (sheetsFlushTimer) {
-    clearTimeout(sheetsFlushTimer);
-    sheetsFlushTimer = null;
+async function flushTarget(target: SheetTarget): Promise<void> {
+  const st = stateFor(target);
+  if (st.flushTimer) {
+    clearTimeout(st.flushTimer);
+    st.flushTimer = null;
   }
-  const batch = sheetsBuffer;
-  sheetsBuffer = [];
+  const batch = st.buffer;
+  st.buffer = [];
   if (batch.length > 0) {
-    await writeAduResearchToSheets(batch).catch((err) =>
-      logger.error(`[sheets] Buffered flush failed: ${err}`),
+    await writeAduResearchToSheets(batch, target).catch((err) =>
+      logger.error(`[sheets:${target}] Buffered flush failed: ${err}`),
     );
   } else {
-    await sheetsWriteChain;
+    await st.writeChain;
   }
+}
+
+/** Flushes buffered rows for every spreadsheet. */
+export async function flushAduSheetWrites(): Promise<void> {
+  await Promise.all([...targetStates.keys()].map(flushTarget));
 }
 
 function hookSheetsFlushOnExit(): void {
@@ -212,7 +276,8 @@ function hookSheetsFlushOnExit(): void {
   sheetsExitHooked = true;
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.once(signal, () => {
-      logger.info(`[sheets] ${signal} — flushing ${sheetsBuffer.length} buffered row(s)`);
+      const buffered = [...targetStates.values()].reduce((n, s) => n + s.buffer.length, 0);
+      logger.info(`[sheets] ${signal} — flushing ${buffered} buffered row(s)`);
       // Best effort: other shutdown handlers may exit first. Cap the wait so a
       // hung Sheets call can't block shutdown.
       Promise.race([
@@ -223,23 +288,26 @@ function hookSheetsFlushOnExit(): void {
   }
 }
 
-async function writeAduResearchToSheetsNow(listings: AduResearchListing[]) {
+async function writeAduResearchToSheetsNow(
+  listings: AduResearchListing[],
+  target: SheetTarget,
+) {
   if (listings.length === 0) return;
 
-  const spreadsheetId = process.env.SPREADSHEET_ID;
+  const { spreadsheetId, sheetName } = targetConfig(target);
   if (!spreadsheetId) {
     logger.warn(
-      "[sheets] SPREADSHEET_ID not found in .env, skipping Google Sheets upload.",
+      `[sheets:${target}] SPREADSHEET_ID not set, skipping Google Sheets upload.`,
     );
     return;
   }
+  const st = stateFor(target);
 
-  const sheetName = "New Property Research Tool";
   const keyPath = getServiceAccountPath();
 
   if (!fs.existsSync(keyPath)) {
     logger.error(
-      `[sheets] Google service account key not found at ${keyPath}. Skipping upload.`,
+      `[sheets:${target}] Google service account key not found at ${keyPath}. Skipping upload.`,
     );
     return;
   }
@@ -255,13 +323,13 @@ async function writeAduResearchToSheetsNow(listings: AduResearchListing[]) {
           scopes: ["https://www.googleapis.com/auth/spreadsheets"],
         });
         cachedSheetsClient = google.sheets({ version: "v4", auth });
-        cachedSheetId = undefined;
+        st.sheetId = undefined;
       }
       const sheets = cachedSheetsClient;
 
       // Check if sheet exists (once per process)
-      let sheetExists = cachedSheetId !== undefined;
-      let sheetId: number | undefined = cachedSheetId;
+      let sheetExists = st.sheetId !== undefined;
+      let sheetId: number | undefined = st.sheetId;
       if (!sheetExists) {
         const meta = await sheets.spreadsheets.get({ spreadsheetId });
         meta.data.sheets?.forEach((s) => {
@@ -273,7 +341,7 @@ async function writeAduResearchToSheetsNow(listings: AduResearchListing[]) {
       }
 
       if (!sheetExists) {
-        logger.info(`[sheets] Creating new sheet "${sheetName}"`);
+        logger.info(`[sheets:${target}] Creating new sheet "${sheetName}"`);
         const createRes = await sheets.spreadsheets.batchUpdate({
           spreadsheetId,
           requestBody: {
@@ -292,7 +360,7 @@ async function writeAduResearchToSheetsNow(listings: AduResearchListing[]) {
           createRes.data.replies?.[0]?.addSheet?.properties?.sheetId ??
           undefined;
       }
-      cachedSheetId = sheetId;
+      st.sheetId = sheetId;
 
       const headers = ADU_SHEET_HEADERS;
 
@@ -300,11 +368,11 @@ async function writeAduResearchToSheetsNow(listings: AduResearchListing[]) {
 
       // Load the current state of the sheet once per process so we always know
       // the exact last row (no table-detection guessing).
-      if (!stateLoaded) {
-        stateLoaded = true;
-        cachedExistingLinks = new Set<string>();
-        cachedLastRow = 0;
-        cachedHasTodayData = false;
+      if (!st.stateLoaded) {
+        st.stateLoaded = true;
+        st.existingLinks = new Set<string>();
+        st.lastRow = 0;
+        st.hasTodayData = false;
 
         try {
           const getRes = await sheets.spreadsheets.values.get({
@@ -313,9 +381,9 @@ async function writeAduResearchToSheetsNow(listings: AduResearchListing[]) {
           });
 
           const existingRows = getRes.data.values || [];
-          cachedLastRow = existingRows.length;
+          st.lastRow = existingRows.length;
 
-          if (cachedLastRow > 0) {
+          if (st.lastRow > 0) {
             const headerRow = existingRows[0];
             let linkIndex = headerRow.indexOf("Link");
             if (linkIndex === -1) linkIndex = 21; // fallback to index 21 (V)
@@ -323,7 +391,7 @@ async function writeAduResearchToSheetsNow(listings: AduResearchListing[]) {
             for (let i = 1; i < existingRows.length; i++) {
               const row = existingRows[i];
               if (row && row[linkIndex]) {
-                cachedExistingLinks.add(row[linkIndex]);
+                st.existingLinks.add(row[linkIndex]);
               }
             }
 
@@ -342,15 +410,15 @@ async function writeAduResearchToSheetsNow(listings: AduResearchListing[]) {
             }
             for (let i = lastHeaderIdx + 1; i < existingRows.length; i++) {
               if (existingRows[i]?.[0] === todayStr) {
-                cachedHasTodayData = true;
+                st.hasTodayData = true;
                 break;
               }
             }
           }
         } catch (err) {
           // If sheet doesn't exist yet, get() might throw, which is fine
-          cachedLastRow = 0;
-          cachedHasTodayData = false;
+          st.lastRow = 0;
+          st.hasTodayData = false;
         }
       }
 
@@ -363,18 +431,18 @@ async function writeAduResearchToSheetsNow(listings: AduResearchListing[]) {
       const newRows = rowsWithListings
         .filter(({ row, listing }) => {
           const link = row[21]; // Link is now at index 21
-          if (link && cachedExistingLinks?.has(link)) {
+          if (link && st.existingLinks?.has(link)) {
             return false;
           }
 
           const rowKey = link ? `url:${String(link)}` : null;
-          if (rowKey && cachedExistingLinks?.has(rowKey)) {
+          if (rowKey && st.existingLinks?.has(rowKey)) {
             return false;
           }
 
           const addressKey = listing ? buildAduDupKey(listing) : null;
           if (addressKey) {
-            if (cachedExistingLinks?.has(addressKey)) {
+            if (st.existingLinks?.has(addressKey)) {
               return false;
             }
             if (dedupedKeys.has(addressKey)) {
@@ -389,18 +457,18 @@ async function writeAduResearchToSheetsNow(listings: AduResearchListing[]) {
 
       if (newRows.length === 0) {
         logger.info(
-          `[sheets] All ${listings.length} listings already exist in Google Sheets. Skipping append.`,
+          `[sheets:${target}] All ${listings.length} listings already exist in Google Sheets. Skipping append.`,
         );
         break; // break instead of return
       }
 
-      let nextRow = cachedLastRow + 1;
+      let nextRow = st.lastRow + 1;
 
       // Write a bold header at the top of today's block, but only once per day.
       // Restart-proof: the decision comes from the sheet state (no data rows
       // dated today exist yet), not process memory.
-      if (!cachedHasTodayData && sheetId !== undefined) {
-        logger.info(`[sheets] Writing bold header row at row ${nextRow}...`);
+      if (!st.hasTodayData && sheetId !== undefined) {
+        logger.info(`[sheets:${target}] Writing bold header row at row ${nextRow}...`);
         await sheets.spreadsheets.batchUpdate({
           spreadsheetId,
           requestBody: {
@@ -427,13 +495,13 @@ async function writeAduResearchToSheetsNow(listings: AduResearchListing[]) {
             ],
           },
         });
-        cachedHasTodayData = true;
+        st.hasTodayData = true;
         nextRow += 1;
-        cachedLastRow += 1;
+        st.lastRow += 1;
       }
 
       logger.info(
-        `[sheets] Writing ${newRows.length} new rows to "${sheetName}" starting at row ${nextRow} (skipped ${listings.length - newRows.length} duplicates)...`,
+        `[sheets:${target}] Writing ${newRows.length} new rows to "${sheetName}" starting at row ${nextRow} (skipped ${listings.length - newRows.length} duplicates)...`,
       );
       const response = await sheets.spreadsheets.values.update({
         spreadsheetId,
@@ -445,13 +513,13 @@ async function writeAduResearchToSheetsNow(listings: AduResearchListing[]) {
       });
 
       // Update caches
-      cachedLastRow += newRows.length;
-      if (cachedExistingLinks) {
+      st.lastRow += newRows.length;
+      if (st.existingLinks) {
         for (const row of newRows) {
           const link = row[21];
           if (link) {
-            cachedExistingLinks.add(String(link));
-            cachedExistingLinks.add(`url:${String(link)}`);
+            st.existingLinks.add(String(link));
+            st.existingLinks.add(`url:${String(link)}`);
           }
         }
 
@@ -459,7 +527,7 @@ async function writeAduResearchToSheetsNow(listings: AduResearchListing[]) {
           if (listing) {
             const addressKey = buildAduDupKey(listing);
             if (addressKey) {
-              cachedExistingLinks.add(addressKey);
+              st.existingLinks.add(addressKey);
             }
           }
         }
@@ -467,20 +535,20 @@ async function writeAduResearchToSheetsNow(listings: AduResearchListing[]) {
 
       const updatedRange = response.data.updatedRange;
       logger.info(
-        `[sheets] Successfully wrote to Google Sheets at range: ${updatedRange}`,
+        `[sheets:${target}] Successfully wrote to Google Sheets at range: ${updatedRange}`,
       );
       break; // Success! Break out of the retry loop
     } catch (error: any) {
       attempt++;
-      stateLoaded = false; // reload true sheet state before retrying
+      st.stateLoaded = false; // reload true sheet state before retrying
       cachedSheetsClient = null;
-      cachedSheetId = undefined;
+      st.sheetId = undefined;
       logger.error(
-        `[sheets] Failed to write to Google Sheets (attempt ${attempt}/${maxRetries}): ${error.message}`,
+        `[sheets:${target}] Failed to write to Google Sheets (attempt ${attempt}/${maxRetries}): ${error.message}`,
       );
       if (attempt >= maxRetries) {
         logger.error(
-          `[sheets] Max retries reached. Listing could not be uploaded.`,
+          `[sheets:${target}] Max retries reached. Listing could not be uploaded.`,
         );
         break;
       }

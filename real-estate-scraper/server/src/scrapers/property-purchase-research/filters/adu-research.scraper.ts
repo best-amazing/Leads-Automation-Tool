@@ -357,6 +357,74 @@ export function passesNewConstructionGate(
   return !reason;
 }
 
+// ── Second spreadsheet ("strict" criteria) ──────────────────────────────────
+// A lead goes to the second spreadsheet only if it already qualified for the
+// main one AND meets these tighter criteria. Like the main sheet, a value the
+// source doesn't provide passes (it's written as-is for manual review); a
+// value that IS known must meet the bar.
+export const STRICT_CRITERIA = {
+  maxPrice: 200_000,
+  minBeds: 4,
+  minBaths: 2,
+  minSqft: 1_500,
+  minLotSqft: 0.5 * 43_560, // 0.5 acres
+  minYearBuilt: 1955,
+};
+
+const STRICT_EXCLUDED_HOME_TYPES =
+  /^(condo|condominium|townhouse|townhome|co-?op|manufactured|mobile|lot|land|vacant land|timeshare)/i;
+const STRICT_EXCLUDED_TEXT: Array<[RegExp, string]> = [
+  [/\b(condo|condominium|townhouse|townhome|mobile home|manufactured home)\b/i, "property type"],
+  [/\b(vacant land|bare land|land only|lot only)\b/i, "land only"],
+  [/\bbungalows?\b/i, "bungalow"],
+  [/\b(55\+|55 and older|55 and over|active adult|senior community)/i, "55+ community"],
+  [/\bauctions?\b/i, "auction"],
+  [/\b(foreclosures?|bank[- ]owned|reo)\b/i, "foreclosure"],
+  [/\bshort sale\b/i, "short sale"],
+];
+// "HOA" mentioned, but not in a negation like "no HOA" / "HOA: none"
+const HOA_TEXT_RE =
+  /\b(hoa|home ?owners?'? association|home owner'?s? association)\b/i;
+const NO_HOA_TEXT_RE =
+  /\b(no|without|zero|free of)\s+(an?\s+)?(hoa|home ?owners?'? association)\b|\bhoa\s*(fees?)?\s*[:\-]?\s*(none|no|n\/a|\$?0\b)/i;
+
+/** First reason a lead fails the second spreadsheet's criteria, or null. */
+export function strictCriteriaFailure(
+  listing: Partial<AduResearchListing>,
+): string | null {
+  const c = STRICT_CRITERIA;
+  const known = (v: unknown): v is number =>
+    typeof v === "number" && Number.isFinite(v) && v > 0;
+
+  if (known(listing.price) && listing.price > c.maxPrice)
+    return `price > $${c.maxPrice.toLocaleString()} (${listing.price})`;
+  if (known(listing.bedrooms) && listing.bedrooms < c.minBeds)
+    return `beds < ${c.minBeds} (${listing.bedrooms})`;
+  if (known(listing.bathrooms) && listing.bathrooms < c.minBaths)
+    return `baths < ${c.minBaths} (${listing.bathrooms})`;
+  if (known(listing.squareFeet) && listing.squareFeet < c.minSqft)
+    return `sqft < ${c.minSqft} (${listing.squareFeet})`;
+  if (known(listing.lotSqft) && listing.lotSqft < c.minLotSqft)
+    return `lot < 0.5 acres (${(listing.lotSqft / 43_560).toFixed(2)} ac)`;
+  if (known(listing.yearBuilt) && listing.yearBuilt < c.minYearBuilt)
+    return `built before ${c.minYearBuilt} (${listing.yearBuilt})`;
+
+  const newBuild = newConstructionReason(listing);
+  if (newBuild) return newBuild;
+
+  if (known(listing.hoaFee)) return `HOA ($${listing.hoaFee}/mo)`;
+
+  const typeLabel = String(listing.homeType ?? listing.propertyType ?? "");
+  if (STRICT_EXCLUDED_HOME_TYPES.test(typeLabel)) return `property type (${typeLabel})`;
+
+  const text = `${listing.title ?? ""} ${listing.description ?? ""}`;
+  if (HOA_TEXT_RE.test(text) && !NO_HOA_TEXT_RE.test(text)) return "HOA (mentioned)";
+  for (const [re, reason] of STRICT_EXCLUDED_TEXT) {
+    if (re.test(text)) return reason;
+  }
+  return null;
+}
+
 /**
  * Stage 3: Check strict property criteria (Price, Beds, Baths, Year, HOA, etc.)
  */

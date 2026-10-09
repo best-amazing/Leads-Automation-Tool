@@ -19,6 +19,7 @@ import {
   passesTargetStateGate,
 } from '../filters/adu-research.scraper';
 import { resolvePublicRecords } from '../core/public-records';
+import { qualifiesForStrictSheet } from '../core/strict-sheet';
 import { appendAduResult } from '../core/adu-csv-writer';
 import { queueAduSheetWrite } from '../../../utils/google-sheets';
 import { AduDedupeTracker } from '../core/adu-dedupe-tracker';
@@ -82,6 +83,8 @@ async function handleMatch(listing: AduResearchListing) {
   // Buffered: flushed to Sheets in batches and serialized, so concurrent
   // jobs never race on the target row.
   queueAduSheetWrite(listing);
+  // Second spreadsheet: same lead, tighter criteria (core/strict-sheet.ts)
+  if (qualifiesForStrictSheet(listing)) queueAduSheetWrite(listing, 'strict');
 }
 
 /**
@@ -99,6 +102,8 @@ async function processZillow(job: Job) {
   let schoolRating: string | undefined;
   let status: string | undefined;
   let lotSqft: number | undefined;
+  let hoaFee: number | undefined;
+  let homeType: string | undefined;
 
   try {
     const FETCH_TIMEOUT_MS = Number(process.env.ADU_FETCH_TIMEOUT_MS ?? 180_000);
@@ -127,6 +132,13 @@ async function processZillow(job: Job) {
                 if (!description && propData.description) description = propData.description;
                 if (propData.yearBuilt) yearBuilt = Number(propData.yearBuilt);
                 if (propData.homeStatus) status = propData.homeStatus;
+                if (propData.homeType) homeType = String(propData.homeType);
+                // Monthly HOA: numeric field, else resoFacts text like "$45 monthly"
+                const hoaRaw = propData.monthlyHoaFee ?? propData.resoFacts?.hoaFee ?? propData.resoFacts?.associationFee;
+                if (hoaRaw != null) {
+                  const fee = typeof hoaRaw === 'number' ? hoaRaw : Number(String(hoaRaw).replace(/[^\d.]/g, ''));
+                  if (Number.isFinite(fee)) hoaFee = fee;
+                }
                 if (propData.lotAreaValue) {
                   if (propData.lotAreaUnit === 'acres') lotSqft = Math.round(propData.lotAreaValue * 43560);
                   else lotSqft = Math.round(propData.lotAreaValue);
@@ -156,6 +168,8 @@ async function processZillow(job: Job) {
     schoolRating,
     status: status ?? preFilter.status,
     lotSqft: lotSqft ?? preFilter.lotSqft,
+    hoaFee: hoaFee ?? preFilter.hoaFee,
+    homeType: homeType ?? preFilter.homeType,
   } as AduResearchListing;
 
   const haystack = [enriched.title, enriched.description, enriched.address].join(' ').toLowerCase();

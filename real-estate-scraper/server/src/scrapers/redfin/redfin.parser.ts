@@ -268,6 +268,10 @@ export function parseRedfinApiResponse(
       bedrooms,
       bathrooms,
       squareFeet,
+      // Also in the GIS payload: lot size (sqft), year built, monthly HOA
+      lotSqft:      val<number>(home.lotSize),
+      yearBuilt:    val<number>(home.yearBuilt),
+      hoaFee:       val<number>(home.hoa),
       propertyType: propertyType as any,
       description:  remarks ?? "",
       listedAt,

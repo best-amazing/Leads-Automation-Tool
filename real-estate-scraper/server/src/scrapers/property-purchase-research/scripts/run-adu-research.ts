@@ -37,6 +37,7 @@ import {
   passesTargetStateGate,
 } from "../filters/adu-research.scraper";
 import { resolvePublicRecords } from "../core/public-records";
+import { qualifiesForStrictSheet } from "../core/strict-sheet";
 import * as fs from "fs";
 import * as path from "path";
 import {
@@ -80,6 +81,8 @@ async function handleMatch(listing: AduResearchListing) {
 
   appendAduResult(listing);
   queueAduSheetWrite(listing);
+  // Second spreadsheet: same lead, tighter criteria (core/strict-sheet.ts)
+  if (qualifiesForStrictSheet(listing)) queueAduSheetWrite(listing, "strict");
 }
 
 export async function runAduResearch(): Promise<void> {

@@ -457,6 +457,15 @@ function dealToRawListing(deal: CLDeal): RawListing {
     bathrooms: deal.bathrooms ?? null,
     squareFeet: deal.squareFootage ?? null,
     lotSize: deal.lotSize ?? null,
+    // Normalised lot size (the pipeline reads lotSqft, not lotSize)
+    lotSqft:
+      deal.lotSize != null
+        ? Math.round(
+            /acre/i.test(deal.lotSizeUnit ?? "")
+              ? Number(deal.lotSize) * 43560
+              : Number(deal.lotSize),
+          ) || undefined
+        : undefined,
     yearBuilt: deal.yearBuilt ?? null,
     propertyType,
     description: deal.story ?? "",

@@ -17,6 +17,7 @@ import { ADU_KEYWORDS, TARGET_STATES } from "../core/adu-keywords";
 import { appendAduResult } from "../core/adu-csv-writer";
 import { AduResearchListing } from "../core/adu-research.parser";
 import { resolvePublicRecords } from "../core/public-records";
+import { qualifiesForStrictSheet } from "../core/strict-sheet";
 import * as fs from "fs";
 import * as path from "path";
 import { writeAduResearchToSheets } from "../../../utils/google-sheets";
@@ -57,6 +58,10 @@ async function handleMatch(listing: AduResearchListing) {
 
   appendAduResult(listing);
   await writeAduResearchToSheets([listing]);
+  // Second spreadsheet: same lead, tighter criteria (core/strict-sheet.ts)
+  if (qualifiesForStrictSheet(listing)) {
+    await writeAduResearchToSheets([listing], "strict");
+  }
 }
 
 export async function runOffmarketAduResearch(): Promise<void> {
