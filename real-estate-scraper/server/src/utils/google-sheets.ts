@@ -151,31 +151,72 @@ function buildAduDupKey(listing: AduResearchListing): string | null {
 }
 
 // ── Spreadsheet targets ─────────────────────────────────────────────────────
-// "main"   — the original property research tab
-// "strict" — the second property research tab (tighter criteria). By default
-//            it's a tab in the same workbook; SPREADSHEET_ID_STRICT /
-//            ADU_STRICT_SHEET_TAB can point it elsewhere.
+// "main"   — Eddy Property Research Tool 1 (the original criteria)
+// "strict" — Eddy Property Research Tool 2 (tighter criteria)
+//
+// Tabs are found by their tab ID (the "gid" in the sheet URL), which never
+// changes when a tab is renamed; the name is only a fallback (and is used if
+// the tab ever has to be created). Matching by name alone meant a rename made
+// the writer silently create a new tab with the old name and write there.
+// Overrides: SPREADSHEET_ID[_STRICT], ADU_{MAIN,STRICT}_SHEET_GID,
+// ADU_{MAIN,STRICT}_SHEET_TAB.
 export type SheetTarget = "main" | "strict";
 
 function targetConfig(target: SheetTarget): {
   spreadsheetId: string | undefined;
+  sheetGid: number | undefined;
   sheetName: string;
 } {
+  const gid = (envVar: string, fallback: number) => {
+    const v = Number(process.env[envVar] ?? fallback);
+    return Number.isInteger(v) ? v : undefined;
+  };
   if (target === "strict") {
     return {
       spreadsheetId: process.env.SPREADSHEET_ID_STRICT || process.env.SPREADSHEET_ID,
-      sheetName:
-        process.env.ADU_STRICT_SHEET_TAB || "Second Property Research Spreadsheet",
+      sheetGid: gid("ADU_STRICT_SHEET_GID", 1040532908),
+      sheetName: process.env.ADU_STRICT_SHEET_TAB || "Eddy Property Research Tool 2",
     };
   }
   return {
     spreadsheetId: process.env.SPREADSHEET_ID,
-    sheetName: "New Property Research Tool",
+    sheetGid: gid("ADU_MAIN_SHEET_GID", 320377775),
+    sheetName: process.env.ADU_MAIN_SHEET_TAB || "Eddy Property Research Tool 1",
   };
 }
 
 export function isSheetTargetConfigured(target: SheetTarget): boolean {
   return !!targetConfig(target).spreadsheetId;
+}
+
+/** A1 range on a tab, quoted so any tab name (spaces, symbols) is valid. */
+export function tabRange(title: string, range: string): string {
+  return `'${title.replace(/'/g, "''")}'!${range}`;
+}
+
+/**
+ * Resolves a target's tab — by tab ID first, then by name — returning its
+ * current title. Returns sheetId undefined when the tab doesn't exist.
+ */
+export async function resolveAduTab(
+  sheets: ReturnType<typeof google.sheets>,
+  target: SheetTarget,
+): Promise<{ spreadsheetId: string; sheetId: number | undefined; title: string }> {
+  const { spreadsheetId, sheetGid, sheetName } = targetConfig(target);
+  if (!spreadsheetId) throw new Error(`[sheets:${target}] SPREADSHEET_ID not set`);
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: "sheets.properties(sheetId,title)",
+  });
+  const tabs = (meta.data.sheets ?? []).map((s) => s.properties ?? {});
+  const tab =
+    tabs.find((p) => sheetGid != null && p.sheetId === sheetGid) ??
+    tabs.find((p) => p.title === sheetName);
+  return {
+    spreadsheetId,
+    sheetId: tab?.sheetId ?? undefined,
+    title: tab?.title ?? sheetName,
+  };
 }
 
 // Per-spreadsheet cached state. Each target has its own existing-link cache,
@@ -187,6 +228,7 @@ interface TargetState {
   lastRow: number;
   hasTodayData: boolean;
   sheetId: number | undefined;
+  sheetTitle: string | undefined;
   // Writes are serialized per spreadsheet: each write computes its target row
   // from lastRow, so concurrent writes would otherwise overwrite each other.
   writeChain: Promise<void>;
@@ -205,6 +247,7 @@ function stateFor(target: SheetTarget): TargetState {
       lastRow: 0,
       hasTodayData: false,
       sheetId: undefined,
+      sheetTitle: undefined,
       writeChain: Promise.resolve(),
       buffer: [],
       flushTimer: null,
@@ -294,7 +337,8 @@ async function writeAduResearchToSheetsNow(
 ) {
   if (listings.length === 0) return;
 
-  const { spreadsheetId, sheetName } = targetConfig(target);
+  const { spreadsheetId } = targetConfig(target);
+  let sheetName = targetConfig(target).sheetName;
   if (!spreadsheetId) {
     logger.warn(
       `[sheets:${target}] SPREADSHEET_ID not set, skipping Google Sheets upload.`,
@@ -324,24 +368,26 @@ async function writeAduResearchToSheetsNow(
         });
         cachedSheetsClient = google.sheets({ version: "v4", auth });
         st.sheetId = undefined;
+        st.sheetTitle = undefined;
       }
       const sheets = cachedSheetsClient;
 
-      // Check if sheet exists (once per process)
+      // Resolve the tab once per process: by tab ID, so renames are harmless
       let sheetExists = st.sheetId !== undefined;
       let sheetId: number | undefined = st.sheetId;
       if (!sheetExists) {
-        const meta = await sheets.spreadsheets.get({ spreadsheetId });
-        meta.data.sheets?.forEach((s) => {
-          if (s.properties?.title === sheetName) {
-            sheetExists = true;
-            sheetId = s.properties.sheetId ?? undefined;
-          }
-        });
+        const tab = await resolveAduTab(sheets, target);
+        sheetId = tab.sheetId;
+        sheetExists = sheetId !== undefined;
+        st.sheetTitle = tab.title;
       }
+      sheetName = st.sheetTitle ?? sheetName;
 
       if (!sheetExists) {
-        logger.info(`[sheets:${target}] Creating new sheet "${sheetName}"`);
+        logger.warn(
+          `[sheets:${target}] Tab not found by ID or name — creating "${sheetName}". ` +
+            `If the tab was renamed or deleted, check ADU_*_SHEET_GID.`,
+        );
         const createRes = await sheets.spreadsheets.batchUpdate({
           spreadsheetId,
           requestBody: {
@@ -377,7 +423,7 @@ async function writeAduResearchToSheetsNow(
         try {
           const getRes = await sheets.spreadsheets.values.get({
             spreadsheetId,
-            range: `${sheetName}!A:W`,
+            range: tabRange(sheetName, "A:W"),
           });
 
           const existingRows = getRes.data.values || [];
@@ -505,7 +551,7 @@ async function writeAduResearchToSheetsNow(
       );
       const response = await sheets.spreadsheets.values.update({
         spreadsheetId,
-        range: `${sheetName}!A${nextRow}`,
+        range: tabRange(sheetName, `A${nextRow}`),
         valueInputOption: "USER_ENTERED",
         requestBody: {
           values: newRows,
@@ -543,6 +589,7 @@ async function writeAduResearchToSheetsNow(
       st.stateLoaded = false; // reload true sheet state before retrying
       cachedSheetsClient = null;
       st.sheetId = undefined;
+      st.sheetTitle = undefined;
       logger.error(
         `[sheets:${target}] Failed to write to Google Sheets (attempt ${attempt}/${maxRetries}): ${error.message}`,
       );

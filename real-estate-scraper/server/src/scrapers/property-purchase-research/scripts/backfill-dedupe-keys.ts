@@ -18,9 +18,16 @@ import * as path from "path";
 import { google } from "googleapis";
 import { prisma } from "../../../db/client";
 import { logger } from "../../../utils/logger";
+import {
+  resolveAduTab,
+  SheetTarget,
+  tabRange,
+} from "../../../utils/google-sheets";
 import { dedupKey } from "../filters/address-dedupe";
 
-const SHEET_NAME = "New Property Research Tool";
+// Tab is resolved by its tab ID at runtime (renames are harmless).
+// --tab2 targets Eddy Property Research Tool 2 instead of Tool 1.
+const TAB_TARGET: SheetTarget = process.argv.includes("--tab2") ? "strict" : "main";
 const DRY_RUN = process.argv.includes("--dry-run");
 
 function getServiceAccountPath(): string {
@@ -76,7 +83,6 @@ async function main(): Promise<void> {
   logger.info("═".repeat(60));
   logger.info("Google Sheet Dedup-Key Backfill");
   logger.info("═".repeat(60));
-  logger.info(`Sheet: ${SHEET_NAME}`);
   logger.info(`Mode:  ${DRY_RUN ? "dry-run (report only)" : "write to DB"}`);
   logger.info("─".repeat(60));
 
@@ -85,10 +91,12 @@ async function main(): Promise<void> {
     scopes: ["https://www.googleapis.com/auth/spreadsheets"],
   });
   const sheets = google.sheets({ version: "v4", auth });
+  const SHEET_NAME = (await resolveAduTab(sheets, TAB_TARGET)).title;
+  logger.info(`Sheet: ${SHEET_NAME}`);
 
   const getRes = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${SHEET_NAME}!A:Z`,
+    range: tabRange(SHEET_NAME, `A:Z`),
   });
   const rows = getRes.data.values || [];
   logger.info(`Sheet has ${rows.length} rows total`);

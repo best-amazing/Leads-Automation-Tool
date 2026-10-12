@@ -1,6 +1,6 @@
 // src/scrapers/property-purchase-research/backfill-sheet-deed-dates.ts
 // ─────────────────────────────────────────────────────────────────────────────
-// Reads every listing row from the "New Property Research Tool" Google Sheet
+// Reads every listing row from the "Eddy Property Research Tool 1" Google Sheet
 // (the sheet scrape:adu-research writes to), looks up each address's deed
 // transfer date via the ATTOM -> OGRIP pipeline, and updates the
 // "Deed Transfer Date" column of that row in place.
@@ -17,8 +17,15 @@ import * as path from "path";
 import { google } from "googleapis";
 import { enrichOneListing } from "../../../lib/deed-data/enrich-listings";
 import { logger } from "../../../utils/logger";
+import {
+  resolveAduTab,
+  SheetTarget,
+  tabRange,
+} from "../../../utils/google-sheets";
 
-const SHEET_NAME = "New Property Research Tool";
+// Tab is resolved by its tab ID at runtime (renames are harmless).
+// --tab2 targets Eddy Property Research Tool 2 instead of Tool 1.
+const TAB_TARGET: SheetTarget = process.argv.includes("--tab2") ? "strict" : "main";
 const DEED_DATE_FALLBACK_COLUMN = 22; // column W — where adu-research writes the deed date
 
 const FORCE = process.argv.includes("--force");
@@ -96,7 +103,6 @@ async function main(): Promise<void> {
   logger.info("═".repeat(60));
   logger.info("Google Sheet Deed-Date Backfill");
   logger.info("═".repeat(60));
-  logger.info(`Sheet: ${SHEET_NAME}`);
   logger.info(
     `Mode:  ${FORCE ? "force (re-fetch all)" : "only rows missing a deed date"}`,
   );
@@ -108,11 +114,13 @@ async function main(): Promise<void> {
     scopes: ["https://www.googleapis.com/auth/spreadsheets"],
   });
   const sheets = google.sheets({ version: "v4", auth });
+  const SHEET_NAME = (await resolveAduTab(sheets, TAB_TARGET)).title;
+  logger.info(`Sheet: ${SHEET_NAME}`);
 
   // 1. Read the whole sheet.
   const getRes = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${SHEET_NAME}!A:Z`,
+    range: tabRange(SHEET_NAME, `A:Z`),
   });
   const rows = getRes.data.values || [];
   logger.info(`Sheet has ${rows.length} rows total`);
@@ -211,7 +219,7 @@ async function main(): Promise<void> {
     const key = d.address.toLowerCase().replace(/\s+/g, " ");
     const date = deedCache.get(key);
     if (!date) continue;
-    const range = `${SHEET_NAME}!${colLetter(d.deedCol)}${d.sheetRow}`;
+    const range = tabRange(SHEET_NAME, `${colLetter(d.deedCol)}${d.sheetRow}`);
     updates.push({ range, value: date });
   }
 
@@ -223,7 +231,7 @@ async function main(): Promise<void> {
       "Deed Transfer Date"
   ) {
     updates.push({
-      range: `${SHEET_NAME}!${colLetter(lastDeedCol)}${lastHeaderIndex + 1}`,
+      range: tabRange(SHEET_NAME, `${colLetter(lastDeedCol)}${lastHeaderIndex + 1}`),
       value: "Deed Transfer Date",
     });
   }

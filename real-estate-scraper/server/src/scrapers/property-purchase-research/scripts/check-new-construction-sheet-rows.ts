@@ -16,9 +16,16 @@ import * as fs from "fs";
 import * as path from "path";
 import { google } from "googleapis";
 import { logger } from "../../../utils/logger";
+import {
+  resolveAduTab,
+  SheetTarget,
+  tabRange,
+} from "../../../utils/google-sheets";
 import { newConstructionReason } from "../filters/adu-research.scraper";
 
-const SHEET_NAME = "New Property Research Tool";
+// Tab is resolved by its tab ID at runtime (renames are harmless).
+// --tab2 targets Eddy Property Research Tool 2 instead of Tool 1.
+const TAB_TARGET: SheetTarget = process.argv.includes("--tab2") ? "strict" : "main";
 const DEFAULT_ROWS_TO_PRINT = 100;
 const SHOW_ALL = process.argv.includes("--all");
 const WRITE_CSV = process.argv.includes("--csv");
@@ -87,16 +94,17 @@ async function main(): Promise<void> {
   logger.info("═".repeat(60));
   logger.info("Property Research New-Construction Check (read-only)");
   logger.info("═".repeat(60));
-  logger.info(`Sheet: ${SHEET_NAME}`);
 
   const auth = new google.auth.GoogleAuth({
     keyFile: keyPath,
     scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
   });
   const sheets = google.sheets({ version: "v4", auth });
+  const SHEET_NAME = (await resolveAduTab(sheets, TAB_TARGET)).title;
+  logger.info(`Sheet: ${SHEET_NAME}`);
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${SHEET_NAME}!A:Z`,
+    range: tabRange(SHEET_NAME, `A:Z`),
   });
   const rows = response.data.values || [];
 

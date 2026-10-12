@@ -1,6 +1,6 @@
 // src/scrapers/property-purchase-research/scripts/remove-duplicate-sheet-rows.ts
 // ─────────────────────────────────────────────────────────────────────────────
-// Removes duplicate listing rows from the "New Property Research Tool" Google
+// Removes duplicate listing rows from the "Eddy Property Research Tool 1" Google
 // Sheet. For each dedup key, the first occurrence (topmost row) is kept and
 // later copies of the same key are deleted. Header blocks and day markers
 // (`== YYYY-MM-DD ==`) are preserved.
@@ -15,9 +15,16 @@ import * as fs from "fs";
 import * as path from "path";
 import { google } from "googleapis";
 import { logger } from "../../../utils/logger";
+import {
+  resolveAduTab,
+  SheetTarget,
+  tabRange,
+} from "../../../utils/google-sheets";
 import { dedupKey } from "../filters/address-dedupe";
 
-const SHEET_NAME = "New Property Research Tool";
+// Tab is resolved by its tab ID at runtime (renames are harmless).
+// --tab2 targets Eddy Property Research Tool 2 instead of Tool 1.
+const TAB_TARGET: SheetTarget = process.argv.includes("--tab2") ? "strict" : "main";
 const DRY_RUN = process.argv.includes("--dry-run");
 
 function getServiceAccountPath(): string {
@@ -71,7 +78,6 @@ async function main(): Promise<void> {
   logger.info("═".repeat(60));
   logger.info("Google Sheet Duplicate Row Removal");
   logger.info("═".repeat(60));
-  logger.info(`Sheet: ${SHEET_NAME}`);
   logger.info(`Mode:  ${DRY_RUN ? "dry-run (report only)" : "DELETE rows"}`);
   logger.info("─".repeat(60));
 
@@ -80,10 +86,12 @@ async function main(): Promise<void> {
     scopes: ["https://www.googleapis.com/auth/spreadsheets"],
   });
   const sheets = google.sheets({ version: "v4", auth });
+  const SHEET_NAME = (await resolveAduTab(sheets, TAB_TARGET)).title;
+  logger.info(`Sheet: ${SHEET_NAME}`);
 
   const getRes = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${SHEET_NAME}!A:Z`,
+    range: tabRange(SHEET_NAME, `A:Z`),
   });
   const meta = await sheets.spreadsheets.get({ spreadsheetId });
   const sheet =

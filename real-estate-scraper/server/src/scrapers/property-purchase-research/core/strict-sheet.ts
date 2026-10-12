@@ -9,9 +9,8 @@
 // rules, sources and keywords as the main sheet — the strict criteria are a
 // subset, so nothing the second sheet needs is filtered out upstream.
 //
-// Written to the "Second Property Research Spreadsheet" tab of the same
-// workbook as the main tab (override with SPREADSHEET_ID_STRICT /
-// ADU_STRICT_SHEET_TAB).
+// Written to the "Eddy Property Research Tool 2" tab (found by tab ID) of the
+// same workbook as Tool 1 — see targetConfig in utils/google-sheets.ts.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { logger } from "../../../utils/logger";
