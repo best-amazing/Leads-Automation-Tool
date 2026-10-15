@@ -85,7 +85,7 @@ const PARSER_DIAG_LIMIT = 3;
 /**
  * Map raw API items to AduResearchListing[], capturing all fields
  * needed for the ADU research spreadsheet.
- */
+*/
 
 export function mapAduItems(
   items: any[],
