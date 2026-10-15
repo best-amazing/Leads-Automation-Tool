@@ -22,7 +22,7 @@ import { TARGET_STATES } from "../core/adu-keywords";
 import { appendAduResult } from "../core/adu-csv-writer";
 import { AduResearchListing } from "../core/adu-research.parser";
 import { resolvePublicRecords } from "../core/public-records";
-import { qualifiesForStrictSheet } from "../core/strict-sheet";
+import { isWantedLead, qualifiesForStrictSheet } from "../core/strict-sheet";
 import { passesNewConstructionGate } from "../filters/adu-research.scraper";
 import { writeAduResearchToSheets } from "../../../utils/google-sheets";
 import { AduDedupeTracker } from "../core/adu-dedupe-tracker";
@@ -31,9 +31,12 @@ let capturedCount = 0;
 const tracker = new AduDedupeTracker();
 
 async function handleMatch(listing: AduResearchListing) {
+  if (!isWantedLead(listing)) return;
   if (!passesNewConstructionGate(listing)) return;
 
-  if (!(await tracker.track(listing))) {
+  // Keyword leads dedupe against the main sheet; the rest only feed the second
+  const keywordLead = !!listing.matchedKeyword;
+  if (!(await tracker.track(listing, keywordLead ? "main" : "strict"))) {
     logger.debug(
       `[runner] Skipping duplicate: ${listing.address || listing.url}`,
     );
@@ -50,10 +53,15 @@ async function handleMatch(listing: AduResearchListing) {
   await resolvePublicRecords(listing, "[runner]");
   if (!passesNewConstructionGate(listing)) return;
 
-  appendAduResult(listing);
-  await writeAduResearchToSheets([listing]);
-  // Second spreadsheet: same lead, tighter criteria (core/strict-sheet.ts)
-  if (qualifiesForStrictSheet(listing)) {
+  if (keywordLead) {
+    appendAduResult(listing);
+    await writeAduResearchToSheets([listing]);
+  }
+  // Second spreadsheet: tighter criteria, no keyword needed (core/strict-sheet.ts)
+  if (
+    qualifiesForStrictSheet(listing) &&
+    (!keywordLead || (await tracker.track(listing, "strict")))
+  ) {
     await writeAduResearchToSheets([listing], "strict");
   }
 }

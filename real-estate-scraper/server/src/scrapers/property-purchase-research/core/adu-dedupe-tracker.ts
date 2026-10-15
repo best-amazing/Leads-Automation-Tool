@@ -33,9 +33,17 @@ export class AduDedupeTracker {
    * Returns true when the listing is new (must be emitted) and records its
    * key both in this process and in the persistent store. Returns false when
    * the listing (by normalized address key) has already been emitted before.
+   *
+   * scope "strict" tracks second-spreadsheet emissions separately, so a lead
+   * written there without a keyword never blocks the same property reaching
+   * the main sheet when another source later matches a keyword.
    */
-  async track(listing: AduResearchListing): Promise<boolean> {
-    const key = dedupKey(listing);
+  async track(
+    listing: AduResearchListing,
+    scope: "main" | "strict" = "main",
+  ): Promise<boolean> {
+    const key =
+      scope === "strict" ? `strict|${dedupKey(listing)}` : dedupKey(listing);
     const seen = await this.ensureLoaded();
     if (seen.has(key)) return false;
     seen.add(key);

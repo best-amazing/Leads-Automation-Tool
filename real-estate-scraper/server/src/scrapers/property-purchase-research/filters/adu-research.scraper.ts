@@ -295,6 +295,17 @@ export function passesKeywordFilter(listing: AduResearchListing): boolean {
   return passed;
 }
 
+/**
+ * Stage 2 for sources feeding both spreadsheets: keep a listing when it
+ * matches an ADU keyword (main sheet) OR meets the second sheet's criteria,
+ * which have no keyword requirement. handleMatch routes each lead.
+ */
+export function passesKeywordOrStrictFilter(
+  listing: AduResearchListing,
+): boolean {
+  return passesKeywordFilter(listing) || strictCriteriaFailure(listing) === null;
+}
+
 // ── New construction exclusion ──────────────────────────────────────────────
 // We don't purchase new builds. Anything built in or after
 // NEW_CONSTRUCTION_MIN_YEAR (default: last calendar year, so 2025+ in 2026)
@@ -358,8 +369,9 @@ export function passesNewConstructionGate(
 }
 
 // ── Second spreadsheet ("strict" criteria) ──────────────────────────────────
-// A lead goes to the second spreadsheet only if it already qualified for the
-// main one AND meets these tighter criteria. Like the main sheet, a value the
+// A lead goes to the second spreadsheet if it passes the main sheet's
+// location/property filters AND meets these tighter criteria — no ADU keyword
+// is required (see passesKeywordOrStrictFilter). Like the main sheet, a value the
 // source doesn't provide passes (it's written as-is for manual review); a
 // value that IS known must meet the bar.
 export const STRICT_CRITERIA = {

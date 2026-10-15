@@ -6,7 +6,7 @@ import { ScraperOptions } from "../../base.scraper";
 import { AduResearchListing } from "../core/adu-research.parser";
 import {
   passesLocationFilter,
-  passesKeywordFilter,
+  passesKeywordOrStrictFilter,
   passesPropertyCriteria,
 } from "../filters/adu-research.scraper";
 import { descriptionQueue } from '../../../utils/queue';
@@ -73,7 +73,7 @@ export class OffmarketAduScraper extends OffmarketScraper {
     const filtered = aduListings.filter(
       (l) =>
         passesLocationFilter(l) &&
-        passesKeywordFilter(l) &&
+        passesKeywordOrStrictFilter(l) &&
         passesPropertyCriteria(l),
     );
 

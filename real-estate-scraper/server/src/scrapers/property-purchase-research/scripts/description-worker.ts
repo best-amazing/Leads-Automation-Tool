@@ -19,7 +19,7 @@ import {
   passesTargetStateGate,
 } from '../filters/adu-research.scraper';
 import { resolvePublicRecords } from '../core/public-records';
-import { qualifiesForStrictSheet } from '../core/strict-sheet';
+import { isWantedLead, qualifiesForStrictSheet } from '../core/strict-sheet';
 import { appendAduResult } from '../core/adu-csv-writer';
 import { queueAduSheetWrite } from '../../../utils/google-sheets';
 import { AduDedupeTracker } from '../core/adu-dedupe-tracker';
@@ -57,6 +57,7 @@ function reserveSlot(job: Job, source: string): number {
 }
 
 async function handleMatch(listing: AduResearchListing) {
+  if (!isWantedLead(listing)) return;
   if (!passesTargetStateGate(listing)) return;
 
   if (!validateLeadZip(listing)) {
@@ -66,7 +67,9 @@ async function handleMatch(listing: AduResearchListing) {
 
   if (!passesNewConstructionGate(listing)) return;
 
-  if (!(await tracker.track(listing))) {
+  // Keyword leads dedupe against the main sheet; the rest only feed the second
+  const keywordLead = !!listing.matchedKeyword;
+  if (!(await tracker.track(listing, keywordLead ? 'main' : 'strict'))) {
     logger.debug(`[worker] Skipping duplicate: ${listing.address || listing.url}`);
     return;
   }
@@ -79,12 +82,19 @@ async function handleMatch(listing: AduResearchListing) {
   await resolvePublicRecords(listing, '[worker]');
   if (!passesNewConstructionGate(listing)) return;
 
-  appendAduResult(listing);
   // Buffered: flushed to Sheets in batches and serialized, so concurrent
   // jobs never race on the target row.
-  queueAduSheetWrite(listing);
-  // Second spreadsheet: same lead, tighter criteria (core/strict-sheet.ts)
-  if (qualifiesForStrictSheet(listing)) queueAduSheetWrite(listing, 'strict');
+  if (keywordLead) {
+    appendAduResult(listing);
+    queueAduSheetWrite(listing);
+  }
+  // Second spreadsheet: tighter criteria, no keyword needed (core/strict-sheet.ts)
+  if (
+    qualifiesForStrictSheet(listing) &&
+    (!keywordLead || (await tracker.track(listing, 'strict')))
+  ) {
+    queueAduSheetWrite(listing, 'strict');
+  }
 }
 
 /**
@@ -175,11 +185,12 @@ async function processZillow(job: Job) {
   const haystack = [enriched.title, enriched.description, enriched.address].join(' ').toLowerCase();
   const matchedKeyword = findAduKeyword(haystack);
 
+  enriched.matchedKeyword = matchedKeyword;
   if (matchedKeyword) {
-    enriched.matchedKeyword = matchedKeyword;
     logger.info(`[${sourceName}-worker] ✓ MATCHED ADU KEYWORD: ${matchedKeyword}`);
-    await handleMatch(enriched);
   }
+  // No keyword: handleMatch still checks it for the second spreadsheet
+  await handleMatch(enriched);
 }
 
 
@@ -217,11 +228,12 @@ async function processCraigslist(job: Job) {
   const haystack = [enriched.title, enriched.description, enriched.address].join(" ").toLowerCase();
   const matchedKeyword = findAduKeyword(haystack);
 
+  enriched.matchedKeyword = matchedKeyword;
   if (matchedKeyword) {
-    enriched.matchedKeyword = matchedKeyword;
     logger.info(`[${sourceName}-worker] ✓ MATCHED ADU KEYWORD: ${matchedKeyword}`);
-    await handleMatch(enriched);
   }
+  // No keyword: handleMatch still checks it for the second spreadsheet
+  await handleMatch(enriched);
 }
 
 async function processColdwellBanker(job: Job) {
@@ -246,11 +258,12 @@ async function processInvestorLift(job: Job) {
     .toLowerCase();
   const matchedKeyword = findAduKeyword(haystack);
 
+  listing.matchedKeyword = matchedKeyword;
   if (matchedKeyword) {
-    listing.matchedKeyword = matchedKeyword;
     logger.info(`[${sourceName}-worker] ✓ MATCHED ADU KEYWORD: ${matchedKeyword}`);
-    await handleMatch(listing);
   }
+  // No keyword: handleMatch still checks it for the second spreadsheet
+  await handleMatch(listing);
 }
 
 // Create and export the worker

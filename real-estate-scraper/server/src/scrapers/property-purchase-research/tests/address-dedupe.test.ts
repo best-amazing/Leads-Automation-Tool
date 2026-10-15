@@ -14,6 +14,7 @@ import {
   newConstructionReason,
   passesNewConstructionGate,
   strictCriteriaFailure,
+  passesKeywordOrStrictFilter,
 } from "../filters/adu-research.scraper";
 
 const a = { address: "53316 Nadine Street, South Bend, IN, 46637" };
@@ -215,6 +216,17 @@ const strictCases: Array<[string, Record<string, unknown>, boolean]> = [
 for (const [label, listing, expected] of strictCases) {
   const failure = strictCriteriaFailure(listing as any);
   assert.equal(failure === null, expected, `strict: ${label} (got: ${failure ?? "pass"})`);
+}
+
+// The second sheet needs no ADU keyword: sources keep keyword OR strict leads.
+const noKeyword = { ...good, description: "Spacious family home on a big lot." };
+const keywordOrStrictCases: Array<[string, Record<string, unknown>, boolean]> = [
+  ["strict lead without a keyword", noKeyword, true],
+  ["keyword lead failing strict", { ...good, price: 450_000 }, true],
+  ["no keyword and fails strict", { ...noKeyword, price: 450_000 }, false],
+];
+for (const [label, listing, expected] of keywordOrStrictCases) {
+  assert.equal(passesKeywordOrStrictFilter(listing as any), expected, `keyword-or-strict: ${label}`);
 }
 
 console.log("address dedupe checks passed");

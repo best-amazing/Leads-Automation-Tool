@@ -18,7 +18,7 @@ import { AduResearchListing } from "../core/adu-research.parser";
 import { AduDedupeTracker } from "../core/adu-dedupe-tracker";
 import { validateLeadZip, passesNewConstructionGate, passesTargetStateGate } from "../filters/adu-research.scraper";
 import { resolvePublicRecords } from "../core/public-records";
-import { qualifiesForStrictSheet } from "../core/strict-sheet";
+import { isWantedLead, qualifiesForStrictSheet } from "../core/strict-sheet";
 import * as fs from "fs";
 import * as path from "path";
 import { writeAduResearchToSheets } from "../../../utils/google-sheets";
@@ -27,6 +27,7 @@ let capturedCount = 0;
 const tracker = new AduDedupeTracker();
 
 async function handleMatch(listing: AduResearchListing) {
+  if (!isWantedLead(listing)) return;
   if (!passesTargetStateGate(listing)) return;
 
   if (!validateLeadZip(listing)) {
@@ -38,7 +39,9 @@ async function handleMatch(listing: AduResearchListing) {
 
   if (!passesNewConstructionGate(listing)) return;
 
-  if (!(await tracker.track(listing))) {
+  // Keyword leads dedupe against the main sheet; the rest only feed the second
+  const keywordLead = !!listing.matchedKeyword;
+  if (!(await tracker.track(listing, keywordLead ? "main" : "strict"))) {
     logger.debug(
       `[runner] Skipping duplicate: ${listing.address || listing.url}`,
     );
@@ -55,10 +58,15 @@ async function handleMatch(listing: AduResearchListing) {
   await resolvePublicRecords(listing, "[runner]");
   if (!passesNewConstructionGate(listing)) return;
 
-  appendAduResult(listing);
-  await writeAduResearchToSheets([listing]);
-  // Second spreadsheet: same lead, tighter criteria (core/strict-sheet.ts)
-  if (qualifiesForStrictSheet(listing)) {
+  if (keywordLead) {
+    appendAduResult(listing);
+    await writeAduResearchToSheets([listing]);
+  }
+  // Second spreadsheet: tighter criteria, no keyword needed (core/strict-sheet.ts)
+  if (
+    qualifiesForStrictSheet(listing) &&
+    (!keywordLead || (await tracker.track(listing, "strict")))
+  ) {
     await writeAduResearchToSheets([listing], "strict");
   }
 }

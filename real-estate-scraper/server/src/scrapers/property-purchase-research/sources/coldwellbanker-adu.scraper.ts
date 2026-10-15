@@ -34,7 +34,7 @@ import { ScraperOptions } from "../../base.scraper";
 import { AduResearchListing } from "../core/adu-research.parser";
 import {
   passesLocationFilter,
-  passesKeywordFilter,
+  passesKeywordOrStrictFilter,
   passesPropertyCriteria,
 } from "../filters/adu-research.scraper";
 import { logger } from "../../../utils/logger";
@@ -140,8 +140,9 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
     if (!passesLocationFilter(listing)) return;
     // Stage 2: hard property criteria (price/beds/baths/year/type exclusions)
     if (!passesPropertyCriteria(listing)) return;
-    // Stage 3: ADU keyword match against title/description/address
-    if (!passesKeywordFilter(listing)) return;
+    // Stage 3: ADU keyword match against title/description/address, or the
+    // second sheet's criteria (no keyword needed there)
+    if (!passesKeywordOrStrictFilter(listing)) return;
 
     const haystack = [listing.title, listing.description, listing.address]
       .join(" ")
@@ -151,7 +152,9 @@ export class ColdwellBankerAduScraper extends ColdwellBankerScraper {
     this.visited.add(extractLid(listing.url));
     this.results.push(listing);
     logger.info(
-      `[${this.sourceName}] ✓ MATCHED ADU KEYWORD: ${listing.matchedKeyword} — ${listing.address}`,
+      listing.matchedKeyword
+        ? `[${this.sourceName}] ✓ MATCHED ADU KEYWORD: ${listing.matchedKeyword} — ${listing.address}`
+        : `[${this.sourceName}] ✓ No keyword, second-sheet candidate — ${listing.address}`,
     );
 
     if (this.options.onMatch) {

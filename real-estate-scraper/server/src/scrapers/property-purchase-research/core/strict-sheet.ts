@@ -2,23 +2,33 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Routing for the second ("strict") property lead spreadsheet.
 //
-// Every lead written to the main spreadsheet is also checked against
-// STRICT_CRITERIA (≤ $200k, 4+ beds, 2+ baths, ≥ 1,500 sqft, ≥ 0.5 acre lot,
-// built 1955+, no HOA; SFH/MFH/apartments; no condos, bungalows, land, 55+,
-// auctions, foreclosures, short sales or new construction). Same states, ZIP
-// rules, sources and keywords as the main sheet — the strict criteria are a
-// subset, so nothing the second sheet needs is filtered out upstream.
+// Leads are checked against STRICT_CRITERIA (≤ $200k, 4+ beds, 2+ baths,
+// ≥ 1,500 sqft, ≥ 0.5 acre lot, built 1955+, no HOA; SFH/MFH/apartments; no
+// condos, bungalows, land, 55+, auctions, foreclosures, short sales or new
+// construction). Same states, ZIP rules and sources as the main sheet, but NO
+// ADU keyword is required: sources keep listings that match a keyword OR meet
+// these criteria (passesKeywordOrStrictFilter), and handleMatch writes keyword
+// leads to the main sheet and qualifying leads to this one.
 //
 // Written to the "Eddy Property Research Tool 2" tab (found by tab ID) of the
 // same workbook as Tool 1 — see targetConfig in utils/google-sheets.ts.
 // ─────────────────────────────────────────────────────────────────────────────
-
 import { logger } from "../../../utils/logger";
 import { isSheetTargetConfigured } from "../../../utils/google-sheets";
 import { strictCriteriaFailure } from "../filters/adu-research.scraper";
 import { AduResearchListing } from "./adu-research.parser";
 
 let warnedUnconfigured = false;
+
+/**
+ * Cheap pre-check before dedupe and public-record lookups: keyword leads are
+ * always wanted (main sheet); leads without a keyword only when they could
+ * still make the second sheet.
+ */
+export function isWantedLead(listing: AduResearchListing): boolean {
+  if (listing.matchedKeyword) return true;
+  return isSheetTargetConfigured("strict") && strictCriteriaFailure(listing) === null;
+}
 
 /** True when the lead should also be written to the second spreadsheet. */
 export function qualifiesForStrictSheet(listing: AduResearchListing): boolean {

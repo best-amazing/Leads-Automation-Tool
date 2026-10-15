@@ -4,7 +4,7 @@ import { ScraperOptions } from "../../base.scraper";
 import { AduResearchListing } from "../core/adu-research.parser";
 import {
   passesLocationFilter,
-  passesKeywordFilter,
+  passesKeywordOrStrictFilter,
   passesPropertyCriteria,
 } from "../filters/adu-research.scraper";
 import { logger } from "../../../utils/logger";
@@ -54,7 +54,7 @@ export class CreativeListingAduScraper extends CreativeListingScraper {
     const filtered = aduListings.filter(
       (l) =>
         passesLocationFilter(l) &&
-        passesKeywordFilter(l) &&
+        passesKeywordOrStrictFilter(l) &&
         passesPropertyCriteria(l),
     );
 
