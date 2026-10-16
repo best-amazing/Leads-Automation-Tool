@@ -429,7 +429,7 @@ export function strictCriteriaFailure(
   const typeLabel = String(listing.homeType ?? listing.propertyType ?? "");
   if (STRICT_EXCLUDED_HOME_TYPES.test(typeLabel)) return `property type (${typeLabel})`;
 
-  const text = `${listing.title ?? ""} ${listing.description ?? ""}`;
+  const text = `${listing.title ?? ""} ${listing.description ?? ""} ${listing.architectureStyle ?? ""}`;
   if (HOA_TEXT_RE.test(text) && !NO_HOA_TEXT_RE.test(text)) return "HOA (mentioned)";
   for (const [re, reason] of STRICT_EXCLUDED_TEXT) {
     if (re.test(text)) return reason;

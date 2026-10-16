@@ -412,6 +412,14 @@ export function parseCbProperty(
   }
   if (lotSqft == null) lotSqft = parseNum(pd.lot?.lotSizeSquareFeet);
 
+  // Type / style / HOA — e.g. "Land", "Bungalow", 118. The second sheet's
+  // criteria exclude land, bungalows and any HOA.
+  const homeType: string | undefined =
+    summary.propertyType ?? rawPd?.property?.propertyType ?? undefined;
+  const architectureStyle: string | undefined =
+    structure.architectureStyle ?? pd.structure?.structureDetails?.architectureStyle ?? undefined;
+  const hoaFee = parseNum(rawPd?.property?.hoa?.associationFee);
+
   const city = addr.city ?? "";
   const state = addr.stateOrProvince ?? "";
   const zip = addr.postalCode ?? "";
@@ -437,6 +445,9 @@ export function parseCbProperty(
     squareFeet,
     lotSqft,
     yearBuilt,
+    homeType,
+    architectureStyle,
+    hoaFee,
     daysOnMarket: parseDaysOnMarket(about.added, rawPd?.insertedDate),
     status: status || undefined,
     latitude,

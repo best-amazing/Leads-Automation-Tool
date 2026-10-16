@@ -11,6 +11,7 @@ import {
   passesLocationFilter,
   passesKeywordFilter,
   passesPropertyCriteria,
+  strictCriteriaFailure,
 } from "../filters/adu-research.scraper";
 import { logger } from "../../../utils/logger";
 import { aduRunState } from "../core/adu-run-state";
@@ -227,6 +228,17 @@ export class ZillowAduScraper extends ZillowScraper {
           if (allSeenUrls.has(rawListing.url)) {
             skippedAsSeen++;
             aduRunState.skippedSeen = skippedAsSeen;
+            continue;
+          }
+
+          // Statewide strict-pass markets only feed the second sheet: a
+          // listing that already fails its criteria on search data (usually
+          // lot size) costs no detail fetch and stays unseen, so a city
+          // market can still pick it up for the main sheet.
+          if (
+            market.strictPass &&
+            strictCriteriaFailure(rawListing as AduResearchListing)
+          ) {
             continue;
           }
 

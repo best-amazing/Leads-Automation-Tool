@@ -208,6 +208,8 @@ const strictCases: Array<[string, Record<string, unknown>, boolean]> = [
   ["multifamily home type", { ...good, homeType: "MULTI_FAMILY" }, true],
   ["apartment home type", { ...good, homeType: "APARTMENT" }, true],
   ["bungalow", { ...good, description: "Charming bungalow with in-law suite" }, false],
+  ["bungalow architecture style", { ...good, architectureStyle: "Bungalow" }, false],
+  ["land home type (Coldwell Banker)", { ...good, homeType: "Land" }, false],
   ["55+ community", { ...good, description: "In-law suite in a 55+ community" }, false],
   ["auction", { ...good, description: "Selling at auction, guest house" }, false],
   ["short sale", { ...good, description: "Short sale. In-law suite." }, false],

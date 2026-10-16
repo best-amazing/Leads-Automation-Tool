@@ -10,6 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { TARGET_STATES } from "./adu-keywords";
+import { STRICT_CRITERIA } from "../filters/adu-research.scraper";
 
 // Markets are listed by state here, but always exported sorted by
 // TARGET_STATES priority — reorder TARGET_STATES to change the scrape order.
@@ -64,6 +65,23 @@ const ZILLOW_CITIES: Array<{ name: string; slug: string }> = [
 
 const formatK = (n: number) => `$${Math.round(n / 1000)}k`;
 
+// ── Zillow: second-sheet ("strict") pass ────────────────────────────────────
+// The city markets search inside city limits with the main sheet's criteria,
+// where half-acre lots under $200k are rare — second-sheet matches mostly sit
+// in small towns no city market covers. These statewide searches use the
+// second sheet's criteria instead (STRICT_CRITERIA), banded so each fits
+// Zillow's ~820-result window. They run before a state's city markets.
+// States: ZILLOW_STRICT_STATES="OH,IN,…" (default OH; empty disables).
+const ZILLOW_STRICT_STATES = (process.env.ZILLOW_STRICT_STATES ?? "OH")
+  .split(",")
+  .map((s) => s.trim().toUpperCase())
+  .filter(Boolean);
+const ZILLOW_STRICT_PRICE_BANDS: Array<[number, number]> = [
+  [0, 100_000],
+  [100_000, 150_000],
+  [150_000, STRICT_CRITERIA.maxPrice],
+];
+
 export const ADU_ZILLOW_MARKETS: Array<{
   name: string;
   baseUrl: string;
@@ -74,15 +92,33 @@ export const ADU_ZILLOW_MARKETS: Array<{
     bedsMin: number;
     bathsMin: number;
   };
+  /** Statewide second-sheet search (see ZILLOW_STRICT_STATES). */
+  strictPass?: boolean;
 }> = byStatePriority(
-  ZILLOW_CITIES.flatMap((city) =>
-    ZILLOW_PRICE_BANDS.map(([priceMin, priceMax]) => ({
-      name: `${city.name} - Active ${formatK(priceMin)}–${formatK(priceMax)}`,
-      baseUrl: `https://www.zillow.com/${city.slug}/`,
-      listingType: "active" as const,
-      searchFilters: { priceMin, priceMax, bedsMin: 3, bathsMin: 2 },
-    })),
-  ),
+  [
+    ...ZILLOW_STRICT_STATES.flatMap((state) =>
+      ZILLOW_STRICT_PRICE_BANDS.map(([priceMin, priceMax]) => ({
+        name: `Statewide, ${state} - Strict ${formatK(priceMin)}–${formatK(priceMax)}`,
+        baseUrl: `https://www.zillow.com/${state.toLowerCase()}/`,
+        listingType: "active" as const,
+        searchFilters: {
+          priceMin,
+          priceMax,
+          bedsMin: STRICT_CRITERIA.minBeds,
+          bathsMin: STRICT_CRITERIA.minBaths,
+        },
+        strictPass: true,
+      })),
+    ),
+    ...ZILLOW_CITIES.flatMap((city) =>
+      ZILLOW_PRICE_BANDS.map(([priceMin, priceMax]) => ({
+        name: `${city.name} - Active ${formatK(priceMin)}–${formatK(priceMax)}`,
+        baseUrl: `https://www.zillow.com/${city.slug}/`,
+        listingType: "active" as const,
+        searchFilters: { priceMin, priceMax, bedsMin: 3, bathsMin: 2 },
+      })),
+    ),
+  ],
   (m) => stateFromName(m.name),
 );
 

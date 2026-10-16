@@ -47,6 +47,8 @@ export interface RawListing {
   hoaFee?: number;
   /** The source's own home-type label, e.g. Zillow "SINGLE_FAMILY" / "CONDO". */
   homeType?: string;
+  /** The source's architectural style, e.g. Coldwell Banker "Bungalow". */
+  architectureStyle?: string;
 
   description?: string;
 
