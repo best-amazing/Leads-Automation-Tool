@@ -219,6 +219,31 @@ export async function resolveAduTab(
   };
 }
 
+/**
+ * Last used row and whether today's day block already exists, from column A.
+ * A header block is written once per day: find the last header row, then
+ * check whether any data rows after it are dated today. Read from the sheet
+ * itself (not process memory) so it is restart-proof and sees other writers.
+ */
+export function tabTail(colA: unknown[][]): { lastRow: number; hasTodayData: boolean } {
+  const todayStr = new Date().toLocaleDateString();
+  let lastHeaderIdx = -1;
+  for (let i = colA.length - 1; i >= 0; i--) {
+    if (colA[i]?.[0] === "Date Found") {
+      lastHeaderIdx = i;
+      break;
+    }
+  }
+  let hasTodayData = false;
+  for (let i = lastHeaderIdx + 1; i < colA.length; i++) {
+    if (colA[i]?.[0] === todayStr) {
+      hasTodayData = true;
+      break;
+    }
+  }
+  return { lastRow: colA.length, hasTodayData };
+}
+
 // Per-spreadsheet cached state. Each target has its own existing-link cache,
 // last-row pointer, daily-header flag, write chain and buffer, so duplicates
 // are tracked within each spreadsheet independently.
@@ -440,33 +465,23 @@ async function writeAduResearchToSheetsNow(
                 st.existingLinks.add(row[linkIndex]);
               }
             }
-
-            // A header block is written once per day. Determine whether today's
-            // block already exists: find the last header row, then check whether
-            // any data rows after it are dated today. This is restart-proof —
-            // Render recycles the instance between runs, so the decision must
-            // come from the sheet itself, not process memory.
-            const todayStr = new Date().toLocaleDateString();
-            let lastHeaderIdx = -1;
-            for (let i = existingRows.length - 1; i >= 0; i--) {
-              if (existingRows[i]?.[0] === "Date Found") {
-                lastHeaderIdx = i;
-                break;
-              }
-            }
-            for (let i = lastHeaderIdx + 1; i < existingRows.length; i++) {
-              if (existingRows[i]?.[0] === todayStr) {
-                st.hasTodayData = true;
-                break;
-              }
-            }
           }
         } catch (err) {
           // If sheet doesn't exist yet, get() might throw, which is fine
-          st.lastRow = 0;
-          st.hasTodayData = false;
         }
       }
+
+      // Re-read where the tab ends before EVERY write. A cached row pointer
+      // only knows this process's own writes, so rows added by anyone else —
+      // the other runner/worker process, a manual import — got overwritten.
+      const colA =
+        (
+          await sheets.spreadsheets.values.get({
+            spreadsheetId,
+            range: tabRange(sheetName, "A:A"),
+          })
+        ).data.values || [];
+      ({ lastRow: st.lastRow, hasTodayData: st.hasTodayData } = tabTail(colA));
 
       const dedupedKeys = new Set<string>();
       const rowsWithListings = rows.map((row, rowIndex) => ({
