@@ -19,8 +19,9 @@
 // listing whose detail page can't be read is skipped (not passed).
 // ─────────────────────────────────────────────────────────────────────────────
 (async () => {
-  const TARGET = 30; // total listings to collect
-  const MAX_PER_STATE = 10; // spread results across states (Infinity = no cap)
+  const TARGET = 200; // total listings to collect
+  const MAX_PER_STATE = 30; // spread results across states (Infinity = no cap)
+  const ONLY_STATES = []; // limit a run to these states, e.g. ["OH"] (empty = all)
   const MAX_PAGES = 20; // Zillow serves at most 20 pages (~41 results) per search
   const DELAY_MS = [1500, 3000]; // random pause between requests
 
@@ -42,6 +43,11 @@
     "76793688", "50158265", "123780969", "87003618", "86946100", "76840230",
     "789408", "50169536", "123778548", "4314721", "353736523", "441101322",
     "4287844", "463212405", "118155653", "463470528", "73540402", "466046795",
+    "450896747", "55509104", "2085141582", "50167356", "126775799", "113863243",
+    "246806338", "209561277", "76622448", "73456133", "73583619", "464629247",
+    "115967869", "2087075477", "95263319", "113535962", "113537883", "106571347",
+    "465948745", "465675291", "464893128", "53721843", "2096452174", "78541420",
+    "10626434", "2079345634", "127066980", "465979385", "128524209", "463144879",
   ]);
 
   // Each band is its own search, so a state with more than 20 pages of
@@ -247,9 +253,10 @@
     rejected[k] = (rejected[k] ?? 0) + 1;
   };
 
-  console.log(`%c[strict] Looking for ${TARGET} listings across ${STATES.map(([s]) => s).join(", ")}…`, "font-weight:bold");
+  const RUN_STATES = ONLY_STATES.length ? STATES.filter(([abbr]) => ONLY_STATES.includes(abbr)) : STATES;
+  console.log(`%c[strict] Looking for ${TARGET} listings across ${RUN_STATES.map(([s]) => s).join(", ")}…`, "font-weight:bold");
 
-  run: for (const [state, zipPrefixes] of STATES) {
+  run: for (const [state, zipPrefixes] of RUN_STATES) {
     if (found.length >= TARGET) break;
     let region;
     try {

@@ -9,6 +9,9 @@
 //   npm run backfill:deed-dates
 //   npm run backfill:deed-dates -- --force     # re-fetch rows that already have a date
 //   npm run backfill:deed-dates -- --limit 10  # process at most 10 unique addresses
+//   npm run backfill:deed-dates -- --today     # only rows found today
+//   npm run backfill:deed-dates -- --date 10/17/2026
+//   npm run backfill:deed-dates -- --tab2      # Eddy Property Research Tool 2
 // ─────────────────────────────────────────────────────────────────────────────
 
 import "dotenv/config";
@@ -31,6 +34,13 @@ const DEED_DATE_FALLBACK_COLUMN = 22; // column W — where adu-research writes 
 const FORCE = process.argv.includes("--force");
 const LIMIT_ARG = process.argv.indexOf("--limit");
 const LIMIT = LIMIT_ARG >= 0 ? Number(process.argv[LIMIT_ARG + 1]) : Infinity;
+// Only rows whose "Date Found" matches — same format the sheet writer uses
+const DATE_ARG = process.argv.indexOf("--date");
+const ONLY_DATE: string | null = process.argv.includes("--today")
+  ? new Date().toLocaleDateString()
+  : DATE_ARG >= 0
+    ? process.argv[DATE_ARG + 1]
+    : null;
 
 function getServiceAccountPath(): string {
   let raw = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH || "";
@@ -107,6 +117,7 @@ async function main(): Promise<void> {
     `Mode:  ${FORCE ? "force (re-fetch all)" : "only rows missing a deed date"}`,
   );
   logger.info(`Limit: ${LIMIT === Infinity ? "none" : LIMIT} unique addresses`);
+  logger.info(`Rows:  ${ONLY_DATE ? `found on ${ONLY_DATE}` : "all dates"}`);
   logger.info("─".repeat(60));
 
   const auth = new google.auth.GoogleAuth({
@@ -155,6 +166,7 @@ async function main(): Promise<void> {
     }
     if (/^== \d{4}-\d{2}-\d{2} ==$/.test(first)) continue; // day marker
     if (!/^\d{1,2}\/\d{1,2}\/\d{4}/.test(first)) continue; // not a listing row
+    if (ONLY_DATE && first !== ONLY_DATE) continue;
 
     const address = (r[activeAddressCol] || "").toString().trim();
     if (!address) continue;
