@@ -184,7 +184,7 @@ export function validateLeadZip(
   const allowed = isZipAllowedForState(state, zipValue);
   if (!allowed) {
     logger.warn(
-      `[adu-filter] ${state} lead rejected (allowed ZIPs: ${STATE_ZIP_PREFIXES[state].map((p) => `${p}xxx`).join(", ")}): zip="${zipValue || "(missing)"}" address="${(listing.address ?? "(empty)").slice(0, 120)}"`,
+      `[adu-filter] ${state} lead rejected (allowed ZIPs: ${STATE_ZIP_PREFIXES[state].map((p) => p.padEnd(5, "x")).join(", ")}): zip="${zipValue || "(missing)"}" address="${(listing.address ?? "(empty)").slice(0, 120)}"`,
     );
   }
 
@@ -368,6 +368,23 @@ export function passesNewConstructionGate(
   return !reason;
 }
 
+// ── School rating (both spreadsheets) ───────────────────────────────────────
+// Management: no properties in areas whose high school is rated below 3
+// (GreatSchools, as shown on Zillow/Redfin). schoolRating is "7/10" — the
+// high school's rating, or the closest level the source had. Unknown passes,
+// like the other criteria.
+export const MIN_HIGH_SCHOOL_RATING = 3;
+
+/** Why a lead fails the school-rating rule, or null. */
+export function schoolRatingFailure(
+  listing: Partial<Pick<AduResearchListing, "schoolRating">>,
+): string | null {
+  const rating = parseFloat(String(listing.schoolRating ?? ""));
+  return Number.isFinite(rating) && rating > 0 && rating < MIN_HIGH_SCHOOL_RATING
+    ? `high school rating < ${MIN_HIGH_SCHOOL_RATING} (${listing.schoolRating})`
+    : null;
+}
+
 // ── Second spreadsheet ("strict" criteria) ──────────────────────────────────
 // A lead goes to the second spreadsheet if it passes the main sheet's
 // location/property filters AND meets these tighter criteria — no ADU keyword
@@ -426,6 +443,9 @@ export function strictCriteriaFailure(
 
   if (known(listing.hoaFee)) return `HOA ($${listing.hoaFee}/mo)`;
 
+  const school = schoolRatingFailure(listing);
+  if (school) return school;
+
   const typeLabel = String(listing.homeType ?? listing.propertyType ?? "");
   if (STRICT_EXCLUDED_HOME_TYPES.test(typeLabel)) return `property type (${typeLabel})`;
 
@@ -464,6 +484,11 @@ export function passesPropertyCriteria(listing: AduResearchListing): boolean {
   else if (listing.yearBuilt != null && listing.yearBuilt < 1950) {
     passed = false;
     failReason = `year built < 1950 (${listing.yearBuilt})`;
+  }
+  // 5. High school rated 3+ (unknown passes)
+  else if (schoolRatingFailure(listing)) {
+    passed = false;
+    failReason = schoolRatingFailure(listing)!;
   }
   // 5. Exclude HOA, 55+, New Construction, Auctions, Foreclosures, Short Sales
   else {

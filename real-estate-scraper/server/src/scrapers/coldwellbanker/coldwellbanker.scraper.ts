@@ -420,6 +420,20 @@ export function parseCbProperty(
     structure.architectureStyle ?? pd.structure?.structureDetails?.architectureStyle ?? undefined;
   const hoaFee = parseNum(rawPd?.property?.hoa?.associationFee);
 
+  // GreatSchools rating, as on Zillow/Redfin: the best-rated high school
+  // serving the home, else the best-rated school of any level ("7/10").
+  const schools: any[] = Array.isArray(rawPd?.property?.schools)
+    ? rawPd.property.schools.map((s: any) => s?.school ?? s)
+    : [];
+  const rated = schools.filter((s) => Number(s?.rating) > 0);
+  const highSchools = rated.filter(
+    (s) => /high/i.test(String(s.level ?? "")) || Number(s.highGrade) >= 12,
+  );
+  const bestRating = Math.max(
+    ...(highSchools.length ? highSchools : rated).map((s) => Number(s.rating)),
+  );
+  const schoolRating = Number.isFinite(bestRating) ? `${bestRating}/10` : undefined;
+
   const city = addr.city ?? "";
   const state = addr.stateOrProvince ?? "";
   const zip = addr.postalCode ?? "";
@@ -448,6 +462,7 @@ export function parseCbProperty(
     homeType,
     architectureStyle,
     hoaFee,
+    schoolRating,
     daysOnMarket: parseDaysOnMarket(about.added, rawPd?.insertedDate),
     status: status || undefined,
     latitude,

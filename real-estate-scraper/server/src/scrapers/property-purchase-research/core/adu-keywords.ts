@@ -57,7 +57,35 @@ export const ADU_KEYWORDS = [
   "in one parcel",
   "carriage house",
   "carriage home",
+
+  // ── Added 10/26/2026 (management list) ───────────────────────────────────
+  "living quarters",
+  "quarter", // matched as living space only — see KEYWORD_PATTERN_OVERRIDES
+  "3 home",
+  "3 structures",
+  "3 house",
+  "3 dwelling",
+  "4 home",
+  "4 structures",
+  "4 house",
+  "4 dwelling",
+  "many home",
+  "many structures",
+  "many house",
+  "many dwelling",
 ];
+
+/**
+ * Keywords matched by a custom pattern instead of the plain word. "quarter"
+ * on its own would hit "quarter acre" / "quarter mile" / "Quarter Horse", so
+ * it only counts as living space: "quarters" ("guest quarters", "separate
+ * quarters") or "<guest|living|…> quarter" — never a fraction ("three-
+ * quarters of an acre", "3 quarters mile").
+ */
+const KEYWORD_PATTERN_OVERRIDES: Record<string, RegExp> = {
+  quarter:
+    /(?<!\b(?:three|two|\d)[\s-]?)\bquarters\b(?!\s+(?:of\s+an?|acres?|miles?)\b)|\b(?:guest|living|separate|private|caretaker'?s?|servants?'?|staff|maid'?s?|nanny|in-?law|mother-in-law)\s+quarter\b/i,
+};
 
 /**
  * US state abbreviations to filter listings by geography, IN PRIORITY ORDER.
@@ -106,22 +134,29 @@ export const STATE_ZIP_PREFIXES: Record<string, string[]> = {
   WI: ["53"], // Milwaukee
   IA: ["50", "52"], // Waterloo, Des Moines (50) · Cedar Rapids (52)
   IL: ["60"], // Chicago area
-  KY: ["40"], // Louisville / Lexington (north-central)
-  MI: ["48", "49"], // Detroit (48) · Kalamazoo (49)
+  KY: ["402", "405", "421"], // Louisville (402) · Lexington (405) · Bowling Green (421)
+  MI: ["482", "490"], // Detroit (482) · Kalamazoo (490)
   PA: ["15"], // Pittsburgh
   MO: ["63", "64"], // St. Louis (63) · Kansas City (64)
   NE: ["68"], // Omaha
   KS: ["66"], // Kansas City, KS
-  TN: ["37"], // Nashville
-  GA: ["30"], // Atlanta
+  TN: ["372"], // Nashville
+  GA: ["303"], // Atlanta
 };
 
 // Compiled once at load (in ADU_KEYWORDS priority order) instead of building
 // a fresh RegExp per keyword per listing.
 const ADU_KEYWORD_PATTERNS = ADU_KEYWORDS.map((kw) => ({
   kw,
-  re: new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i"),
+  re:
+    KEYWORD_PATTERN_OVERRIDES[kw] ??
+    new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i"),
 }));
+
+/** The pattern a keyword is matched with (for highlighting its evidence). */
+export function aduKeywordPattern(kw: string): RegExp | undefined {
+  return ADU_KEYWORD_PATTERNS.find((p) => p.kw === kw)?.re;
+}
 
 /**
  * Returns the highest-priority ADU keyword found in `text`, or undefined.

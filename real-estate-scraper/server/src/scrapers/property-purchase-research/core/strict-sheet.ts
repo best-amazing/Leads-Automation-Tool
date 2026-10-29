@@ -15,7 +15,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { logger } from "../../../utils/logger";
 import { isSheetTargetConfigured } from "../../../utils/google-sheets";
-import { strictCriteriaFailure } from "../filters/adu-research.scraper";
+import { schoolRatingFailure, strictCriteriaFailure } from "../filters/adu-research.scraper";
 import { AduResearchListing } from "./adu-research.parser";
 
 let warnedUnconfigured = false;
@@ -26,6 +26,12 @@ let warnedUnconfigured = false;
  * still make the second sheet.
  */
 export function isWantedLead(listing: AduResearchListing): boolean {
+  // Both sheets: no areas whose high school is rated below 3
+  const school = schoolRatingFailure(listing);
+  if (school) {
+    logger.info(`[strict-sheet] Excluding (${school}): ${listing.address || listing.url}`);
+    return false;
+  }
   if (listing.matchedKeyword) return true;
   return isSheetTargetConfigured("strict") && strictCriteriaFailure(listing) === null;
 }

@@ -1,4 +1,4 @@
-// scripts/redfin-region-check.js
+// scripts/console/tools/redfin-region-check.js
 // ─────────────────────────────────────────────────────────────────────────────
 // Browser-console check: which Redfin region IDs give a real statewide search.
 // For each state it asks Redfin's search box (location-autocomplete) for its

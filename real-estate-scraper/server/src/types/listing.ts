@@ -49,6 +49,8 @@ export interface RawListing {
   homeType?: string;
   /** The source's architectural style, e.g. Coldwell Banker "Bungalow". */
   architectureStyle?: string;
+  /** GreatSchools rating of the high school (else best school), e.g. "7/10". */
+  schoolRating?: string;
 
   description?: string;
 

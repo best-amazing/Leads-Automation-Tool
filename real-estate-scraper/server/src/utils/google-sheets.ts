@@ -90,7 +90,22 @@ export const ADU_SHEET_HEADERS = [
   "Matched Keyword",
   "Link",
   "Description Preview",
+  // Added 10/26/2026 so management can judge a lead without opening it.
+  // Appended (not inserted) so existing columns and readers keep their place.
+  "Property Type",
+  "HOA ($/mo)",
 ];
+
+/** "SINGLE_FAMILY" / "single_family" / "MultiFamily" → "Single Family". */
+export function propertyTypeLabel(l: Pick<AduResearchListing, "homeType">): string {
+  const raw = String((l as any).homeType ?? (l as any).propertyType ?? "").trim();
+  if (!raw || /^unknown$/i.test(raw)) return "";
+  return raw
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 /**
  * Maps a listing to the exact sheet row order of ADU_SHEET_HEADERS.
@@ -130,6 +145,8 @@ export function buildAduSheetRow(l: AduResearchListing): any[] {
     matchedKw,
     l.url || "",
     extractKeywordContext(l.description, matchedKw).replace(/\n/g, " "),
+    propertyTypeLabel(l),
+    (l as any).hoaFee > 0 ? `$${Number((l as any).hoaFee).toLocaleString()}` : "",
   ];
 }
 
