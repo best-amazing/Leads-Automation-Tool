@@ -107,7 +107,7 @@ const num = (s?: string) => {
   const skipped: Record<string, number> = {};
   const skip = (why: string, address: string) => {
     skipped[why] = (skipped[why] ?? 0) + 1;
-    if (why !== "already in sheet") console.log(`  skip (${why}): ${address}`);
+    console.log(`  skip (${why}): ${address}`);
   };
 
   for (const r of records) {
