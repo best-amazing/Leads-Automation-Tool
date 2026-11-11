@@ -89,8 +89,13 @@ const num = (s?: string) => {
 (async () => {
   const file = process.argv.slice(2).find((a) => !a.startsWith("--"));
   const dryRun = process.argv.includes("--dry-run");
+  // Rural addresses like "13907 #2 Highway T" are real single-family homes,
+  // not mobile-home-park sites — allow them through the park-unit guard.
+  const allowParkUnits = process.argv.includes("--allow-park-units");
+  // Add rows to Tab 2 even when they miss its under-$200k criteria.
+  const forceStrict = process.argv.includes("--force-strict");
   if (!file || !fs.existsSync(file)) {
-    console.error("Usage: npm run console:import -- <console CSV> [--dry-run]");
+    console.error("Usage: npm run console:import -- <console CSV> [--dry-run] [--allow-park-units] [--force-strict]");
     process.exit(1);
   }
   const records = parseCsv(fs.readFileSync(file, "utf8"));
@@ -123,7 +128,8 @@ const num = (s?: string) => {
     }
     const source = /zillow/.test(url) ? "zillow-adu" : /realtor/.test(url) ? "realtor-adu"
       : /investorlift/.test(url) ? "investorlift-adu" : /crexi/.test(url) ? "crexi-adu"
-      : /craigslist/.test(url) ? "craigslist-adu" : "redfin-adu";
+      : /craigslist/.test(url) ? "craigslist-adu" : /coldwellbanker/.test(url) ? "coldwellbanker-adu"
+      : /propwire/.test(url) ? "propwire-adu" : "redfin-adu";
     const lotAcres = num(r["Lot (acres)"]);
     const listing: any = {
       source,
@@ -156,7 +162,9 @@ const num = (s?: string) => {
     if (!validateLeadZip(listing)) { skip("outside allowed ZIPs", address); continue; }
     // A numbered lot/space, or a "#9"-style unit on a house, is almost always
     // a mobile-home park site
-    if (/\b(lot|space|site)\s*#?\d+/i.test(address) || (/#\s*\d+/.test(address) && /single/i.test(r["Home Type"] ?? ""))) {
+    // "St Rt # 335" / "State Route #12" are road numbers, not park unit numbers.
+    const routeNumber = /\b(?:st|state)\s+(?:rt|rte|route|hwy|highway)\s*#?\s*\d+/i.test(address);
+    if (!allowParkUnits && !routeNumber && (/\b(lot|space|site)\s*#?\d+/i.test(address) || (/#\s*\d+/.test(address) && /single/i.test(r["Home Type"] ?? "")))) {
       skip("park unit (likely manufactured)", address);
       continue;
     }
@@ -169,7 +177,7 @@ const num = (s?: string) => {
       else if (!dryRun && !(await tracker.track(listing))) skip("already in sheet", address);
       else { main.push(listing); keys.forEach((k) => inMain.add(k)); wrote = true; }
     }
-    if (!strictCriteriaFailure(listing) && !keys.some((k) => inStrict.has(k))) {
+    if ((forceStrict || !strictCriteriaFailure(listing)) && !keys.some((k) => inStrict.has(k))) {
       if (dryRun || (await tracker.track(listing, "strict"))) {
         strict.push(listing);
         keys.forEach((k) => inStrict.add(k));

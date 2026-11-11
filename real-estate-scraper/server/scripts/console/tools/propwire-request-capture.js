@@ -34,7 +34,11 @@
   const MATCH = /api\.propwire\.com|\/api\//i;
   const SECRET_HEADER = /cookie|authorization|token|x-xsrf|x-csrf/i;
   const PRIVATE_FIELD = /owner|phone|email|mailing|contact|skip_?trace/i;
-  const captured = (window.__propwireCaptured = window.__propwireCaptured ?? []);
+  const STORE = "__propwireCaptured";
+  let saved = [];
+  try { saved = JSON.parse(sessionStorage.getItem(STORE) ?? "[]"); } catch {}
+  const captured = (window.__propwireCaptured = window.__propwireCaptured?.length ? window.__propwireCaptured : saved);
+  const save = () => { try { sessionStorage.setItem(STORE, JSON.stringify(captured)); } catch {} };
 
   /** Deep copy with private fields hidden and long arrays cut to their first item. */
   function scrub(v, depth = 0) {
@@ -65,6 +69,7 @@
       response: resJson ? scrub(resJson) : String(text ?? "").slice(0, 400),
     };
     captured.push(entry);
+    save();
     out.log(`[capture] #${captured.length} ${method} ${entry.url} → ${status}`, entry);
   }
 
@@ -103,4 +108,5 @@
     "%c[capture] Ready. Now: search a state with the For Sale filter on, change one filter, open one property — then run copy(window.__propwireCaptured) and paste the result.",
     "font-weight:bold",
   );
+  return `[capture] Ready (${captured.length} saved). Search a state with "MLS Active / For Sale" on, adjust a filter, or click a property card — then run copy(window.__propwireCaptured).`;
 })();

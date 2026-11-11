@@ -4,9 +4,9 @@
 // 641 Redfin listings in the sheets that are missing some of them.
 //   1. Open https://www.redfin.com in a normal tab.
 //   2. DevTools → Console → paste this whole file → Enter.
-//   3. When it prints "Done", a backfill-redfin-<date>.csv file is downloaded.
-//      Then: npm run backfill:details -- --apply <that file>
-// It stops early (and still downloads what it has) if the site shows a bot
+//   3. When it prints "Done", the CSV is copied to the clipboard.
+//      Then: npm run backfill:details -- --apply <file with that CSV>
+// It stops early (and still copies what it has) if the site shows a bot
 // check — solve it, regenerate with --make-console, and run again.
 // ─────────────────────────────────────────────────────────────────────────────
 (async () => {
@@ -723,8 +723,9 @@
   const esc = (v) => '"' + String(v ?? "").replace(/"/g, '""') + '"';
   const cols = ["url", "schoolRating", "description", "lotSqft", "homeType", "hoaFee"];
   const csv = [cols.join(","), ...results.map((r) => cols.map((c) => esc(c === "description" ? String(r[c] ?? "").slice(0, 3000) : r[c])).join(","))].join("\n");
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-  a.download = "backfill-redfin-" + new Date().toISOString().slice(0, 10) + ".csv";
-  a.click();
+  try {
+    if (typeof copy === "function") copy(csv);
+    else await navigator.clipboard.writeText(csv);
+    out.log("[redfin-backfill] CSV copied to clipboard.");
+  } catch {}
 })();

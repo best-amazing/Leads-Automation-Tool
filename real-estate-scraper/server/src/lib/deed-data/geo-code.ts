@@ -38,7 +38,8 @@ export function normalizeAddress(raw: RawListing): NormalizedListing {
     .trim();
 
   const firstSegment = deduped[0] || "";
-  const hasStreetAddress = /^\d+\s+\S/.test(firstSegment);
+  const hasStreetAddress =
+    /^\d+[a-z]?(?:\s*(?:-|&|and)\s*\d+[a-z]?)?\s+\S/i.test(firstSegment);
 
   return {
     ...raw,

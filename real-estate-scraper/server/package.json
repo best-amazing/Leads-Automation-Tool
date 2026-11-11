@@ -49,6 +49,7 @@
     "backfill:deed-dates": "node --max-old-space-size=4096 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/scripts/backfill-sheet-deed-dates.ts",
     "console:skiplists": "ts-node --transpile-only scripts/update-console-skiplists.ts",
     "console:import": "ts-node --transpile-only scripts/import-console-csv.ts",
+    "postconsole:import": "npm run console:skiplists",
     "backfill:details": "ts-node --transpile-only scripts/backfill-listing-details.ts",
     "backfill:dedupe-keys":"node --max-old-space-size=4096 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/scripts/backfill-dedupe-keys.ts",
     "sheet:remove-duplicates": "node --max-old-space-size=4096 -r ./polyfill-file.js -r ts-node/register src/scrapers/property-purchase-research/scripts/remove-duplicate-sheet-rows.ts",

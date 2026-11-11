@@ -1,4 +1,4 @@
-﻿// src/scrapers/property-purchase-research/adu-research.scraper.ts
+// src/scrapers/property-purchase-research/adu-research.scraper.ts
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // ADU Property Purchase Research Scraper
 //
@@ -397,11 +397,11 @@ export const STRICT_CRITERIA = {
   minBaths: 2,
   minSqft: 1_500,
   minLotSqft: 0.5 * 43_560, // 0.5 acres
-  minYearBuilt: 1955,
+  minYearBuilt: 1950,
 };
 
 const STRICT_EXCLUDED_HOME_TYPES =
-  /^(condo|condominium|townhouse|townhome|co-?op|manufactured|mobile|lot|land|vacant land|timeshare)/i;
+  /^(condo|condominium|townhouse|townhome|co-?op|manufactured|mobile|lot|land|vacant land|farm|ranch|timeshare)/i;
 const STRICT_EXCLUDED_TEXT: Array<[RegExp, string]> = [
   [/\b(condo|condominium|townhouse|townhome|mobile home|manufactured home)\b/i, "property type"],
   [/\b(vacant land|bare land|land only|lot only)\b/i, "land only"],
@@ -423,7 +423,7 @@ export function strictCriteriaFailure(
 ): string | null {
   const c = STRICT_CRITERIA;
   const known = (v: unknown): v is number =>
-    typeof v === "number" && Number.isFinite(v) && v > 0;
+    typeof v === "number" && Number.isFinite(v) && v >= 0;
 
   if (known(listing.price) && listing.price > c.maxPrice)
     return `price > $${c.maxPrice.toLocaleString()} (${listing.price})`;
